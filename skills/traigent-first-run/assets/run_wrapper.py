@@ -26,28 +26,42 @@ APPROVED_FIGURE_NAMES = (
 FIRST_RUN_PHASE = (
     os.environ.get("TRAIGENT_FIRST_RUN_PHASE", "baseline").strip().casefold()
 )
-# The three approved figures, read here for the same reason and taken from this
-# dict below rather than from the environment again. `load_dotenv` fills an
-# ABSENT process variable from the file, so figures left in `.env` would have
-# supplied the ceiling, the running total and the per-call rate - and the
-# refusal below, which exists so a phase launched without an approval cannot
-# start, would have found them present and passed. Measured against an
-# otherwise empty environment and a `.env` naming all three: the block ran to
-# completion on the file's ceiling and wrote it into TRAIGENT_RUN_COST_LIMIT.
+# Capture launch approval before dotenv: absent variables would otherwise be filled
+# from a stale file. Later budget reads use this mapping, never the merged environment.
 APPROVED_FIGURES = (
     {}
     if FIRST_RUN_PHASE == "proof"
     else {name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES}
 )
+# THE LAUNCH ENVIRONMENT, captured whole and before `load_dotenv`.
+#
+# Every value that decides what this process DOES - which models, which
+# provider, how many trials, how long - is read from here and never from
+# `os.environ` again. `load_dotenv` fills an ABSENT name from the file, so any
+# of them left out of this snapshot is one a stale `.env` can supply: measured
+# live, a file naming `TRAIGENT_FIRST_RUN_ENHANCED_MAX_TRIALS=23` set the
+# enhanced cap to 23, against the comment beside that read saying raising it
+# without a newly scoped approval is forbidden.
+#
+# A SNAPSHOT rather than a list of names, because a list is only as complete as
+# whoever wrote it: a launch input added later and read from `os.environ` would
+# silently rejoin the file's reach, and nothing would fail. Reading them all
+# from one mapping makes the safe spelling the obvious one.
+LAUNCH_ENVIRONMENT = dict(os.environ)
 load_dotenv(PROJECT_ROOT / ".env", override=False)
-os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
-if FIRST_RUN_PHASE == "proof":
-    # A stale .env must not make this proof look like an approved phase.
-    os.environ.pop("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", None)
-for _approved_name in APPROVED_FIGURE_NAMES:
-    # Popped like the phase flag, so a child process inherits neither an
-    # approval nor a running total it was not launched with.
-    os.environ.pop(_approved_name, None)
+# Blanked, not popped. `load_dotenv` fills an ABSENT name and leaves a present
+# one alone, so popping these let any later load put the stale values back -
+# the SDK at import, or a `load_dotenv()` in the customer's own agent module,
+# which neither flag below reaches. Nothing here re-reads them: the phase came
+# from :27, the figures from APPROVED_FIGURES, every launch input from
+# LAUNCH_ENVIRONMENT.
+# An inherited empty value is refused; an inherited stale approval is not.
+for _cleared_name in (
+    "TRAIGENT_FIRST_RUN_PHASE",
+    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS",
+    *APPROVED_FIGURE_NAMES,
+):
+    os.environ[_cleared_name] = ""
 if FIRST_RUN_PHASE not in {"proof", "baseline", "connected"}:
     raise SystemExit(
         "TRAIGENT_FIRST_RUN_PHASE must be 'proof', 'baseline', or 'connected'"
@@ -67,6 +81,13 @@ if FIRST_RUN_PHASE != "proof" and inherited("TRAIGENT_MOCK_LLM"):
         "responses, so every score would describe the mock and not the agent. "
         "Unset it before a paid phase; this run will not unset it for you."
     )
+if FIRST_RUN_PHASE != "proof":
+    # Blanked AFTER the refusal, never before - blanking first would delete the
+    # value the refusal exists to see. Refusing alone left the name ABSENT,
+    # which a later dotenv load refills, and `is_mock_llm()` re-reads
+    # `os.environ` on every call - so a value arriving after this point would
+    # run the paid phase on canned responses with the refusal already passed.
+    os.environ["TRAIGENT_MOCK_LLM"] = ""
 if FIRST_RUN_PHASE in {"proof", "baseline"}:
     if FIRST_RUN_PHASE == "proof":
         # LiteLLM otherwise refreshes its model-price catalog at import time.
@@ -82,8 +103,18 @@ if FIRST_RUN_PHASE in {"proof", "baseline"}:
         )
     # Backend-offline is process-local: a stored CLI credential can survive
     # removing the environment key, so this is what keeps the baseline local.
+    # The wrapper loaded dotenv already; an SDK import must not restore removed values.
+    os.environ["TRAIGENT_SKIP_DOTENV"] = "1"
     os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
-    os.environ.pop("TRAIGENT_API_KEY", None)
+    # Blank, and all three names, as the generated runtime already does
+    # ("blank rather than absent, so a dotenv file cannot bring a Traigent
+    # credential or URL back"). The wrapper popped the key and left the URLs.
+    for _offline_blank in (
+        "TRAIGENT_API_KEY",
+        "TRAIGENT_BACKEND_URL",
+        "TRAIGENT_API_URL",
+    ):
+        os.environ[_offline_blank] = ""
 else:
     # Both spellings: the SDK reads either as offline, and either resolves this
     # run to local-only BEFORE a session is attempted - so the flag below is
@@ -98,6 +129,10 @@ else:
                 "to run connected, or stop at the local baseline. This run will "
                 "not unset it for you - where data may go is a choice to make."
             )
+        # Refused, never cleared - and NOT blanked like TRAIGENT_MOCK_LLM
+        # above. `references/sdk-execution.md` owns that decision: the contract
+        # "refuses the connected phase under either instead of clearing it -
+        # where the user's data may go is their choice, not this run's."
     # Managed search or nothing. Without this the SDK degrades a connected run
     # whose backend session cannot be created - absent, wrong, or unscoped key,
     # backend unreachable - to a local sweep, and returns a result that reads
@@ -179,18 +214,32 @@ if FIRST_RUN_PHASE != "proof":
 # unpriced model or an oversize phase become warnings; admission per trial holds.
 os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
-if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip():
+# Read from the snapshot, written to the live environment: `run-safety.md`
+# calls this "the process-only SDK results folder", so a `.env` naming it is
+# not the project speaking - it is the one file that must not decide where
+# this run's logs land. The write below is what the SDK then reads.
+if not LAUNCH_ENVIRONMENT.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
 # SDK 0.30.0 otherwise stores query/response/expected text in local per-example
 # logs. The first-run record needs ids and metrics, not another copy of content.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
-import litellm
+if FIRST_RUN_PHASE in {"proof", "baseline"}:
+    _dotenv_disabled = os.environ.get("PYTHON_DOTENV_DISABLED")
+    os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+try:
+    import litellm
 
-litellm._first_run_proof_mode = FIRST_RUN_PHASE == "proof"
-import traigent
-from traigent.api.decorators import EvaluationOptions
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+    litellm._first_run_proof_mode = FIRST_RUN_PHASE == "proof"
+    import traigent
+    from traigent.api.decorators import EvaluationOptions
+    from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+finally:
+    if FIRST_RUN_PHASE in {"proof", "baseline"}:
+        if _dotenv_disabled is None:
+            os.environ.pop("PYTHON_DOTENV_DISABLED", None)
+        else:
+            os.environ["PYTHON_DOTENV_DISABLED"] = _dotenv_disabled
 
 TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")
 # A separate file, not a column in the tuning one: only `eval_dataset=TUNING_DATASET`
@@ -200,12 +249,13 @@ BASELINE_RESULTS = str(RUN_DIR / "baseline-results.json")
 BASELINE_TRANSFER_FILE = str(RUN_DIR / "baseline-transfer.json")
 OPTIMIZED_RESULTS = str(RUN_DIR / "optimized-results.json")
 CONFIG_SPACE_DOCUMENT = str(RUN_DIR / "config-space.json")
-SELECTED_CURRENT_MODEL = os.environ["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
-SELECTED_ALTERNATIVE_MODEL = os.environ["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
-SELECTED_STRONG_MODEL = os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
+SELECTED_CURRENT_MODEL = LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_CURRENT_MODEL"]
+SELECTED_ALTERNATIVE_MODEL = LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL"]
+SELECTED_STRONG_MODEL = LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_STRONG_MODEL"]
 # Set only when the strong tier is a reasoning model; blank means no reasoning kwargs.
 STRONG_REASONING_EFFORT = (
-    os.environ.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip() or None
+    LAUNCH_ENVIRONMENT.get("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", "").strip()
+    or None
 )
 # `.strip()` before `.casefold()`, because the branch below no longer refuses a
 # spelling it does not know: `"openai "` would take the unverified path and skip
@@ -213,7 +263,7 @@ STRONG_REASONING_EFFORT = (
 # way a mapped route reaches that branch, and it is not a route the guide cannot
 # check - it is the one it can.
 SELECTED_CURRENT_PROVIDER = (
-    os.environ["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].strip().casefold()
+    LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_CURRENT_PROVIDER"].strip().casefold()
 )
 # Every name litellm will authenticate a route on, any one of which is enough.
 # The same inventory `preflight.py` opens the run with, name for name on every
@@ -255,7 +305,11 @@ WALKTHROUGH_TEMPERATURE = 0.0
 
 
 def positive_number(name: str, *, default: float | None = None) -> float:
-    raw_value = os.environ.get(name)
+    # `LAUNCH_ENVIRONMENT`, never `os.environ`: see the snapshot's own comment.
+    # These three readers are the whole of how this file reads a launch input,
+    # so pointing them at the snapshot is what makes "a stale .env cannot
+    # decide what this run does" true by construction rather than per name.
+    raw_value = LAUNCH_ENVIRONMENT.get(name)
     if raw_value is None:
         if default is None:
             raise ValueError(f"{name} is required")
@@ -268,7 +322,7 @@ def positive_number(name: str, *, default: float | None = None) -> float:
 
 
 def positive_int(name: str, *, default: int | None = None) -> int:
-    raw_value = os.environ.get(name)
+    raw_value = LAUNCH_ENVIRONMENT.get(name)
     if raw_value is None:
         if default is None:
             raise ValueError(f"{name} is required")
@@ -281,9 +335,9 @@ def positive_int(name: str, *, default: int | None = None) -> int:
 
 
 def optional_positive_number(name: str) -> float | None:
-    """Return a positive float from the environment, or None when unset - used
-    for bounds that are intentionally uncapped by default."""
-    raw_value = os.environ.get(name)
+    """Return a positive float from the launch environment, or None when unset -
+    used for bounds that are intentionally uncapped by default."""
+    raw_value = LAUNCH_ENVIRONMENT.get(name)
     if raw_value is None or not raw_value.strip():
         return None
     value = float(raw_value)
@@ -296,6 +350,7 @@ MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
     "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS",
     default=120.0,
 )
+
 BASELINE_TIMEOUT_SECONDS = (
     None
     if FIRST_RUN_PHASE == "proof"

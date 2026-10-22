@@ -210,6 +210,32 @@ SECRET_MARKERS = (
     "PG",
     "CONN",
 )
+# The two halves of the tuple above, because `subprocess_environment` treats
+# them oppositely: a credential is BLANKED so a later dotenv load cannot refill
+# it, a connection target is DROPPED so no library default can pick it up.
+# Split here and derived by exclusion, so a marker added above must be
+# classified deliberately rather than inherit whichever behaviour it lands next
+# to. A name matching both halves is a connection target first.
+CONNECTION_TARGET_MARKERS = ("URL", "DSN", "DATABASE", "PG", "CONN")
+if not set(CONNECTION_TARGET_MARKERS) <= set(SECRET_MARKERS):
+    # Not an `assert`: this file runs under `python -O` like any other, and a
+    # silently inert split would restore the defect it exists to prevent.
+    raise RuntimeError(
+        "CONNECTION_TARGET_MARKERS names a marker SECRET_MARKERS does not carry"
+    )
+CREDENTIAL_MARKERS = tuple(
+    marker for marker in SECRET_MARKERS if marker not in CONNECTION_TARGET_MARKERS
+)
+
+
+def _is_connection_target_name(name: str) -> bool:
+    return any(marker in name.upper() for marker in CONNECTION_TARGET_MARKERS)
+
+
+def _is_credential_name(name: str) -> bool:
+    return any(marker in name.upper() for marker in CREDENTIAL_MARKERS)
+
+
 MATRIX_COVERAGE_NOTE = (
     "Distinct names and payloads are structural checks only; calibration relies on "
     "the coding assistant's recorded evidence-backed semantic-coverage review of "
@@ -705,13 +731,18 @@ def read_target_from_env_file(path: Path, name: str) -> str:
     raise ValueError(f"{name} is not set in {path}")
 
 
-# What `--target-name` may be. An environment variable name in the shape every
-# shell and `os.environ` agree on, and never one the interpreter or the loader
-# reads itself: a target handed in as `PYTHONPATH` or `LD_PRELOAD` is code
-# injection into the child, not a connection string.
+# Target names must have shell-compatible spelling and must not configure the
+# interpreter or a loader, including the copied worker's dotenv control.
 TARGET_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 TARGET_NAME_DENYLIST: frozenset[str] = frozenset(
-    {"PATH", "PYTHONPATH", "LD_PRELOAD", "PYTHONHOME", "PYTHONSTARTUP"}
+    {
+        "PATH",
+        "PYTHONPATH",
+        "LD_PRELOAD",
+        "PYTHONHOME",
+        "PYTHONSTARTUP",
+        "PYTHON_DOTENV_DISABLED",
+    }
 )
 
 
@@ -723,7 +754,7 @@ def target_name_refusal(name: str) -> str | None:
             "(upper-case letters, digits and underscores, starting with a letter)"
         )
     if name in TARGET_NAME_DENYLIST:
-        return f"--target-name {name} is read by the interpreter itself and may not carry a target"
+        return f"--target-name {name} is read by the interpreter or loader and may not carry a target"
     return None
 
 
@@ -1659,10 +1690,40 @@ def subprocess_environment(allow_provider_access: bool) -> dict[str, str]:
     if allow_provider_access:
         environment = dict(os.environ)
     else:
+        # Credentials are BLANKED; connection targets are still DROPPED. The
+        # two halves of SECRET_MARKERS want opposite things and the difference
+        # is load-bearing both ways.
+        #
+        # A credential must be blanked, because an absent name is the one thing
+        # a `load_dotenv()` refills - the defect `run_wrapper.py` closes the
+        # same way - and the code being calibrated is the customer's own
+        # scorer, free to call it at import. Dropping them made
+        # "credential-stripped child" true only until the first dotenv load: a
+        # repro under this function recovered a provider key and a Traigent key
+        # from the project `.env` inside the worker. Every provider client
+        # treats an empty key as no key rather than as a stale one.
+        #
+        # A connection target must stay absent, for the reason recorded beside
+        # those markers: a copy repointed at a safe target must not find the
+        # production one "where a surviving read or a library default would
+        # pick it up". An empty `PGHOST` or `DATABASE_URL` IS such a surviving
+        # read - libpq reads an empty host as "use the default" - so blanking
+        # them would defeat the guarantee instead of tightening it.
+        # `test_connection_target_names_are_stripped_from_the_child` pins that,
+        # and it caught this function being changed the other way.
+        #
+        # A name matching both halves (`DATABASE_PASSWORD`) is dropped, which
+        # is what it already was: the target rule is the stricter of the two
+        # and this function is not the place to reopen it.
+        #
+        # Non-secret settings are untouched either way, because an authored
+        # evaluator may legitimately read its configuration from the project
+        # `.env` - which is why the dotenv control below is not simply switched
+        # off for every worker.
         environment = {
-            key: value
+            key: ("" if _is_credential_name(key) else value)
             for key, value in os.environ.items()
-            if not any(marker in key.upper() for marker in SECRET_MARKERS)
+            if not _is_connection_target_name(key)
         }
         environment.update(
             {
@@ -2536,6 +2597,34 @@ def run_calibration_worker(
     may contain normalized targets or DSN components, so substring replacement
     cannot make their diagnostics safe to forward. Withhold that text in full.
     """
+    # The copied-actor route only, and the scope is the decision.
+    #
+    # A red team showed the blanking in `subprocess_environment` is defeated by
+    # `load_dotenv(override=True)`, which overwrites a blank where it would
+    # leave a present value alone - a two-line scorer recovered the provider
+    # key, the Traigent key and the dropped connection target. Setting this
+    # flag for EVERY worker closes that, and was tried: it breaks
+    # `test_ordinary_authored_worker_can_still_load_project_settings`, which
+    # pins a deliberate feature - an authored evaluator may read its own
+    # configuration from the project `.env`, and often must.
+    #
+    # The trade resolves on WHOSE code and WHOSE file. On the ordinary route
+    # both are the customer's: their evaluator reading their own `.env` and
+    # getting their own key back is not a breach, and what must hold there -
+    # that calibration places no paid call - is held by the proxy blackhole
+    # below and the socket contract, not by the name being absent. The copied
+    # actor is the case where they differ: a copy repointed at a safe target
+    # must not reach the real one, so the loader stays off there.
+    #
+    # Residual, recorded rather than implied: `dotenv_values()` has no such
+    # gate at all, so even here the flag narrows the path rather than closing
+    # the class.
+    if copied_actor:
+        environment = kwargs.get("env")
+        kwargs["env"] = {
+            **(os.environ if environment is None else environment),
+            "PYTHON_DOTENV_DISABLED": "1",
+        }
     process = subprocess.run(command, **kwargs)
     if not copied_actor:
         return process

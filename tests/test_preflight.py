@@ -8,6 +8,7 @@ import itertools
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -70,6 +71,325 @@ def synthetic_rows() -> list[dict]:
             }
         )
     return rows
+
+
+class StructuralSqlGoldTests(unittest.TestCase):
+    def test_gold_self_check_covers_both_splits_and_selected_fields(self) -> None:
+        for split in ("tune", "holdout"):
+            for query, expected_status in (
+                ("SELECT EXTRACT(YEAR FROM d) FROM t", MODULE.FAIL),
+                ("SELECT d FROM t", MODULE.PASS),
+            ):
+                with self.subTest(
+                    split=split, query=query
+                ), tempfile.TemporaryDirectory() as directory:
+                    path = Path(directory) / f"{split}.jsonl"
+                    path.write_text(
+                        json.dumps(
+                            {
+                                "id": "sql-row",
+                                "payload": {"q": "question"},
+                                "gold": {"sql": query},
+                                "split": split,
+                            }
+                        )
+                        + "\n"
+                    )
+                    MODULE.RESULTS.clear()
+                    MODULE.check_dataset(
+                        path,
+                        input_field="payload.q",
+                        expected_field="gold.sql",
+                        evaluator_method="sql-structure",
+                    )
+                    result = next(
+                        (r for r in MODULE.RESULTS if r.check == "dataset-integrity"),
+                        None,
+                    )
+                    if expected_status == MODULE.FAIL:
+                        self.assertIsNotNone(result)
+                        self.assertEqual(result.status, MODULE.FAIL, result.detail)
+                        self.assertIn("line 1", result.detail)
+                        # The RULE and the POSITION travel; the row's own text
+                        # does not. This line asserted `FROM` - a slice of the
+                        # gold answer - was present, which pinned the leak in
+                        # place rather than catching it. The parser quotes the
+                        # token it stopped on, and that token is as long as the
+                        # literal it came from.
+                        self.assertIn("expected ')'", result.detail)
+                        self.assertIn("at token 5", result.detail)
+                        self.assertNotIn("FROM", result.detail)
+                        # The id is in the METRIC, not in the cause string. Put
+                        # it back in the cause and the grouping below it keys on
+                        # a string that varies per row, so one repeated cause
+                        # fills every reported slot and pushes the other
+                        # findings out of the message entirely.
+                        self.assertNotIn("sql-row", result.detail)
+                        self.assertEqual(
+                            result.metrics["unreadable_gold_ids"],
+                            # DIGESTS, matching `dataset-ids` beside it: a row
+                            # id is free text and this payload is published.
+                            [MODULE.row_id_digest("sql-row")],
+                        )
+                    else:
+                        self.assertIsNone(result)
+                        shape = next(
+                            r for r in MODULE.RESULTS if r.check == "dataset-shape"
+                        )
+                        self.assertEqual(shape.status, MODULE.PASS)
+                        self.assertEqual(shape.metrics["scoreable_rows"], 1)
+
+    def test_a_gold_answer_never_reaches_the_finding(self) -> None:
+        """No cell of the customer's dataset travels in a check's output.
+
+        `references/run-safety.md` keeps per-example `expected` text out of even
+        the LOCAL optimization logs unless the user asks for it after being told
+        what is retained - `TRAIGENT_LOG_EXAMPLE_CONTENT=false` is set in the
+        wrapper for exactly that. A finding is not that opt-in, and it travels
+        further than the logs do: preflight's output is read by the coding
+        assistant, so it leaves the machine, and readiness forwards this detail
+        verbatim onto the card and into the written report.
+
+        The parser quotes the token it stopped on, so a gold answer ending in a
+        string literal put that literal in the message in full. The row stays
+        identifiable by id; its content does not travel.
+        """
+        # A neutral synthetic token, and it carries an APOSTROPHE on purpose.
+        # The first version of this fixture held a health-PII-shaped string,
+        # which proved nothing the property does not and trips third-party
+        # scanners in a public repository. More importantly it had no
+        # apostrophe, so it could not see the case that actually broke the
+        # first implementation: `repr` switches to double quotes for a value
+        # containing `'`, and SQL's `''` escape makes that the common case.
+        gold_literal = "Qx7WidgetCo O''Brien 4821 serial"
+        unescaped = gold_literal.replace("''", "'")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "gold.jsonl"
+            path.write_text(
+                json.dumps(
+                    {
+                        "id": "unreadable-row",
+                        "input": "question",
+                        "output": f"SELECT a FROM t '{gold_literal}'",
+                    }
+                )
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            published = json.dumps(
+                [
+                    {
+                        "check": r.check,
+                        "detail": r.detail,
+                        "metrics": r.metrics,
+                    }
+                    for r in MODULE.RESULTS
+                ],
+                default=str,
+            )
+            # Every word of it, not just the whole string: a redaction that
+            # kept one token because it split the literal on spaces would pass
+            # an assertion against the joined form. Checked against the
+            # un-escaped spelling too, since that is what the lexer produces.
+            for word in set(
+                gold_literal.split() + unescaped.split() + [gold_literal, unescaped]
+            ):
+                if len(word) > 3:
+                    self.assertNotIn(word, published)
+            integrity = next(
+                r for r in MODULE.RESULTS if r.check == "dataset-integrity"
+            )
+            self.assertIn("cannot self-match", integrity.detail)
+        self.assertEqual(
+            integrity.metrics["unreadable_gold_ids"],
+            [MODULE.row_id_digest("unreadable-row")],
+        )
+
+    def test_unreadable_gold_is_counted_apart_from_malformed_rows(self) -> None:
+        """The count the card's sentence is built from, kept off the wrong one.
+
+        `malformed_rows` is what readiness calls "structural, and ONLY that",
+        and its clause says "malformed lines, or missing the input or
+        expected-answer field". This row has neither: it parses and carries
+        both fields, and the only thing wrong with it is that the comparator
+        cannot read its answer. Counting it as malformed is how #378 printed a
+        sentence that was false about the file under it, so the two counts stay
+        apart here and the reason is built from whichever fired.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tune.jsonl"
+            path.write_text(
+                json.dumps({"input": "a", "output": "SELECT d FROM t", "id": "ok"})
+                + "\n"
+                + json.dumps(
+                    {"input": "b", "output": "SELECT TOP 5 a FROM t", "id": "bad"}
+                )
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            result = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+            self.assertEqual(result.status, MODULE.FAIL, result.detail)
+            self.assertEqual(result.metrics["unreadable_gold_rows"], 1)
+            self.assertEqual(
+                result.metrics["malformed_rows"],
+                0,
+                "a row that parses and carries both fields is not malformed",
+            )
+            self.assertEqual(result.metrics["invalid_rows"], 1)
+
+    def test_one_repeated_cause_does_not_crowd_out_the_other_findings(self) -> None:
+        """The grouping bound, which an id inside the cause string defeats.
+
+        `check_dataset` bounds its message by DISTINCT causes, not by rows, and
+        caps the list at `MAX_REPORTED_DATASET_ERRORS`. Six rows failing for one
+        reason are one cause; with the id interpolated into that string they
+        were six, and they spent all five slots - so a malformed line and a row
+        missing its input, both in the same file, were never reported at all.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tune.jsonl"
+            lines = [
+                json.dumps(
+                    {
+                        "id": f"r{index}",
+                        "input": f"q{index}",
+                        "output": "SELECT EXTRACT(YEAR FROM d) FROM t",
+                    }
+                )
+                for index in range(6)
+            ]
+            lines.append("{not json")
+            lines.append(json.dumps({"id": "noinput", "output": "SELECT a FROM t"}))
+            path.write_text("\n".join(lines) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            result = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+            self.assertIn("(+5 more)", result.detail)
+            self.assertIn("invalid JSON", result.detail)
+            self.assertIn("input", result.detail)
+            self.assertEqual(result.metrics["unreadable_gold_rows"], 6)
+            self.assertEqual(result.metrics["malformed_rows"], 2)
+
+    def test_a_malformed_row_beside_unreadable_gold_keeps_both_counts(self) -> None:
+        """The must-allow side of the split: the structural count stays real.
+
+        Separating the two buckets must not empty the first one. A file holding
+        both reports both, with both clauses on the card.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tune.jsonl"
+            path.write_text(
+                json.dumps({"input": "a", "output": "SELECT a FROM t", "id": "ok"})
+                + "\n{not json\n"
+                + json.dumps(
+                    {"input": "c", "output": "SELECT TOP 5 a FROM t", "id": "bad"}
+                )
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(path, evaluator_method="sql-structure")
+            result = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+            self.assertEqual(result.metrics["malformed_rows"], 1)
+            self.assertEqual(result.metrics["unreadable_gold_rows"], 1)
+            self.assertEqual(result.metrics["invalid_rows"], 2)
+
+    def test_a_blank_expected_answer_stays_an_outputs_finding(self) -> None:
+        """A row with no answer is unlabelled, not gold the comparator refused.
+
+        Both findings are real and they have different remedies. Reporting the
+        empty one as unreadable SQL names the wrong repair and zeroes
+        `unlabelled_rows` for a row that is exactly that.
+        """
+        for empty in ("", None):
+            with self.subTest(empty=empty), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "tune.jsonl"
+                path.write_text(
+                    json.dumps(
+                        {"id": "good", "input": "a", "output": "SELECT a FROM t"}
+                    )
+                    + "\n"
+                    + json.dumps({"id": "blank", "input": "b", "output": empty})
+                    + "\n"
+                )
+                MODULE.RESULTS.clear()
+                MODULE.check_dataset(path, evaluator_method="sql-structure")
+                checks = {r.check: r for r in MODULE.RESULTS}
+                self.assertNotIn("dataset-integrity", checks)
+                self.assertEqual(checks["dataset-outputs"].status, MODULE.FAIL)
+                self.assertIn("empty", checks["dataset-outputs"].detail)
+
+    def test_unrelated_evaluators_do_not_check_gold_as_sql(self) -> None:
+        for method in (None, "composite", "exact-match"):
+            with self.subTest(
+                method=method
+            ), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "rows.jsonl"
+                path.write_text(
+                    json.dumps({"input": "question", "output": "label"}) + "\n"
+                )
+                MODULE.RESULTS.clear()
+                MODULE.check_dataset(path, evaluator_method=method)
+                self.assertFalse(
+                    any(r.check == "dataset-integrity" for r in MODULE.RESULTS)
+                )
+
+    def test_a_verbatim_comparator_declared_composite_is_still_checked(self) -> None:
+        """#603: the FORM is the contract, not the declared word.
+
+        `references/evaluation-and-dataset.md` tells a customer with their own
+        comparator to declare `composite`, so a verbatim copy declared that way
+        is the case the declared word misses - and it fails on exactly the same
+        rows, because it IS this comparator.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copyfile(MODULE.STRUCTURAL_SQL_ASSET, root / "sql_structure.py")
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(
+                "from sql_structure import structural_match\n\n\n"
+                "def task_score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return structural_match(output, expected)\n"
+            )
+            path = root / "rows.jsonl"
+            path.write_text(
+                json.dumps({"input": "q", "output": "SELECT TOP 5 a FROM t"}) + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(
+                path, evaluator_method="composite", evaluator=evaluator
+            )
+            integrity = next(
+                (r for r in MODULE.RESULTS if r.check == "dataset-integrity"), None
+            )
+            self.assertIsNotNone(
+                integrity, "a verbatim copy declared composite went unchecked"
+            )
+            self.assertEqual(integrity.metrics["unreadable_gold_rows"], 1)
+
+    def test_an_unrelated_evaluator_file_does_not_turn_the_check_on(self) -> None:
+        """The must-allow side of #603: a real composite evaluator is left alone."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evaluator = root / "evaluator.py"
+            evaluator.write_text(
+                "def task_score(*, output, expected, input_data, metadata):\n"
+                "    del input_data, metadata\n"
+                "    return 1.0 if output.strip() == expected.strip() else 0.0\n"
+            )
+            path = root / "rows.jsonl"
+            path.write_text(
+                json.dumps({"input": "q", "output": "SELECT TOP 5 a FROM t"}) + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(
+                path, evaluator_method="composite", evaluator=evaluator
+            )
+            self.assertFalse(
+                any(r.check == "dataset-integrity" for r in MODULE.RESULTS)
+            )
 
 
 class StaticPreflightTests(unittest.TestCase):

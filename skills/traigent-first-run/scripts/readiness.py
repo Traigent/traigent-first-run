@@ -1494,6 +1494,13 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # routes `review-answer-key` needs no new slug to route this. A second
     # spelling for one remedy is the drift this table exists to remove.
     "dataset-unsound-expected-outputs": "review-answer-key",
+    # Same remedy again, and for the third time no new word is minted: a gold
+    # row the declared comparator cannot read is one somebody has to look at
+    # before the number means anything, which is what `review-answer-key`
+    # already says. It is NOT `repair-dataset` - that remedy blocks under
+    # `dataset-integrity-fail`, and a remedy must answer the waiting question
+    # the same way under all of its conditions, which is the rule #197 bought.
+    "dataset-gold-unreadable": "review-answer-key",
     "evaluator-absent": "connect-evaluator",
     # NOT `connect-evaluator`, and the pair is the same shape as `get-data`
     # against `connect-real-data` one table over. `connect-evaluator` means
@@ -1783,6 +1790,25 @@ ROUTE_CATEGORY: dict[str, str] = {
     # Generated answer keys ask for review; unsound customer answers ask only
     # when their selected-run membership is unknown or includes a flagged row.
     "dataset-unsound-expected-outputs": CLAIM_SCOPING,
+    # CLAIM_SCOPING, and this is the whole of #599.
+    #
+    # The sql-structure gold self-check first landed as a counted contribution
+    # to `dataset-integrity-fail`, which blocks: one unreadable row in five
+    # hundred stopped the run. The rows that trip it are valid SQL - EXTRACT,
+    # TOP, FETCH FIRST, a named window - and what cannot read them is the
+    # grammar THIS GUIDE ships. So the block priced our own boundary as the
+    # customer's defect, which is precisely what #501 closed and what the
+    # reversal recorded above `COMPLETE_CALIBRATION` says a first run may not
+    # do: "deduct for what the customer controls; never for what we do not
+    # own", disclosure rather than a gate.
+    #
+    # An unreadable gold row is also inert, not harmful: `structural_match`
+    # returns 0.0 whenever either side is unparsed, so the row scores zero
+    # against every configuration and separates none of them. It costs a row
+    # of measurable material, which the scoreable counts already carry, and it
+    # bounds what the card may claim about the answer key. That is this
+    # category, and the ceiling it takes is the one its nearest sibling takes.
+    "dataset-gold-unreadable": CLAIM_SCOPING,
     "evaluator-absent": CREATION_OR_REPAIR,
     # Both scope, for the reason the dataset provenance rungs do and for one
     # more of their own. Nothing is broken: the substitute was created by this
@@ -2168,6 +2194,14 @@ UNSOUND_ANSWER_CEILING = 70
 # thing: the run cannot present as STRONG while a material share of what it
 # grades against is believed wrong.
 #
+# A MEASUREMENT shares this number since #599, and that does not break the
+# rule above. The rule forbids an opinion being HARSHER than a measurement,
+# and `dataset-gold-unreadable` is not harsher than anything - it is ranked
+# last of the four here. What the two share is the scope of the claim they
+# bound: both say the answer key cannot be taken at face value for part of the
+# set. That scope, not how the finding was established, is what this band
+# grades, which is why one constant serves both.
+#
 # Now the tie. `mostly-synthetic` is a COUNT - preflight read the provenance
 # field on every row and divided. This is the assistant's reading of a
 # customer's domain, and on collected data it can simply be wrong. Where two
@@ -2336,6 +2370,19 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int | None], ...]], ...] =
             ("dataset-mostly-synthetic", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-mostly-undeclared", MOSTLY_SYNTHETIC_CEILING),
             ("dataset-unsound-expected-outputs", UNSOUND_ANSWER_CEILING),
+            # The same constant, not a second one holding the same number -
+            # #402 was filed for exactly that. Both bound what a card may
+            # claim when the answer key is in question, and if that band ever
+            # moves these two move together.
+            #
+            # Ranked LAST of the four at this ceiling, and NOT by the
+            # counted-before-inferred rule, which would put it first: it is
+            # the only measurement among them. What orders this tie is the
+            # BREADTH of the claim each one bounds, which is what a ceiling
+            # grades. The three before it speak about the corpus or the answer
+            # key as a whole; this one names a handful of rows, the narrowest
+            # claim of the four.
+            ("dataset-gold-unreadable", UNSOUND_ANSWER_CEILING),
             ("dataset-below-measurable-size", WIRING_CHECK_CEILING),
             ("dataset-generated-answer-key", GENERATED_ANSWER_KEY_CEILING),
             (
@@ -2569,6 +2616,15 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "a dataset can be mostly generated with a sound answer key, or fully "
         "collected with a wrong one, so it narrows no provenance condition and "
         "none narrows it"
+    ),
+    "dataset-gold-unreadable": (
+        "a row whose expected answer the declared comparator cannot PARSE is "
+        "orthogonal to one whose expected answer is WRONG: either can hold "
+        "without the other, and the assistant's reading of the answer key says "
+        "nothing about whether this grammar reads it. It does not narrow "
+        "`dataset-integrity-fail` either, and that is the point of the pair - "
+        "those rows parsed as JSONL and carry both fields, so the structural "
+        "finding is false about them. A file can have both, counted separately"
     ),
 }
 
@@ -3827,6 +3883,20 @@ class DatasetFacts:
     # file, and the same file with its ids renumbered, are both scored. Source:
     # tests/test_readiness_adapter.py#RepeatedRowsAreCappedOnTheirOwnAccountTests.
     integrity_failed: bool = False
+    # Rows whose expected answer the declared comparator cannot read, so they
+    # would score 0.0 against every candidate including a perfect one. The
+    # FOURTH finding to reach this ceiling, and it is a count here rather than
+    # part of `integrity_failed` above for the reason that field's own comment
+    # gives: it is "structural, and ONLY that", and this row is not structural.
+    # It parsed, and it carries both fields. Folding it in would print
+    # "malformed lines, or missing the input or expected-answer field" over a
+    # file with neither - the same sentence #378 was filed for.
+    #
+    # Zero when preflight published no such count, which is an older payload:
+    # the clause simply does not fire and the score is what it was. No refusal,
+    # because unlike the id counts this one cannot be the sole explanation of a
+    # FAIL written by a preflight that did not measure it.
+    gold_rows_unreadable: int = 0
     # Id values used by more than one row, and generated rows carrying no
     # stable id: the two findings this check makes, as counts rather than as
     # one boolean.
@@ -6892,7 +6962,9 @@ def score_dataset(
     if not facts.exists or not facts.rows:
         # Three different situations used to produce one sentence, and one
         # remedy. Say which, and route each to its own.
-        unreadable = facts.unreadable_rows or 0
+        # Both counts: a row the comparator cannot read WAS read, so it is a
+        # shape this score did not recognise, never an absent dataset.
+        unreadable = (facts.unreadable_rows or 0) + facts.gold_rows_unreadable
         detail = facts.unreadable_detail
         if facts.dataset_supplied and unreadable:
             # Rows were counted and none matched the shape the run read them
@@ -6921,15 +6993,41 @@ def score_dataset(
             # The cause is preflight's to state, not this adapter's to guess:
             # every wording invented here was false for at least one of the
             # inputs that reach this branch.
-            reason = (
-                "A dataset was provided and no row in it matched the shape "
-                "this score read it with, so nothing could be measured yet"
-            )
+            # Which of the two states this is, because the remedies are
+            # opposite and #600 was filed on printing the wrong one. When the
+            # gold check is what emptied the set, the fields ARE the ones the
+            # dataset uses - `check_dataset` found and read both, which is the
+            # precondition for that check running at all - so telling the
+            # customer to select different ones sends them to re-check the one
+            # thing that is correct.
+            gold_only = facts.gold_rows_unreadable and not (facts.unreadable_rows or 0)
+            if gold_only:
+                reason = (
+                    f"A dataset was provided and all {facts.gold_rows_unreadable} "
+                    "of its expected answers are ones the comparator this run "
+                    "declared cannot read, so nothing could be scored yet"
+                )
+            else:
+                reason = (
+                    "A dataset was provided and no row in it matched the shape "
+                    "this score read it with, so nothing could be measured yet"
+                )
             reason += f": {detail}." if detail else "."
             reason += (
-                " That describes the reading, not a defect in the data - open "
-                "the file, select the fields it actually uses, and re-score; "
-                "this can clear on the next step."
+                (
+                    " The field was found and read; what this grammar cannot"
+                    " parse is the answers inside it. Check the selection"
+                    " first - every answer failing at once is what pointing at"
+                    " the wrong expected-answer field looks like - then, if it"
+                    " is the right field, a method that reads these answers or"
+                    " a repair of them. Re-score either way."
+                )
+                if gold_only
+                else (
+                    " That describes the reading, not a defect in the data - open "
+                    "the file, select the fields it actually uses, and re-score; "
+                    "this can clear on the next step."
+                )
             )
             evidence = "provided, no row matched the shape it was read with"
             caps.append(
@@ -7363,6 +7461,10 @@ def score_dataset(
     # that is real and exactly counted still prices, whatever severity preflight
     # chose to print it at. Since #438 that is the ordinary case, not the exotic
     # one - a generated corpus with no stable id WARNs.
+    # Gold the comparator cannot read raises its OWN cap below, and is not in
+    # this disjunction: it is the one finding here that is our boundary rather
+    # than the customer's, so it bounds the claim instead of stopping the run
+    # (#599, and the reasoning is beside its `ROUTE_CATEGORY` entry).
     if (
         facts.integrity_failed
         or facts.id_check_failed
@@ -7388,6 +7490,36 @@ def score_dataset(
                 reason,
             )
         )
+    if facts.gold_rows_unreadable:
+        one = facts.gold_rows_unreadable == 1
+        rows = "row's expected answer" if one else "rows' expected answers"
+        they = "that row" if one else "those rows"
+        caps.append(
+            Cap(
+                "dataset-gold-unreadable",
+                UNSOUND_ANSWER_CEILING,
+                f"{facts.gold_rows_unreadable} {rows} cannot be read by the "
+                f"comparator this run declared, so {they} would score zero "
+                "against every candidate including a correct one and separate "
+                "none of them. The grammar that cannot read them is this "
+                "guide's, not a defect in the answers: the rest of the set is "
+                "scored as it stands, and what this bounds is any claim about "
+                "the answer key as a whole. Repair or replace those rows, or "
+                "declare a method that reads them, to score them too.",
+                blocks=False,
+                # And ASKS, for the reason its `review-answer-key` siblings
+                # carry: `recommended_action` returns `proceed` unless a cap
+                # blocks or asks, so `blocks=False` alone would emit "nothing
+                # to do" about a finding whose entire content is a set of rows
+                # somebody has to look at. Asking does NOT stop the run - the
+                # ceiling stands, the status stays OK, and nothing waits on an
+                # answer - which is what keeps this consistent with the
+                # report-and-continue rule in `evaluation-and-dataset.md`:
+                # what is refused there is offering the user a menu of
+                # interpretations, not naming the rows.
+                asks=True,
+            )
+        )
     return combine("dataset", subs), caps
 
 
@@ -7402,7 +7534,14 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     collide and generated rows carrying no stable id are the two `dataset-ids`
     makes, and both were folded into the same boolean. (Since #438 only the
     collision FAILs; both still reach this ceiling, because the caller tests
-    the counts and not the status.) Measured on a 90-row file whose
+    the counts and not the status.)
+
+    A fourth arrived with the sql-structure self-check and has since LEFT: gold
+    the declared comparator cannot read was counted here, and #599 moved it to
+    its own non-blocking cap because this ceiling waits and that finding is our
+    grammar's limit rather than the customer's defect. What it shares with the
+    three is only that those rows parse and carry both fields, so the first
+    clause was false about them too. Measured on a 90-row file whose
     30 exact repeats copied their ids: every row parsed, every row carried an
     answer, `dataset-shape` PASSed "90 valid JSONL rows", the card printed
     "90/90 rows carry an expected output" - and the blocking cap two lines below
@@ -7422,7 +7561,10 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     The ceiling does not move. All three say the same thing about what the run
     may do: some of this material cannot be used as it stands, and the rest can,
     which is exactly what 35 is for. What changes is only which of them the
-    customer is told about.
+    customer is told about. The departed fourth is what showed that "the rest
+    can" was doing the work here - it is true of unreadable gold as well, and
+    once the deduction is not the customer's to clear, 35 is the wrong number
+    rather than the wrong sentence.
     """
     reasons: list[str] = []
     if facts.integrity_failed:
@@ -7450,6 +7592,10 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
             f"{facts.generated_rows_without_id} generated {rows} no stable id, "
             f"so there is nothing to name {them} by"
         )
+    # Gold the comparator cannot read is NOT a clause here. It had one while it
+    # fed this ceiling; since #599 it carries its own non-blocking cap, and
+    # naming it in both would report one finding twice - once under a remedy
+    # that waits and once under one that does not.
     if not reasons:
         return None
     joined = "; ".join(reasons)
@@ -12031,6 +12177,53 @@ def row_review_from_document(document: Any, facts: DatasetFacts) -> RowReview:
     )
 
 
+# The newest `preflight.py --json` payload this script knows how to read.
+# Compared against the stamp preflight writes, NOT bumped when a metric is
+# merely added - absence is already a measured none here, which is the
+# backward direction and was never the gap.
+READABLE_PAYLOAD_VERSION = 1
+# The check name preflight writes it under. A literal on each side meant a
+# rename on either silently disabled the refusal - the same fail-open shape
+# #602 exists to close - so the name is a constant here and the contract test
+# asserts the two agree.
+PAYLOAD_CHECK = "preflight-payload"
+
+
+def refuse_unreadable_payload_version(records: Sequence[dict[str, Any]]) -> None:
+    """Refuse a payload written by a preflight newer than this script (#602).
+
+    The forward direction was the undetectable one: a key this script has never
+    heard of looks exactly like a key an older preflight never wrote, so the
+    finding it carried was dropped in silence and the run went on with a score
+    that was quietly weaker. Every other skew on this boundary refuses by name,
+    and three issues - #401, #409 and #69 - each hit it once before a stamp
+    existed to ask.
+
+    Absent is the old, lenient case and stays lenient: a payload from before
+    the stamp scores exactly as it did. Unusable is refused like any other
+    malformed count rather than treated as absent, because a stamp that cannot
+    be read is the one state a consumer must not guess at.
+    """
+    for record in records:
+        if record.get("check") != PAYLOAD_CHECK:
+            continue
+        version = (record.get("metrics") or {}).get("payload_version")
+        if not _is_count(version) or version < 1:
+            raise PreflightInputError(
+                "the preflight payload carries payload_version="
+                f"{version!r}, which is not a version number - re-run "
+                "preflight.py --json from the same version as this script"
+            )
+        if version > READABLE_PAYLOAD_VERSION:
+            raise PreflightInputError(
+                f"the preflight payload is version {version} and this script "
+                f"reads up to {READABLE_PAYLOAD_VERSION}, so findings it "
+                "carries could be scored wrong or dropped in silence - re-run "
+                "preflight.py --json from the same version as this script"
+            )
+        return
+
+
 def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFacts:
     # `preflight.py --json` emits a list of check records. Anything else is a
     # different document handed to the wrong flag - which used to reach the
@@ -12050,6 +12243,7 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 "--json` prints, and one entry is "
                 f"{type(record).__name__}, not a check record"
             )
+    refuse_unreadable_payload_version(records)
     metrics = _metrics_by_check(records)
     statuses = _status_by_check(records)
     provenance = metrics.get("dataset-provenance", {})
@@ -12122,13 +12316,28 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             exists=False,
             dataset_supplied=supplied,
             # `malformed_rows`, not `invalid_rows`: the latter is
-            # `malformed_rows + unlabelled_rows` (preflight.py), and an
-            # unlabelled row is a row that WAS read. The two agree on every
-            # payload that reaches this return today, because a dataset with
-            # unlabelled rows carries provenance and leaves through the branch
-            # below - so reading the sum was correct only by way of a fact
-            # asserted elsewhere. Read the count that means what this says.
+            # `malformed_rows + unlabelled_rows + unreadable_gold_rows`
+            # (preflight.py), and each of those two addends is a row that WAS
+            # read - one carries no answer, the other an answer the declared
+            # comparator cannot parse. Neither is unreadable in the sense this
+            # field names. Read the count that means what this says, and read
+            # the gold one beside it - because the three do NOT agree on every
+            # payload reaching this return. A file whose gold is ENTIRELY
+            # unreadable arrives here with `malformed_rows` 0 and no
+            # provenance, and on `malformed_rows` alone it scored as
+            # `dataset-absent`: ceiling 20, route `get-data`, a card reading
+            # "holds no rows at all ... nothing to repair" directly above
+            # "2/2 rows are unusable ... repair the working copy". The note
+            # beside ACTION_FOR_CONDITION already argues that - "the customer
+            # has data, so sending them to collect more is the wrong
+            # instruction" - and this is what keeps it true.
             unreadable_rows=integrity.get("malformed_rows"),
+            gold_rows_unreadable=_row_count(
+                integrity.get("unreadable_gold_rows"),
+                "unreadable_gold_rows",
+                required=False,
+                check="dataset-integrity",
+            ),
             unreadable_detail=_dataset_absence_detail(records),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
@@ -12377,6 +12586,20 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
             metrics.get("dataset-split-family", {}).get("holdout_forms")
         ),
         integrity_failed=structurally_failed,
+        # Read off the metric, not the status, for the reason the id counts
+        # below are: preflight measures and this module prices. `required=False`
+        # because a payload written before the count existed must keep scoring
+        # as it did rather than being refused over a number that cannot be the
+        # sole explanation of its FAIL.
+        gold_rows_unreadable=_row_count(
+            # No `.get` default: `required=False` already means "absent is a
+            # measured none", and substituting 0 made that parameter inert - a
+            # later tightening to `required=True` would have done nothing.
+            integrity.get("unreadable_gold_rows"),
+            "unreadable_gold_rows",
+            required=False,
+            check="dataset-integrity",
+        ),
         # Carried whether or not a count explains it - see `id_check_failed`.
         id_check_failed=_failed(statuses, "dataset-ids"),
         # READ FROM THE METRIC AND NOT FROM THE STATUS, the way

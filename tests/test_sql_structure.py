@@ -1740,8 +1740,11 @@ class CommandLine(unittest.TestCase):
                 "  line 2, id 'q2': scores 0.0 against itself: unexpected end "
                 "of expression at the end of the statement",
                 SELF_MATCH_FIX,
-                "  line 4: scores 0.0 against itself: ORDER BY 3 names no "
-                "select item (the list has 2)",
+                # The ordinal itself is no longer echoed: a bare integer out
+                # of the caller's statement is a card or account number as
+                # easily as a column position, and this line is published.
+                "  line 4: scores 0.0 against itself: ORDER BY names no "
+                "select item by position (the list has 2)",
                 SELF_MATCH_FIX,
             ],
         )
@@ -1900,21 +1903,77 @@ class CommandLine(unittest.TestCase):
         ):
             self.assertIn(line, out)
 
-    def test_reasons_name_the_token_that_stopped_the_reader(self) -> None:
+    def test_reasons_name_the_kind_of_token_that_stopped_the_reader(self) -> None:
+        """The KIND, never the token's text.
+
+        These three pinned the token's text until a review found that every
+        consumer of a reason publishes it: the command-line self-check prints
+        to a terminal a coding assistant reads, and `preflight.py` puts it in a
+        finding that reaches the readiness card and the written report. The
+        token is a slice of the caller's data, so `'bar'` here stood for a
+        whole string literal there. The position is kept, which is what makes
+        the reason actionable, and the kind replaces the text - more useful as
+        well as publishable.
+        """
         reason = _MODULE._unreadable_reason
         self.assertIsNone(reason("SELECT a FROM t"))
         self.assertEqual(
             reason("SELECT a FROM t foo bar"),
-            "trailing tokens after the statement at token 6 ('bar')",
+            "trailing tokens after the statement at token 6 (an identifier)",
         )
         self.assertEqual(
-            reason("INSERT INTO t VALUES (1)"), "expected SELECT at token 1 ('insert')"
+            reason("INSERT INTO t VALUES (1)"),
+            "expected SELECT at token 1 (an identifier)",
         )
         self.assertEqual(reason(""), "no statement")
         self.assertEqual(
             reason("SELECT " + "(" * 500 + "1" + ")" * 500 + " FROM t"),
-            "statement nests too deeply at token 41 ('(')",
+            "statement nests too deeply at token 41 (punctuation)",
         )
+
+    def test_no_reason_carries_the_callers_own_text(self) -> None:
+        """The property the kind-naming exists for, over shapes it must cover.
+
+        A scanner over the finished string was tried first and failed exactly
+        here: the text is built by `repr`, which switches to double quotes for
+        a value containing an apostrophe, and SQL's `''` escape makes an
+        apostrophe ordinary rather than exotic. So the cases below are the ones
+        that broke the previous mechanism, plus the plain ones.
+        """
+        summary = _MODULE._unreadable_reason
+        gold_literal = "Qx7WidgetCo O''Brien 4821 serial"
+        unescaped = gold_literal.replace("''", "'")
+        # A red team defeated the first version of this test three ways: its
+        # fragments were words of 4+ characters, so it could not see a single
+        # unlexable character echoed back (`unexpected character '§'`) nor a
+        # bare digit run echoed by the positional-ordinal refusal. A test named
+        # for a universal property, passing while the property is false, is
+        # what lets the next regression through - so the cases below now carry
+        # a one-character marker and a card-shaped ordinal, and every fragment
+        # is checked regardless of length.
+        for statement in (
+            "SELECT a FROM t WHERE x = 1 §",
+            "SELECT a FROM t ORDER BY 4111111111111111",
+            "SELECT a FROM t ORDER BY " + "9" * 5000,
+            f"SELECT * FROM t WHERE a = N'{gold_literal}'",
+            f"SELECT a FROM t '{gold_literal}'",
+            f'SELECT a FROM t "{unescaped}" extra',
+            f"SELECT a FROM t TABLESAMPLE '{gold_literal}'",
+            f"SELECT {unescaped.split()[0]}x FROM t WHERE",
+            f"SELECT a FROM t WHERE x = '{gold_literal}' AND",
+        ):
+            with self.subTest(statement=statement):
+                text = summary(statement)
+                self.assertIsNotNone(text)
+                for fragment in {
+                    unescaped,
+                    gold_literal,
+                    "§",
+                    "4111111111111111",
+                    "9" * 20,
+                    *unescaped.split(),
+                }:
+                    self.assertNotIn(fragment, text, statement[:60])
 
 
 if __name__ == "__main__":

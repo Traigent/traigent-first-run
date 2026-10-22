@@ -23,6 +23,10 @@ Help me run my first Traigent optimization.
 Clone https://github.com/Traigent/traigent-first-run and follow GUIDE.md.
 ```
 
+The guide keeps integration edits small and reversible without refactoring your production code.
+Keys stay in your owner-only local `.env`, never hard-coded or printed. The result includes a
+verified portal link when available, or explains why there is none.
+
 The assistant performs the technical work and asks only when it needs:
 
 - A choice that materially changes the task - which agent to optimize is the first of them.

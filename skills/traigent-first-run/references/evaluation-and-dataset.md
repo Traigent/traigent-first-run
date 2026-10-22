@@ -45,6 +45,26 @@ conjunct-order or alias `equivalent_good`, never a reordered `ORDER BY`; record 
 equivalents as coverage gaps. It imports only the standard library and reaches no engine,
 so it calibrates at the opening gate.
 
+Before any paid phase, preflight checks every gold row in both splits against the bundled
+comparator, without importing user code. It runs when that comparator is what grades the run -
+either the declared method says so, or the evaluator's own form proves it by delegating to a
+byte-identical copy - so declaring `composite` over a verbatim copy does not skip it.
+
+**A failing row bounds the claim; it does not stop the run.** Those rows are valid answers this
+grammar cannot parse, so the limit is ours and the data is not defective: score the rest as it
+stands, say how many rows cannot be scored, and bound any claim about the answer key as a whole.
+Only a file with nothing left to score stops, and then because nothing is measurable, never as a
+verdict on the answers. Between those two, the degenerate-gold bounds below still govern: once the
+unreadable rows are no longer a minority, the exclusion is the story rather than a footnote, so
+stop and put it to the user. The scorer will not do that for you - its cap bounds the claim at
+every count and never blocks - which is why the judgement is stated here. Repair or replace those
+rows, or declare a method that reads them, to score them too - editing a user's expected answers
+needs their approval either way. To list every parser reason at once, run `python
+<copied-sql_structure.py> <combined-split-labelled.jsonl> --expected-field <dot-path>`; exit 1
+names the rows by line and id, and preflight reports the same ids in `unreadable_gold_ids`. Both
+name the rule and the token position and never the answer's own text, so the output is safe to
+paste; open the row itself to see it.
+
 Report a **structural-match score**, not execution correctness. Sorting each select set can accept
 wrong column alignment across compound arms: `SELECT 1, 2 UNION SELECT 3, 4` matches
 `SELECT 1, 2 UNION SELECT 4, 3` although result rows differ. When compounds occur in the task,
@@ -638,6 +658,12 @@ agent paragraph below carries both halves:
   say how many of the expected answers they are; the run proceeds meanwhile.
 - `dataset-unsound-expected-outputs` - bounded, not stopped: "A `no` is never a silent edit" below
   owns whether a question is needed and how to settle it.
+- `dataset-gold-unreadable` - bounded, not stopped, and the limit is OURS: those rows are valid
+  answers this guide's comparator cannot parse, so never call the data defective or enter the
+  creation dependency matrix. Score the rest as it stands, say how many rows cannot be scored and
+  name them from `unreadable_gold_ids`, and bound any claim about the answer key as a whole. Offer
+  the two ways out on one ask - repair or replace those rows, or declare a method that reads them -
+  and remember editing a user's expected answers needs their approval either way.
 - `dataset-tuning-split-empty` - the rows are fine and the split is not: no row on the side the
   search compares on can be scored. Repair the split as `dataset-tune-holdout-overlap` above is
   repaired; do not enter the creation dependency matrix and do not ask for more data.

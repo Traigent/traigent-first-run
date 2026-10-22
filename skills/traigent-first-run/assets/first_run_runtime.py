@@ -1,22 +1,14 @@
-"""Shared runtime for generated first-run bridges.
+"""Runtime for generated first-run bridges.
 
-`scripts/generate_adapter.py` writes a thin bridge that imports the customer's own agent and
-evaluator unchanged and hands every run to this module. Everything that spends money or touches
-the network is here, once, so a bridge cannot carry its own copy of a guarantee:
+The generator delegates unchanged customer callables here. Bridge.start pins phase and
+launch figures before loading .env, then enforces offline execution and the copied
+wrapper spend ledger. Tests compare ledger ASTs: reserve before calls, settle costs,
+enforce the approved total and request timeout.
 
-* the offline boundary and phase pin, read before `.env` exactly as the hand-adapted wrapper in
-  `references/sdk-execution.md` reads them;
-* the spend ledger, a verbatim copy of that wrapper's functions (a test compares the two syntax
-  trees, so they cannot drift apart): reserve before a call, settle after, refuse past the approved
-  total, per-request timeout;
-* provider interception on `litellm.completion` and the OpenAI client's `chat.completions.create`.
-  A call through any other transport is not seen, so the generator refuses such agents and the
-  first row's ledger delta double-checks it;
-* the dataset reader, which never opens the holdout file in the baseline phase.
-
-Importing this module has no side effect and needs no approval figure: `Bridge.start()` does the
-enforcing, and only the run commands call it. A bridge's `score` function therefore loads under
-the credential-stripped calibration child.
+Only LiteLLM completion and OpenAI chat completions are intercepted. The generator
+refuses unsupported transports; the first row also requires an observed ledger delta.
+Baseline dataset reads exclude holdout rows. Import starts no run and needs no approval figures:
+Bridge.start enforces them, so calibration can load score without starting a run.
 """
 
 from __future__ import annotations
@@ -471,8 +463,15 @@ def inherited(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+# The launch environment for this route, filled by `Bridge.start` before it
+# loads the project `.env` - the same guarantee `run_wrapper.py` takes with its
+# own snapshot. Empty until then, so a reader that runs before the capture
+# falls back to `os.environ` and behaves as it always did.
+LAUNCH_ENVIRONMENT: dict[str, str] = {}
+
+
 def positive_number(name: str, *, default: float | None = None) -> float:
-    raw = os.environ.get(name)
+    raw = (LAUNCH_ENVIRONMENT or os.environ).get(name)
     if raw is None or not raw.strip():
         if default is None:
             raise SystemExit(f"{name} is required (a positive number of seconds)")
@@ -985,15 +984,34 @@ class Bridge:
         APPROVED_FIGURES = {
             name: os.environ.get(name) for name in APPROVED_FIGURE_NAMES
         }
+        # Before the load, and for the reason the wrapper states: every value
+        # that decides what this process DOES is read from here afterwards, so
+        # a stale `.env` cannot supply one the launcher left out. Measured on
+        # this route before the snapshot: a project `.env` set the per-request
+        # timeout to an hour, where the code's own default is two minutes.
+        LAUNCH_ENVIRONMENT.clear()
+        LAUNCH_ENVIRONMENT.update(os.environ)
         try:
             from dotenv import load_dotenv
 
             load_dotenv(self.project_root / ".env", override=False)
         except ImportError:
             pass
-        os.environ.pop("TRAIGENT_FIRST_RUN_PHASE", None)
+        # Blanked, not popped, for the reason `run_wrapper.py` states where it
+        # does the same: `load_dotenv` fills an ABSENT name and leaves a
+        # present one alone, so popping leaves exactly the state a later load
+        # refills - and on this route the customer's own agent is imported and
+        # run after this point, free to call `load_dotenv()` itself. Nothing
+        # here re-reads them (the phase is captured above, the figures into
+        # `APPROVED_FIGURES`), so this is about what a child process and any
+        # later reader see.
+        os.environ["TRAIGENT_FIRST_RUN_PHASE"] = ""
         for name in APPROVED_FIGURE_NAMES:
-            os.environ.pop(name, None)
+            os.environ[name] = ""
+        # The SDK's own dotenv opt-out, which the wrapper sets and this route
+        # did not: an `import traigent` here would otherwise load the project
+        # `.env` again, after the blanking above.
+        os.environ["TRAIGENT_SKIP_DOTENV"] = "1"
         if phase != "baseline":
             raise SystemExit(
                 "a generated bridge runs the local baseline; the connected phase is not "
@@ -1019,7 +1037,15 @@ class Bridge:
         MODEL_REQUEST_TIMEOUT_SECONDS = positive_number(
             "TRAIGENT_FIRST_RUN_MODEL_REQUEST_TIMEOUT_SECONDS", default=120.0
         )
-        import litellm as _litellm
+        dotenv_disabled = os.environ.get("PYTHON_DOTENV_DISABLED")
+        os.environ["PYTHON_DOTENV_DISABLED"] = "1"
+        try:
+            import litellm as _litellm
+        finally:
+            if dotenv_disabled is None:
+                os.environ.pop("PYTHON_DOTENV_DISABLED", None)
+            else:
+                os.environ["PYTHON_DOTENV_DISABLED"] = dotenv_disabled
 
         litellm = _litellm
         if probe:
@@ -1107,7 +1133,11 @@ class Bridge:
         document = {
             "kind": "first-run-bridge-baseline",
             "phase": "baseline",
-            "complete": complete and len(results) == len(configs),
+            "complete": (
+                complete
+                and len(results) == len(configs)
+                and not any(result["n_failed"] for result in results)
+            ),
             "tuning_rows": len(rows),
             "baseline_config": self.spec["baseline"]["config"],
             "results": results,
@@ -1121,6 +1151,10 @@ class Bridge:
             json.dumps(document, indent=2, default=str) + "\n", encoding="utf-8"
         )
         print(f"wrote {out}")
+        if any(result["n_failed"] for result in results):
+            print(
+                "Partial evaluation: failed examples; means are diagnostic, not a complete comparison"
+            )
         unscored = [r for r in results if not r["n_scored"]]
         if unscored:
             print(f"{len(unscored)} configuration(s) scored no row; see failure_types")
@@ -1133,31 +1167,60 @@ class Bridge:
         base = self.spec["baseline"]["config"]
         row = self.tuning_rows()[0]
 
-        def request_for(config: dict):
+        def _probe_label(knob: str, value: object) -> str:
+            # The knob's name always, and the value only when it is short and
+            # plain. A user-owned baseline's space is the customer's material,
+            # and a published string built out of `repr` is exactly what
+            # ledger 0156 records leaking a row's text.
+            shown = repr(value)
+            return f"{knob}={shown}" if len(shown) <= 40 else knob
+
+        # Why a configuration produced no request, by exception TYPE only.
+        # `unobserved` says a knob was not demonstrated; it cannot say whether
+        # the agent raised or returned quietly, and those have different fixes
+        # (#601). The class NAME is a diagnostic; `str(exc)` is not recorded
+        # anywhere, because provider exception text can carry a key or a prompt
+        # - the same rule `references/sdk-execution.md` states for the run log.
+        raised: dict[str, str] = {}
+
+        def request_for(config: dict, label: str):
             PROBED_REQUESTS.clear()
             try:
                 self.agent_output(row, config)
             except _ProbeStop:
                 pass
             except Exception as error:
-                return f"error:{type(error).__name__}"
+                raised[label] = type(error).__name__
+                return None
             return PROBED_REQUESTS[0] if PROBED_REQUESTS else None
 
-        reference = request_for(base)
+        reference = request_for(base, "baseline")
         verdicts = {}
         for knob, values in space.items():
             if len(set(map(repr, values))) < 2:
                 verdicts[knob] = "not-searched"
                 continue
-            changed = [
-                request_for({**base, knob: value}) != reference
+            observations = [
+                request_for({**base, knob: value}, _probe_label(knob, value))
                 for value in values
                 if value != base[knob]
             ]
-            verdicts[knob] = "visible" if reference and any(changed) else "ignored"
-        if reference is None or str(reference).startswith("error:"):
+            if reference is None or any(item is None for item in observations):
+                verdicts[knob] = "unobserved"
+            else:
+                verdicts[knob] = (
+                    "visible"
+                    if any(item != reference for item in observations)
+                    else "ignored"
+                )
+        if reference is None:
             verdicts = {knob: "unobserved" for knob in space}
-        print(json.dumps({"wiring": verdicts}, indent=2))
+        report = {"wiring": verdicts}
+        if raised:
+            # Only when something raised, so a clean probe's output is
+            # byte-identical to what it printed before.
+            report["raised"] = raised
+        print(json.dumps(report, indent=2))
         return (
             0 if all(v in {"visible", "not-searched"} for v in verdicts.values()) else 3
         )

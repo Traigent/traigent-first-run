@@ -31,6 +31,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -516,6 +517,35 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
     spec, document, root = validate(config, root)
     if not inside(run_dir, root):
         raise Refusal(["the run directory must be inside the project"])
+    bridge_path = run_dir.resolve() / BRIDGE_NAME
+    # The ABSOLUTE path, and the breadth is deliberate - measured, not assumed.
+    # `next` prints a project-relative scorer, but calibration does not keep it:
+    # `calibrate_evaluator.py` rebuilds the option as
+    # `f"{Path(scorer_file).resolve()}:{scorer_name}"` and its worker splits that
+    # on its FIRST colon, so a colon anywhere above the project root truncates the
+    # file part. Checking only the relative path was tried and the executed
+    # control refused it: generation succeeded and calibration then died with
+    # `cannot load /tmp/.../project` - see
+    # `test_a_colon_above_the_project_root_breaks_calibration`.
+    #
+    # Known limit, pre-existing and not introduced here: on Windows every
+    # absolute path carries a drive-letter colon, so this refuses there always -
+    # but calibration cannot load such a scorer either, for the same first-colon
+    # reason. The guard reports that earlier rather than causing it. Making
+    # Windows work needs `calibrate_evaluator` to stop round-tripping the pair
+    # through one colon-joined string, which is a change to that contract.
+    if ":" in str(bridge_path):
+        raise Refusal(
+            [
+                "calibration's FILE.py:FUNCTION format cannot represent a bridge path containing ':', and the resolved path "
+                f"{bridge_path} contains one. On POSIX, choose a project "
+                "directory without ':'. On Windows there is no such choice - "
+                "every absolute path carries a drive-letter colon - and the "
+                "hand-adapted route is calibrated through the same "
+                "colon-joined pair, so it is no way around this: use a POSIX "
+                "environment, WSL included"
+            ]
+        )
     spec["project_root"] = os.path.relpath(
         root, run_dir
     )  # run dir -> project, nesting-proof
@@ -537,6 +567,9 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
     (run_dir / "config-space.json").write_text(
         json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    relative_bridge = bridge_path.relative_to(root.resolve()).as_posix()
+    if relative_bridge.startswith("-"):
+        relative_bridge = "./" + relative_bridge
     return {
         "bridge": str(run_dir / BRIDGE_NAME),
         "runtime": str(run_dir / RUNTIME_NAME),
@@ -546,8 +579,8 @@ def generate(config_path: Path, root: Path, run_dir: Path) -> dict:
         "agent": f"{spec['agent']['file']}:{spec['agent']['function']}",
         "evaluator": f"{spec['evaluator']['file']}:{spec['evaluator']['function']}",
         "next": [
-            "python traigent-runs/adapter_bridge.py probe",
-            "calibrate_evaluator.py --scorer traigent-runs/adapter_bridge.py:score",
+            f"python {shlex.quote(relative_bridge)} probe",
+            f"calibrate_evaluator.py --scorer {shlex.quote(relative_bridge + ':score')}",
         ],
     }
 

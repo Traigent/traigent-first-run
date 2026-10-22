@@ -294,9 +294,23 @@ selected route lists at run time, then verify each id is live before scaling. Mi
 **Default: generate the bridge.** Write `traigent-runs/adapter.json` (`assets/adapter.schema.json`)
 from mappings the user approved; `scripts/generate_adapter.py suggest` only proposes them. Then
 `generate_adapter.py generate --config ... --project-root ...` imports their agent and evaluator
-unchanged, and `python traigent-runs/adapter_bridge.py probe` (wiring, no keys) and the baseline
-command run under the shared runtime's ledger and offline boundary. Calibrate the evaluator with `--scorer
-traigent-runs/adapter_bridge.py:score`. Edit the bundled wrapper only when generation refuses, with every reason printed (another
+unchanged, and the probe (wiring, no keys) and the baseline command run under the shared runtime's
+ledger and offline boundary. Run the commands the generator prints under "next" and calibrate with
+the scorer it prints there, rather than typing either path: both follow the run directory actually
+selected, and are already shell-quoted.
+
+A generated-bridge baseline that ends **exit 3** has not produced a complete comparison, and the
+printed means are diagnostic only. Three states reach it: a configuration scored no row, some
+examples failed, or the phase hit its wall-clock bound. **A timeout is not this paragraph's** - with
+or without completed trials it follows `run-safety.md`'s Recovery rules, which own it. For the other
+two: do not read a **winner** from the run and do not re-run it blind, because the spend already
+happened. The cumulative debit is still carried forward exactly as below - that is a budget figure,
+not a result, and dropping it would launch the next phase against the full ceiling again. Say plainly
+that the comparison is incomplete and what it cost, report the per-configuration failure types and
+counts the record carries, and fix the cause before any further paid phase. Approving more spend on
+an unexplained exit 3 is buying the same result twice.
+
+Edit the bundled wrapper only when generation refuses, with every reason printed (another
 transport than OpenAI or litellm, an engine-reaching evaluator) or for the connected phase.
 
 Use one production-compatible function for baseline and optimization. Adapt only these sites in
@@ -321,6 +335,29 @@ process variables it reads.
   and held-out scoring, as described below.
 
 The runnable wrapper is bundled at `assets/run_wrapper.py`. Copy it to `traigent-runs/run_wrapper.py` and adapt only the tagged sites listed above; every other line stays verbatim. Do not retype the wrapper. The five short phase fences below run from separate files beside that copy.
+
+The GENERATED BRIDGE's probe - not the bundled wrapper's `probe_wiring`, which has its own four
+verdicts and raises rather than exiting - prints one verdict per searched knob and exits 0 only when
+every one is visible or not-searched. **visible** - at least one declared value produced a request
+differing from the baseline's, which is the only verdict that demonstrates a dimension at all. It is
+not proof that every value differs: each alternative is compared with the baseline and never with
+the others, so two alternatives that build the same request still read visible and a Cartesian grid
+would pay for the duplicate. **not-searched** - fewer than two distinct values, so the knob
+claims no dimension and nothing is owed. **ignored** - requests were captured and did not differ, so
+the agent does not act on that knob; the dimension is a no-op and the space should lose it.
+**unobserved** - some configuration placed no request at all, so nothing was demonstrated either
+way; this is not evidence the knob is ignored. A `raised` object appears beside the verdicts when a
+configuration failed, naming the exception class only - never its message, which can carry a key or
+a prompt. An unobserved knob whose configuration raised is a defect in the agent under that value; an
+unobserved knob that raised nothing returned without calling the provider, which is usually a
+short-circuit or a cache. Fix the cause and re-probe; the probe is free, so there is never a reason
+to carry an unobserved knob into a paid phase.
+
+The bundled wrapper's `probe_wiring` answers a stricter question over the same knobs and so has two
+verdicts of its own, which `run-safety.md` sends readers here for: **partial** - the values are
+distinct for some models or tuning inputs and not others, so a Cartesian grid would pay duplicates;
+**invisible** - no model and no input ever changes the request. Both fail, and that probe raises
+instead of exiting.
 
 After adapting the wrapper and before asking for paid approval, run the local proof with no approved figures or timeout:
 

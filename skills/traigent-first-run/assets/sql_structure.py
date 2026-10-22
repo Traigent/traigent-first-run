@@ -299,6 +299,24 @@ class _SqlSyntaxError(Exception):
     """Internal signal that a string cannot be read as a SELECT statement."""
 
 
+# What a reason may say about the token it stopped on. The KIND is publishable;
+# the token's text is a slice of the caller's data and is not - see
+# ``_Parser._where``, which is the only reader of this map, and
+# ``_parse_primary``'s refusal beside it.
+# CPython refuses `int()` on a literal longer than this, with a ValueError that
+# is not a parse error. Nothing legitimate indexes a select list with a number
+# this long, so the parser bounds the run before converting it.
+_MAX_ORDINAL_DIGITS = 4300
+_KIND_NAMES = {
+    "id": "an identifier",
+    "kw": "a keyword",
+    "num": "a number",
+    "str": "a string literal",
+    "punc": "punctuation",
+    "op": "an operator",
+}
+
+
 # ---------------------------------------------------------------------------
 # Canonical ordering helpers
 # ---------------------------------------------------------------------------
@@ -493,7 +511,16 @@ def _tokens(text: str) -> list[_Token]:
                 index += len(symbol)
                 break
         else:
-            raise _SqlSyntaxError(f"unexpected character {char!r}")
+            # The OFFSET, not the character. A single character looks
+            # harmless and is still a slice of the caller's statement, and
+            # this reason is published like every other one - a universal
+            # property with a one-character exemption is not a property. The
+            # offset is what makes it actionable: the reader opens the row and
+            # looks there.
+            raise _SqlSyntaxError(
+                f"unexpected character at offset {index} "
+                "(not valid in a SELECT statement)"
+            )
     return out
 
 
@@ -554,11 +581,29 @@ class _Parser:
         return token is not None and token[0] == "id" and token[1] in words
 
     def _where(self) -> str:
-        """The current position, for the reason a statement could not be read."""
+        """The current position, for the reason a statement could not be read.
+
+        Names the token's KIND and never its text. Every consumer of a reason
+        publishes it - the command-line self-check prints to a terminal a
+        coding assistant reads, and ``preflight.py`` puts it in a finding that
+        reaches the readiness card and the written report - while the token
+        itself is a slice of the caller's data, as long as the literal it came
+        from. ``references/run-safety.md`` keeps per-example expected text out
+        of even the local run logs without an informed opt-in, and a finding is
+        not that opt-in.
+
+        This is the only place that can hold the line. Redacting the finished
+        string was tried and does not work: the text is built by ``repr``,
+        which switches to double quotes for a value containing an apostrophe,
+        so a scanner looking for ``'`` walks straight past ``"O'Brien ..."`` -
+        and SQL's own ``''`` escape makes an apostrophe the common case rather
+        than the exotic one. The kind is also the more useful half: a reader
+        wanting the token has the row id beside it and can open the row.
+        """
         token = self._peek()
         if token is None:
             return "at the end of the statement"
-        return f"at token {self._pos + 1} ({token[1]!r})"
+        return f"at token {self._pos + 1} ({_KIND_NAMES.get(token[0], 'a token')})"
 
     def _accept_kw(self, *words: str) -> str | None:
         if self._at_kw(*words):
@@ -995,7 +1040,9 @@ class _Parser:
             return ("row", tuple(values))
         if kind == "id":
             return self._parse_name_primary()
-        raise _SqlSyntaxError(f"unexpected token {value!r}")
+        # The kind, not the value: this is the second of the two places a
+        # reason could carry the caller's own text. See `_Parser._where`.
+        raise _SqlSyntaxError(f"unexpected {_KIND_NAMES.get(kind, 'token')}")
 
     def _parse_keyword_primary(self, value: str) -> _Node:
         if value in ("NULL", "TRUE", "FALSE"):
@@ -1246,12 +1293,21 @@ def _select_item_for_ordinal(
         return None
     if any(item[0] == "star" for item, _alias in items):
         return None
-    position = int(term[1])
-    if not 1 <= position <= len(items):
+    # Length first, and `int()` only on a run short enough to convert. CPython
+    # refuses an integer literal over 4300 digits with a ValueError, which is
+    # not a `_SqlSyntaxError` - so a gold answer ending `ORDER BY <5000 nines>`
+    # escaped every reader of this module and took the whole preflight down as
+    # "internal error, treat nothing as checked". A digit run that long names
+    # no select item either, so it refuses here as the unreadable input it is.
+    if len(term[1]) > _MAX_ORDINAL_DIGITS or not 1 <= int(term[1]) <= len(items):
+        # The POSITION is not echoed. It is a bare integer out of the caller's
+        # own statement - a card number, an account number or a record id is
+        # exactly the shape that reaches here - and this reason is published
+        # like every other (see `_Parser._where`).
         raise _SqlSyntaxError(
-            f"{clause} {term[1]} names no select item (the list has {len(items)})"
+            f"{clause} names no select item by position (the list has " f"{len(items)})"
         )
-    return items[position - 1][0]
+    return items[int(term[1]) - 1][0]
 
 
 def _norm_positional(

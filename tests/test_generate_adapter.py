@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -169,6 +170,170 @@ class Project:
 
 
 class GenerationTests(unittest.TestCase):
+    def test_next_commands_follow_the_selected_run_directory(self) -> None:
+        for relative, command_path in (
+            ("traigent-runs", "traigent-runs/adapter_bridge.py"),
+            ("qa/runs", "qa/runs/adapter_bridge.py"),
+            ("qa/my runs", "qa/my runs/adapter_bridge.py"),
+            ("-runs", "./-runs/adapter_bridge.py"),
+        ):
+            with self.subTest(relative=relative):
+                project = Project(self)
+                done = project.generate(project.root / relative)
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                commands = json.loads(done.stdout)["next"]
+                probe = shlex.split(commands[0])
+                scorer = shlex.split(commands[1])[-1]
+                self.assertEqual(probe[1], command_path)
+                self.assertEqual(scorer, f"{command_path}:score")
+                executed = subprocess.run(
+                    [sys.executable, "-B", *probe[1:]],
+                    cwd=project.root,
+                    env={"PATH": os.environ.get("PATH", ""), "HOME": str(project.root)},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    executed.returncode, 0, executed.stdout + executed.stderr
+                )
+                # Consume the emitted scorer option through the actual CLI. The
+                # fixture evaluator only compares strings and cannot place a call.
+                calibrated = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(CALIBRATE),
+                        *shlex.split(commands[1])[1:],
+                        "--expected",
+                        "billing",
+                        "--good",
+                        "billing",
+                        "--equivalent-good",
+                        "billing",
+                        "--partial",
+                        "x",
+                        "--bad",
+                        "y",
+                        "--score-mode",
+                        "binary",
+                        "--allow-execution",
+                        "--json",
+                    ],
+                    cwd=project.root,
+                    env={"PATH": os.environ.get("PATH", ""), "HOME": str(project.root)},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(
+                    calibrated.returncode, 0, calibrated.stdout + calibrated.stderr
+                )
+                self.assertTrue(json.loads(calibrated.stdout)["passed"])
+
+    def test_next_commands_resolve_a_noncanonical_project_root(self) -> None:
+        project = Project(self)
+        config = project.root.parent / "adapter.json"
+        config.write_text(json.dumps(project.config))
+        generated = MODULE.generate(
+            config, project.root / ".." / "project", project.root / "qa" / "runs"
+        )
+        self.assertEqual(generated["next"][0], "python qa/runs/adapter_bridge.py probe")
+
+    def test_partial_baselines_are_diagnostic_and_fail(self) -> None:
+        for different_rows in (False, True):
+            with self.subTest(different_rows=different_rows):
+                condition = (
+                    '(text.startswith("technical") == (model == "openai/m-small"))'
+                    if different_rows
+                    else 'text.startswith("technical")'
+                )
+                agent = AGENT.replace(
+                    "reply = litellm",
+                    f"if {condition}:\n        raise ValueError('fixture failure')\n    reply = litellm",
+                )
+                project = Project(self, agent=agent)
+                self.assertEqual(project.generate().returncode, 0)
+                done = project.bridge("baseline")
+                self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+                document = json.loads(
+                    (project.runs / "baseline-results.json").read_text()
+                )
+                self.assertFalse(document["complete"])
+                self.assertIn("diagnostic", done.stdout)
+                self.assertEqual(
+                    [
+                        (
+                            r["n_scored"],
+                            r["n_failed"],
+                            r["failure_types"],
+                            r["mean_score"],
+                        )
+                        for r in document["results"]
+                    ],
+                    [(1, 1, {"ValueError": 1}, 1.0)] * 2,
+                )
+                if different_rows:
+                    self.assertNotEqual(
+                        document["results"][0]["rows"], document["results"][1]["rows"]
+                    )
+
+    def test_an_unobserved_alternative_does_not_prove_wiring(self) -> None:
+        for action in (
+            "raise ValueError('fixture failure')",
+            "return {'result': {'label': 'x'}}",
+        ):
+            with self.subTest(action=action):
+                agent = AGENT.replace(
+                    "reply = litellm",
+                    f'if model == "openai/m-large":\n        {action}\n    reply = litellm',
+                )
+                project = Project(self, agent=agent)
+                self.assertEqual(project.generate().returncode, 0)
+                done = project.bridge("probe")
+                self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+                self.assertEqual(
+                    json.loads(done.stdout)["wiring"]["model"], "unobserved"
+                )
+
+    def test_an_alternative_error_after_capture_does_not_prove_wiring(self) -> None:
+        agent = """
+import litellm
+
+def answer(text, model, temperature):
+    try:
+        litellm.completion(model=model, messages=[{"role": "user", "content": text}])
+    finally:
+        if model == "openai/m-large":
+            raise ValueError("fixture failure after request capture")
+"""
+        project = Project(self, agent=agent)
+        self.assertEqual(project.generate().returncode, 0)
+        done = project.bridge("probe")
+        self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+        self.assertEqual(json.loads(done.stdout)["wiring"]["model"], "unobserved")
+
+    def test_an_all_failed_or_timed_out_baseline_stays_incomplete(self) -> None:
+        for agent, environment in (
+            (
+                AGENT.replace(
+                    "reply = litellm",
+                    "raise ValueError('fixture failure')\n    reply = litellm",
+                ),
+                {},
+            ),
+            (AGENT, {"TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS": "0.000000001"}),
+        ):
+            with self.subTest(environment=environment):
+                project = Project(self, agent=agent)
+                self.assertEqual(project.generate().returncode, 0)
+                done = project.bridge("baseline", env=environment)
+                self.assertEqual(done.returncode, 3, done.stdout + done.stderr)
+                document = json.loads(
+                    (project.runs / "baseline-results.json").read_text()
+                )
+                self.assertFalse(document["complete"])
+
     def test_generation_is_deterministic(self) -> None:
         first = Project(self)
         self.assertEqual(first.generate().returncode, 0)
@@ -242,6 +407,112 @@ class GenerationTests(unittest.TestCase):
 
 
 class RefusalTests(unittest.TestCase):
+    def test_colon_in_a_bridge_path_is_refused_before_any_generated_write(self) -> None:
+        """Both placements, because calibration resolves before it splits.
+
+        `test_a_colon_above_the_project_root_breaks_calibration` below runs the
+        consumer and shows why `project-root` belongs here and not in a
+        must-allow list.
+        """
+        for location in ("run-directory", "project-root"):
+            with self.subTest(location=location):
+                project = Project(self)
+                if location == "project-root":
+                    renamed = project.root.with_name("project:colon")
+                    project.root.rename(renamed)
+                    project.root = renamed
+                run_dir = project.root / (
+                    "qa:run" if location == "run-directory" else "traigent-runs"
+                )
+                originals = {path.name: sha(path) for path in project.root.iterdir()}
+                done = project.generate(run_dir)
+                self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+                self.assertFalse(run_dir.exists(), "a refusal must write nothing")
+                self.assertEqual(
+                    {path.name: sha(path) for path in project.root.iterdir()},
+                    originals,
+                )
+                refusal = " ".join(json.loads(done.stdout)["refused"])
+                self.assertIn("FILE.py:FUNCTION", refusal)
+                self.assertIn("cannot represent", refusal)
+
+    def test_a_colon_above_the_project_root_breaks_calibration(self) -> None:
+        """Why the refusal reads the ABSOLUTE path and not the printed one.
+
+        The guard looks broad: `next` prints a project-relative scorer, and both
+        `load_function` and `loadable_callable_spec` partition the text as given,
+        so reading those two alone says an ancestor colon is harmless. It is not.
+        `calibrate_evaluator` does not keep the relative string - it rebuilds the
+        option as `f"{Path(scorer_file).resolve()}:{scorer_name}"` and the worker
+        splits THAT on its first colon.
+
+        So this test runs the consumer instead of reading it. It generates with
+        the refusal lifted, into a project whose PARENT carries the colon, and
+        asserts calibration fails - which is what narrowing the guard to the
+        relative path would ship. If calibration ever stops round-tripping the
+        pair through one colon-joined string, this test goes red and the guard
+        can then be narrowed to the relative path, which would also let it work
+        on Windows, where every absolute path carries a drive-letter colon.
+        """
+        # Generate into a clean project, THEN introduce the colon above it, so
+        # this measures calibration's behaviour rather than the guard's.
+        project = Project(self)
+        self.assertEqual(project.generate().returncode, 0)
+        renamed = project.root.with_name("project:colon")
+        project.root.rename(renamed)
+        project.root = renamed
+        project.runs = project.root / "traigent-runs"
+        self.assertTrue((project.runs / "adapter_bridge.py").is_file())
+
+        # The PROJECT-RELATIVE scorer, which is what `next` prints and what the
+        # assistant runs. The absolute form was a dead tripwire: argparse's own
+        # `loadable_callable_spec` rejects it before the run ever reaches the
+        # round-trip at issue, so removing that round-trip left this test green.
+        scorer = "traigent-runs/adapter_bridge.py:score"
+        calibrated = subprocess.run(
+            [
+                sys.executable,
+                "-B",
+                str(CALIBRATE),
+                "--scorer",
+                scorer,
+                "--expected",
+                "billing",
+                "--good",
+                "billing",
+                "--equivalent-good",
+                "billing",
+                "--partial",
+                "x",
+                "--bad",
+                "y",
+                "--score-mode",
+                "binary",
+                "--allow-execution",
+                "--json",
+            ],
+            cwd=project.root,
+            env={"PATH": os.environ.get("PATH", ""), "HOME": str(project.root)},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        output = calibrated.stdout + calibrated.stderr
+        self.assertNotEqual(
+            calibrated.returncode,
+            0,
+            "an ancestor colon must still break calibration, or this guard can "
+            "narrow to the relative path - which is also what Windows needs: " + output,
+        )
+        # Red for the colon and for nothing else. `cannot load <ancestor>` is
+        # the load failing on a path truncated at the first colon; a bare
+        # prefix match would also accept any unrelated error that happened to
+        # echo the full project path.
+        self.assertIn(
+            f"cannot load {str(project.root).partition(':')[0]}",
+            output,
+        )
+
     def refused(self, project: Project) -> list[str]:
         done = project.generate()
         self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
@@ -560,6 +831,376 @@ def isolate_openai(test: unittest.TestCase) -> None:
 ASYNC_AGENT = AGENT.replace("def answer", "async def answer").replace(
     "litellm.completion(", "await litellm.acompletion("
 )
+
+
+class RuntimeImportEnvironmentTests(unittest.TestCase):
+    def test_real_sdk_import_preserves_launch_state_and_provider_settings(self) -> None:
+        program = """import importlib.util,json,os,socket,sys
+from pathlib import Path
+def deny(*a, **k): raise RuntimeError('network denied')
+socket.socket.connect=deny
+socket.getaddrinfo=deny
+if sys.argv[3] == 'traced' and sys.gettrace() is None:
+    def trace(frame,event,arg): return trace
+    sys.settrace(trace)
+spec=importlib.util.spec_from_file_location('runtime_environment',sys.argv[1])
+rt=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(rt)
+rt.Bridge({},Path(sys.argv[2])).start(probe=True)
+print(json.dumps({'figures':rt.APPROVED_FIGURES,'phase':os.environ.get('TRAIGENT_FIRST_RUN_PHASE'),'env_figures':[os.environ.get(n) for n in rt.APPROVED_FIGURE_NAMES],'provider':os.environ.get('OPENAI_API_KEY'),'launch_provider':os.environ.get('ANTHROPIC_API_KEY'),'file_value':os.environ.get('FIRST_RUN_FIXTURE_FILE_VALUE'),'disabled':os.environ.get('PYTHON_DOTENV_DISABLED'),'trace_active':sys.gettrace() is not None}))
+"""
+        for traced, preference in ((False, None), (True, None)):
+            with self.subTest(traced=traced, preference=preference):
+                project = Project(self)
+                project.runs.mkdir()
+                (project.root / ".env").write_text(
+                    "TRAIGENT_FIRST_RUN_PHASE=connected\n"
+                    "TRAIGENT_FIRST_RUN_COST_CEILING_USD=99\n"
+                    "TRAIGENT_FIRST_RUN_COST_SPENT_USD=88\n"
+                    "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD=77\n"
+                    "OPENAI_API_KEY=dummy_key_from_project_file\n"
+                    "FIRST_RUN_FIXTURE_FILE_VALUE=explicit-load\n"
+                )
+                environment = {
+                    "PATH": os.environ.get("PATH", ""),
+                    "HOME": str(project.root),
+                    "LITELLM_LOCAL_MODEL_COST_MAP": "true",
+                    "TRAIGENT_FIRST_RUN_PHASE": "baseline",
+                    "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "2",
+                    "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "0",
+                    "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.01",
+                    "ANTHROPIC_API_KEY": "fixture-launch-provider",
+                }
+                for name in ("COVERAGE_PROCESS_START", "COVERAGE_FILE"):
+                    if name in os.environ:
+                        environment[name] = os.environ[name]
+                if preference is not None:
+                    environment["PYTHON_DOTENV_DISABLED"] = preference
+                script = project.runs / "runtime_import.py"
+                script.write_text(program)
+                done = subprocess.run(
+                    [
+                        sys.executable,
+                        "-B",
+                        str(script),
+                        str(RUNTIME),
+                        str(project.runs),
+                        "traced" if traced else "plain",
+                    ],
+                    cwd=project.root,
+                    env=environment,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+                state = json.loads(done.stdout)
+                # BLANK, not absent, and that is the fix rather than a
+                # regression: popping leaves the one state `load_dotenv`
+                # refills, and on this route the customer's own agent is
+                # imported and run after the clearing, free to load their
+                # `.env` itself. The wrapper already blanked these; this pin
+                # was written while the bridge still popped them.
+                self.assertEqual(state["phase"], "", state)
+                self.assertEqual(state["env_figures"], ["", "", ""], state)
+                self.assertEqual(list(state["figures"].values()), ["2", "0", "0.01"])
+                self.assertEqual(state["disabled"], preference)
+                self.assertEqual(state["launch_provider"], "fixture-launch-provider")
+                self.assertEqual(
+                    state["provider"],
+                    (
+                        "sk-probe-never-sent"
+                        if preference == "1"
+                        else "dummy_key_from_project_file"
+                    ),
+                )
+                self.assertEqual(
+                    state["file_value"], None if preference == "1" else "explicit-load"
+                )
+                if traced:
+                    self.assertTrue(state["trace_active"])
+
+    def test_sdk_import_restores_preference_and_connected_is_refused(
+        self,
+    ) -> None:
+        import builtins
+        import types
+        from unittest import mock
+
+        real_import = builtins.__import__
+        for phase, fails in (
+            ("baseline", False),
+            ("baseline", True),
+            ("connected", True),
+        ):
+            for preference in (None, "", "0", "1", "custom"):
+                with self.subTest(phase=phase, preference=preference, fails=fails):
+                    project = Project(self)
+                    runtime = load_runtime("rt_import_failure")
+                    seen = []
+
+                    def import_litellm(name, *args, **kwargs):
+                        if name == "litellm":
+                            seen.append(os.environ.get("PYTHON_DOTENV_DISABLED"))
+                            if fails:
+                                raise ImportError("fixture SDK import failure")
+                            return types.ModuleType("litellm")
+                        return real_import(name, *args, **kwargs)
+
+                    environment = {"TRAIGENT_FIRST_RUN_PHASE": phase}
+                    if preference is not None:
+                        environment["PYTHON_DOTENV_DISABLED"] = preference
+                    with mock.patch.dict(os.environ, environment, clear=True):
+                        with mock.patch(
+                            "builtins.__import__", import_litellm
+                        ), mock.patch.object(runtime, "install_recorders"):
+                            error, message = (
+                                (ImportError, "fixture SDK")
+                                if phase == "baseline"
+                                else (SystemExit, "local baseline")
+                            )
+                            if fails:
+                                with self.assertRaisesRegex(error, message):
+                                    runtime.Bridge({}, project.runs).start(probe=True)
+                            else:
+                                runtime.Bridge({}, project.runs).start(probe=True)
+                        self.assertEqual(
+                            os.environ.get("PYTHON_DOTENV_DISABLED"), preference
+                        )
+                    self.assertEqual(seen, ["1"] if phase == "baseline" else [])
+
+
+class CanonicalRuntimeOutcomeTests(unittest.TestCase):
+    """Exercise the shipped runtime, including its saved result and launch status."""
+
+    def runtime_bridge(self, agent=AGENT):
+        import contextlib
+        import types
+        from unittest import mock
+
+        @contextlib.contextmanager
+        def fixture():
+            project = Project(self, agent=agent)
+            spec, _, _ = MODULE.validate(project.config, project.root)
+            project.runs.mkdir()
+            placed = []
+
+            def completion(**request):
+                placed.append(request)
+                return types.SimpleNamespace(
+                    choices=[
+                        types.SimpleNamespace(
+                            finish_reason="stop",
+                            message=types.SimpleNamespace(
+                                content=request["mock_response"]
+                            ),
+                        )
+                    ],
+                    usage={"cost": 0.001},
+                )
+
+            async def acompletion(**request):
+                return completion(**request)
+
+            transport = types.ModuleType("litellm")
+            transport.completion = completion
+            transport.acompletion = acompletion
+            transport.num_retries = 0
+            environment = {
+                "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "1",
+                "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "0",
+                "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.001",
+                "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS": "1",
+            }
+            from openai.resources.chat.completions import (
+                AsyncCompletions,
+                Completions,
+            )
+
+            with (
+                mock.patch.dict(os.environ, environment, clear=True),
+                mock.patch.dict(sys.modules, {"litellm": transport}),
+                mock.patch.object(sys, "path", list(sys.path)),
+                mock.patch.object(sys, "dont_write_bytecode", True),
+                mock.patch.object(Completions, "create", Completions.create),
+                mock.patch.object(AsyncCompletions, "create", AsyncCompletions.create),
+                mock.patch.object(
+                    Completions, "_first_run_ledgered", False, create=True
+                ),
+            ):
+                runtime = load_runtime("rt_outcomes")
+                try:
+                    yield runtime, runtime.Bridge(spec, project.runs), placed
+                finally:
+                    runtime.atexit.unregister(runtime.report_run_spend)
+
+        return fixture()
+
+    def baseline_result(self, bridge):
+        import contextlib
+        import io
+
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            status = bridge.run_baseline()
+        document = json.loads((bridge.run_dir / "baseline-results.json").read_text())
+        return status, document, stdout.getvalue()
+
+    def test_a_complete_baseline_persists_every_selected_row(self) -> None:
+        with self.runtime_bridge() as (_, bridge, placed):
+            status, document, output = self.baseline_result(bridge)
+        self.assertEqual(status, 0)
+        self.assertTrue(document["complete"])
+        self.assertEqual(document["tuning_rows"], 2)
+        self.assertEqual(len(document["results"]), 2)
+        self.assertEqual(len(placed), 4)
+        for result in document["results"]:
+            self.assertEqual([row["id"] for row in result["rows"]], ["a", "b"])
+            self.assertEqual(result["mean_score"], 1.0)
+            self.assertEqual(result["n_failed"], 0)
+        self.assertNotIn("diagnostic", output)
+
+    def test_partial_baselines_persist_failures_without_claiming_completion(
+        self,
+    ) -> None:
+        for condition, selected_ids in (
+            ('text.startswith("technical")', [["a"], ["a"]]),
+            (
+                '(text.startswith("technical") == (model == "openai/m-small"))',
+                [["a"], ["b"]],
+            ),
+        ):
+            with self.subTest(condition=condition):
+                agent = AGENT.replace(
+                    "reply = litellm",
+                    f"if {condition}:\n        raise ValueError('fixture failure')\n    reply = litellm",
+                )
+                with self.runtime_bridge(agent) as (_, bridge, placed):
+                    status, document, output = self.baseline_result(bridge)
+                self.assertEqual(status, 3)
+                self.assertFalse(document["complete"])
+                self.assertIn("diagnostic", output)
+                self.assertEqual(len(placed), 2)
+                self.assertEqual(
+                    [
+                        [row["id"] for row in result["rows"]]
+                        for result in document["results"]
+                    ],
+                    selected_ids,
+                )
+                for result in document["results"]:
+                    self.assertEqual(result["n_scored"], 1)
+                    self.assertEqual(result["n_failed"], 1)
+                    self.assertEqual(result["failure_types"], {"ValueError": 1})
+                    self.assertEqual(result["mean_score"], 1.0)
+
+    def test_an_all_failed_baseline_keeps_the_failure_evidence(self) -> None:
+        agent = AGENT.replace(
+            "reply = litellm",
+            "raise ValueError('fixture failure')\n    reply = litellm",
+        )
+        with self.runtime_bridge(agent) as (_, bridge, placed):
+            status, document, output = self.baseline_result(bridge)
+        self.assertEqual(status, 3)
+        self.assertFalse(document["complete"])
+        self.assertEqual(placed, [])
+        self.assertIn("scored no row", output)
+        self.assertEqual(len(document["results"]), 2)
+        for result in document["results"]:
+            self.assertEqual(result["n_failed"], 2)
+            self.assertEqual(result["failure_types"], {"ValueError": 2})
+            self.assertIsNone(result["mean_score"])
+            self.assertEqual(result["rows"], [])
+
+    def test_a_timeout_saves_an_incomplete_result_without_placing_a_call(self) -> None:
+        from unittest import mock
+
+        with self.runtime_bridge() as (runtime, bridge, placed):
+            # Time advances beyond the approved second before the first row starts.
+            with mock.patch.object(runtime.time, "monotonic", side_effect=[0, 2, 2]):
+                status, document, output = self.baseline_result(bridge)
+        self.assertEqual(status, 3)
+        self.assertFalse(document["complete"])
+        self.assertEqual(placed, [])
+        self.assertEqual(len(document["results"]), 1)
+        self.assertEqual(document["results"][0]["rows"], [])
+        self.assertEqual(document["results"][0]["n_failed"], 0)
+        self.assertIn("scored no row", output)
+
+    def test_probe_status_requires_an_observed_request_difference(self) -> None:
+        import contextlib
+        import io
+
+        for label, agent, status, wiring in (
+            ("visible", AGENT, 0, {"model": "visible", "temperature": "not-searched"}),
+            (
+                "ignored",
+                AGENT.replace("model=model,", 'model="openai/m-small",'),
+                3,
+                {"model": "ignored", "temperature": "not-searched"},
+            ),
+            *(
+                (
+                    label,
+                    AGENT.replace(
+                        "reply = litellm",
+                        f'if model == "openai/m-large":\n        {action}\n    reply = litellm',
+                    ),
+                    3,
+                    {"model": "unobserved", "temperature": "not-searched"},
+                )
+                for label, action in (
+                    ("missing alternative", "return {'result': {'label': 'x'}}"),
+                    ("raising alternative", "raise ValueError('fixture failure')"),
+                )
+            ),
+            (
+                "missing reference",
+                AGENT.replace(
+                    "reply = litellm",
+                    'if model == "openai/m-small":\n        return {"result": {"label": "x"}}\n    reply = litellm',
+                ),
+                3,
+                {"model": "unobserved", "temperature": "unobserved"},
+            ),
+            (
+                "raising after capture",
+                """import litellm
+def answer(text, model, temperature):
+    try:
+        litellm.completion(model=model, messages=[{"role": "user", "content": text}])
+    finally:
+        if model == "openai/m-large":
+            raise ValueError("fixture failure after capture")
+""",
+                3,
+                {"model": "unobserved", "temperature": "not-searched"},
+            ),
+        ):
+            with self.subTest(label=label):
+                with self.runtime_bridge(agent) as (_, bridge, placed):
+                    stdout = io.StringIO()
+                    with contextlib.redirect_stdout(stdout):
+                        actual_status = bridge.run_probe()
+                    self.assertEqual(actual_status, status)
+                    report = json.loads(stdout.getvalue())
+                    self.assertEqual(report["wiring"], wiring)
+                    # #601: `unobserved` alone cannot say whether the agent
+                    # raised or returned quietly, and those have different
+                    # fixes. The class name is the diagnostic; the message is
+                    # never recorded, because provider exception text can
+                    # carry a key or a prompt. A clean probe prints no
+                    # `raised` key at all.
+                    if "raising" in label:
+                        self.assertEqual(
+                            list(report["raised"].values()), ["ValueError"]
+                        )
+                        self.assertNotIn("fixture failure", stdout.getvalue())
+                    else:
+                        self.assertNotIn("raised", report)
+                    self.assertEqual(
+                        placed, [], "a wiring proof must place no transport call"
+                    )
 
 
 class FirstRunAuditTests(unittest.TestCase):

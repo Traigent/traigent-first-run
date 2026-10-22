@@ -4827,7 +4827,7 @@ class CopiedActorRouteTests(unittest.TestCase):
         env.chmod(0o600)
         return {"original": original, "copy": copy, "env": env, "duplicate": duplicate}
 
-    def calibrate(self, scorer: Path, *extra: str):
+    def calibrate(self, scorer: Path, *extra: str, cwd: Path | None = None):
         return subprocess.run(
             [
                 sys.executable,
@@ -4854,9 +4854,10 @@ class CopiedActorRouteTests(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
+            cwd=cwd,
         )
 
-    def route(self, files: dict[str, Path], *extra: str):
+    def route(self, files: dict[str, Path], *extra: str, cwd: Path | None = None):
         return self.calibrate(
             files["copy"],
             "--calibrated-copy-of",
@@ -4866,6 +4867,7 @@ class CopiedActorRouteTests(unittest.TestCase):
             "--target-env-file",
             str(files["env"]),
             *extra,
+            cwd=cwd,
         )
 
     # -- the route, taken -------------------------------------------------
@@ -5775,6 +5777,98 @@ class CopiedActorSingleSiteTests(CopiedActorRouteTests):
                 module.read_target_from_env_file(env, "ABSENT")
 
 
+class CopiedActorLoaderTargetTests(unittest.TestCase):
+    def test_public_route_reserves_loader_control_without_redirecting_the_target(self):
+        for name in (
+            "DB_PASSWORD_TARGET",
+            "CALIBRATION_TARGET",
+            "PYTHON_DOTENV_DISABLED",
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                fixture = CopiedActorRouteTests()
+                copy = fixture.COPY.replace(fixture.TARGET_NAME, name)
+                fixture.TARGET_NAME = name
+                root = Path(directory)
+                files = fixture.project(directory, copy_source=copy)
+                guard = root / "guard"
+                guard.mkdir()
+                (guard / "sitecustomize.py").write_text(
+                    "import socket\n"
+                    "def deny(*a,**k): raise RuntimeError('network denied')\n"
+                    "socket.socket.connect=deny\nsocket.getaddrinfo=deny\n"
+                )
+                environment = {
+                    "PATH": os.environ.get("PATH", ""),
+                    "HOME": str(root),
+                    "PYTHONPATH": str(guard),
+                }
+                with unittest.mock.patch.dict(os.environ, environment, clear=True):
+                    process = fixture.route(files, "--timeout", "10", cwd=root)
+                result = json.loads(process.stdout) if process.stdout else {}
+                state = {
+                    "returncode": process.returncode,
+                    "passed": result.get("passed"),
+                    "intended_duplicate": files["duplicate"].exists(),
+                    "wrong_target": (files["copy"].parent / "1").exists(),
+                }
+                if name == "PYTHON_DOTENV_DISABLED":
+                    self.assertEqual(process.returncode, 2, state)
+                    self.assertIn(name, process.stderr)
+                    self.assertIn("loader", process.stderr)
+                    self.assertEqual(process.stdout, "")
+                    self.assertFalse(state["intended_duplicate"], state)
+                else:
+                    self.assertEqual(process.returncode, 0, process.stderr)
+                    self.assertTrue(result["passed"], state)
+                    self.assertEqual(result["calibrated_copy"]["target_name"], name)
+                    self.assertTrue(state["intended_duplicate"], state)
+                self.assertFalse(state["wrong_target"], state)
+
+    def test_reserved_loader_name_is_refused_before_target_read_or_worker(self):
+        module = CopiedActorRouteTests._module()
+        fixture = CopiedActorRouteTests()
+        with tempfile.TemporaryDirectory() as directory:
+            files = fixture.project(directory)
+            arguments = [
+                str(SCRIPT),
+                "--scorer",
+                f"{files['copy']}:score",
+                "--allow-execution",
+                "--calibrated-copy-of",
+                str(files["original"]),
+                "--target-name",
+                "PYTHON_DOTENV_DISABLED",
+                "--target-env-file",
+                str(files["env"]),
+                "--expected",
+                "select 1",
+                "--good",
+                "select 1",
+                "--equivalent-good",
+                " select 1 ",
+                "--partial",
+                "select",
+                "--bad",
+                "not sql",
+            ]
+            diagnostics = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(unittest.mock.patch.object(sys, "argv", arguments))
+                read = stack.enter_context(
+                    unittest.mock.patch.object(module, "read_target_from_env_file")
+                )
+                worker = stack.enter_context(
+                    unittest.mock.patch.object(module, "run_calibration_worker")
+                )
+                stack.enter_context(contextlib.redirect_stderr(diagnostics))
+                self.assertEqual(module.run(), 2)
+            read.assert_not_called()
+            worker.assert_not_called()
+            self.assertIn("loader", diagnostics.getvalue())
+            self.assertFalse(files["duplicate"].exists())
+            self.assertFalse((files["copy"].parent / "1").exists())
+
+
 class EngineTargetRefusalUnitTests(unittest.TestCase):
     """`engine_target_refusal` on its own: the finer messages the single-site
     rule now reaches only when the original already carries the shape."""
@@ -5868,6 +5962,135 @@ class EngineTargetRefusalUnitTests(unittest.TestCase):
 
 class CopiedActorWorkerOutputTests(unittest.TestCase):
     """Exercise the real subprocess transport, including malformed replies."""
+
+    def test_copied_environment_is_private_and_preserves_none_versus_empty(self):
+        module = CopiedActorRouteTests._module()
+        for environment in (None, {}, {"PYTHON_DOTENV_DISABLED": "custom"}):
+            for copied in (False, True):
+                with self.subTest(environment=environment, copied=copied):
+                    original = None if environment is None else dict(environment)
+                    observed = []
+
+                    def run(command, **kwargs):
+                        # Only keep the fixture keys, never the inherited environment.
+                        child = kwargs["env"]
+                        observed.append(
+                            (
+                                child is environment,
+                                None if child is None else child.get("FIXTURE_PARENT"),
+                                (
+                                    None
+                                    if child is None
+                                    else child.get("PYTHON_DOTENV_DISABLED")
+                                ),
+                            )
+                        )
+                        return subprocess.CompletedProcess(command, 0, "{}", "")
+
+                    with unittest.mock.patch.dict(
+                        os.environ, {"FIXTURE_PARENT": "present"}, clear=True
+                    ):
+                        with unittest.mock.patch.object(module.subprocess, "run", run):
+                            module.run_calibration_worker(
+                                ["fixture"], copied_actor=copied, env=environment
+                            )
+                        self.assertEqual(
+                            dict(os.environ), {"FIXTURE_PARENT": "present"}
+                        )
+                    self.assertEqual(environment, original)
+                    expected = (
+                        (False, "present" if environment is None else None, "1")
+                        if copied
+                        else (
+                            True,
+                            None,
+                            (
+                                None
+                                if environment is None
+                                else environment.get("PYTHON_DOTENV_DISABLED")
+                            ),
+                        )
+                    )
+                    self.assertEqual(observed, [expected])
+
+    def test_ordinary_authored_worker_can_still_load_project_settings(self):
+        module = CopiedActorRouteTests._module()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = root / ".env"
+            settings.write_text("FIXTURE_SETTING=explicit-load\n")
+            environment = {"PYTHON_DOTENV_DISABLED": "0"}
+            process = module.run_calibration_worker(
+                [
+                    sys.executable,
+                    "-c",
+                    "import os,sys; from dotenv import load_dotenv; "
+                    "load_dotenv(sys.argv[1]); print(os.getenv('FIXTURE_SETTING'))",
+                    str(settings),
+                ],
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=20,
+            )
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertEqual(process.stdout.strip(), "explicit-load")
+            self.assertEqual(environment, {"PYTHON_DOTENV_DISABLED": "0"})
+
+    def test_public_copied_route_does_not_reload_project_settings_under_trace(self):
+        fixture = CopiedActorRouteTests()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            files = fixture.project(
+                directory,
+                copy_source="import litellm\n" + fixture.COPY,
+                original_source="import litellm\n" + fixture.ORIGINAL,
+            )
+            with files["env"].open("a") as settings:
+                settings.write("DB_FILE=fixture-original.sqlite\n")
+            guard = root / "guard"
+            guard.mkdir()
+            records = root / "observations"
+            records.mkdir()
+            (guard / "sitecustomize.py").write_text(
+                "import atexit,json,os,socket,sys\nfrom pathlib import Path\n"
+                "def deny(*a,**k): raise RuntimeError('network denied')\n"
+                "socket.socket.connect=deny\nsocket.getaddrinfo=deny\n"
+                "if '--_worker' in sys.argv:\n"
+                " if sys.gettrace() is None:\n"
+                "  def trace(frame,event,arg): return trace\n"
+                "  sys.settrace(trace)\n"
+                " def record():\n"
+                "  state={'original_reloaded':'DB_FILE' in os.environ,"
+                "'provider_reloaded':'OPENAI_API_KEY' in os.environ,"
+                "'trace_active':sys.gettrace() is not None}\n"
+                "  (Path(os.environ['FIXTURE_OBSERVATIONS'])/str(os.getpid()))"
+                ".write_text(json.dumps(state))\n"
+                " atexit.register(record)\n"
+            )
+            environment = {
+                "PATH": os.environ.get("PATH", ""),
+                "HOME": str(root),
+                "PYTHONPATH": str(guard),
+                "FIXTURE_OBSERVATIONS": str(records),
+                "LITELLM_LOCAL_MODEL_COST_MAP": "true",
+            }
+            with unittest.mock.patch.dict(os.environ, environment, clear=True):
+                process = fixture.route(files, "--timeout", "30", cwd=root)
+                self.assertNotIn("PYTHON_DOTENV_DISABLED", os.environ)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            result = json.loads(process.stdout)
+            self.assertTrue(result["passed"], result)
+            self.assertEqual(
+                result["execution_scope"]["acknowledged_by"], "--calibrated-copy-of"
+            )
+            self.assertTrue(files["duplicate"].exists())
+            observations = [json.loads(path.read_text()) for path in records.iterdir()]
+            self.assertTrue(observations)
+            self.assertTrue(all(state["trace_active"] for state in observations))
+            self.assertFalse(any(state["original_reloaded"] for state in observations))
+            self.assertFalse(any(state["provider_reloaded"] for state in observations))
 
     def test_parent_budget_details_remain_concrete_in_final_artifacts(self) -> None:
         module = CopiedActorRouteTests._module()

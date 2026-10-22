@@ -93,6 +93,40 @@ def _provenance_metric(records: list[dict]) -> dict:
     )
 
 
+class SqlGoldReadinessTests(unittest.TestCase):
+    def test_an_unreadable_gold_bounds_the_claim_and_does_not_block(self) -> None:
+        """#599: our grammar's limit is not the customer's defect.
+
+        This pinned the opposite for one day. The gold check landed feeding
+        `dataset-integrity-fail`, which blocks, so one unreadable row stopped
+        the run - and the rows that trip it are valid SQL that this guide's
+        grammar does not cover. #501 closed that pattern ("deduct for what the
+        customer controls; never for what we do not own") and `readiness.py`
+        records reversing the same `blocks=True` once before.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            rows = [
+                {"id": "valid", "input": "first question", "output": "SELECT a FROM t"},
+                {
+                    "id": "invalid",
+                    "input": "second question",
+                    "output": "SELECT TOP 5 a FROM t",
+                },
+            ]
+            dataset = _write_jsonl(Path(directory), "rows.jsonl", rows)
+            score = _score(
+                dataset, preflight_extra=("--evaluator-method", "sql-structure")
+            )
+            cap = _cap(score, "dataset-gold-unreadable")
+            self.assertFalse(cap["blocks"])
+            self.assertEqual(cap["action_kind"], "review-answer-key")
+            self.assertNotIn(
+                "dataset-integrity-fail",
+                [entry["condition"] for entry in score["caps"]],
+                "gold the comparator cannot read is not a structural finding",
+            )
+
+
 def _cap(score: dict, condition: str) -> dict:
     """The named cap, or an AssertionError that says which one was missing.
 
@@ -6826,3 +6860,232 @@ class ARowReviewIsMatchedToTheRowsPreflightReadTests(unittest.TestCase):
         self.assertEqual(process.returncode, 2)
         self.assertIn("row_id_digests", process.stderr)
         self.assertIn("list of", process.stderr)
+
+
+class UnreadableGoldIsCappedOnItsOwnAccountTests(unittest.TestCase):
+    """The #378 defect, in the shape the sql-structure gold check creates.
+
+    A row whose expected answer the bundled comparator cannot read is unusable
+    and must cap. What it is NOT is malformed: it parses, and it carries both
+    the input and the expected-answer field. Routing it through
+    `malformed_rows` made the blocking cap say "malformed lines, or missing the
+    input or expected-answer field" over a file with neither - which is exactly
+    the sentence `dataset_integrity_reason` records being corrected once
+    already, and the reason that docstring gives for building the reason out of
+    the findings that fired.
+
+    Driven end to end through both real scripts, like the sibling class above,
+    because the finding is assembled from a preflight metric and a readiness
+    reason built out of it.
+    """
+
+    def _rows(self, *, readable: bool) -> list[dict]:
+        odd = "SELECT a FROM t" if readable else "SELECT TOP 5 a FROM t"
+        return [
+            {
+                "id": f"q-{index:03d}",
+                "input": f"question {index}",
+                "output": "SELECT a FROM t",
+            }
+            for index in range(1, 12)
+        ] + [{"id": "q-012", "input": "question 12", "output": odd}]
+
+    def _scored(self, *, readable: bool) -> dict:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(
+                Path(raw), "gold.jsonl", self._rows(readable=readable)
+            )
+            return _score(
+                dataset,
+                extra=("--evaluator-method", "sql-structure"),
+                preflight_extra=("--evaluator-method", "sql-structure"),
+            )
+
+    def test_the_cap_bounds_the_claim_and_names_the_comparator_not_malformed_lines(
+        self,
+    ) -> None:
+        score = self._scored(readable=False)
+        cap = _cap(score, "dataset-gold-unreadable")
+        # Does NOT block (#599): one unscoreable row out of twelve leaves
+        # eleven measurable, and the grammar that cannot read it is ours.
+        self.assertFalse(cap["blocks"])
+        self.assertEqual(cap["ceiling"], 70)
+        self.assertEqual(cap["action_kind"], "review-answer-key")
+        self.assertIn("cannot be read by the comparator", cap["reason"])
+        self.assertIn("score zero", cap["reason"])
+        self.assertNotIn(
+            "malformed",
+            cap["reason"],
+            "this row parses and carries both fields; calling it malformed is #378",
+        )
+        self.assertNotIn("missing the input", cap["reason"])
+        self.assertNotIn(
+            "dataset-integrity-fail",
+            [entry["condition"] for entry in score["caps"]],
+        )
+
+    def test_the_same_file_with_readable_gold_carries_no_gold_cap(self) -> None:
+        """The must-allow side: the gold check must not cap a file that is fine."""
+        score = self._scored(readable=True)
+        conditions = [cap["condition"] for cap in score["caps"]]
+        self.assertNotIn("dataset-gold-unreadable", conditions)
+        self.assertNotIn("dataset-integrity-fail", conditions)
+
+    def test_a_payload_without_the_new_count_scores_as_it_did(self) -> None:
+        """Version skew: an older preflight published no `unreadable_gold_rows`.
+
+        Driven through `dataset_facts_from_preflight` rather than by building
+        `DatasetFacts` by hand, because the hand-built version asserts the
+        dataclass default and not the thing this is about - whether the ADAPTER
+        accepts a payload that predates the key. The old shape carried those
+        rows inside `malformed_rows`, so the structural clause is the right one
+        and the new clause must not appear.
+        """
+        records = [
+            {
+                "check": "dataset-integrity",
+                "status": "FAIL",
+                "detail": "2/4 rows (50.0%) are unusable",
+                "metrics": {
+                    "invalid_rows": 2,
+                    "malformed_rows": 2,
+                    "unlabelled_rows": 0,
+                    "candidate_rows": 4,
+                },
+            },
+            {
+                "check": "dataset-provenance",
+                "status": "WARN",
+                "detail": "declared sources: none",
+                "metrics": {
+                    "rows": 4,
+                    "labelled_rows": 2,
+                    "synthetic": False,
+                    "generated_outputs": False,
+                    "collected_rows": 0,
+                    "synthesised_rows": 0,
+                    "undeclared_rows": 4,
+                    "generated_answer_rows": 0,
+                    "answerable_rows": 2,
+                    "sources": [],
+                    "unrecognised_sources": [],
+                },
+            },
+        ]
+        facts = MODULE.dataset_facts_from_preflight(records)
+        self.assertEqual(facts.gold_rows_unreadable, 0)
+        self.assertTrue(facts.integrity_failed)
+        reason = MODULE.dataset_integrity_reason(facts)
+        self.assertIsNotNone(reason)
+        self.assertIn("malformed lines", reason)
+        self.assertNotIn("declared comparator", reason)
+
+    def test_a_file_whose_gold_is_entirely_unreadable_is_not_called_absent(
+        self,
+    ) -> None:
+        """The `exists=False` branch, which the first version of this fix lost.
+
+        When every gold row is unreadable there are no scoreable rows, so
+        preflight emits no provenance and readiness takes its absent-dataset
+        return. Read from `malformed_rows` alone that count is now zero, and
+        the file scored as `dataset-absent`: ceiling 20, route `get-data`, a
+        card saying "holds no rows at all ... nothing to repair" above
+        "2/2 rows are unusable ... repair the working copy". The customer HAS
+        data, which is the case the note beside `ACTION_FOR_CONDITION` says
+        must not be sent to collect more.
+        """
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(
+                Path(raw),
+                "gold.jsonl",
+                [
+                    {
+                        "id": f"q-{i}",
+                        "input": f"q{i}",
+                        "output": "SELECT TOP 5 a FROM t",
+                    }
+                    for i in range(1, 3)
+                ],
+            )
+            score = _score(
+                dataset,
+                extra=("--evaluator-method", "sql-structure"),
+                preflight_extra=("--evaluator-method", "sql-structure"),
+            )
+        conditions = [cap["condition"] for cap in score["caps"]]
+        self.assertNotIn("dataset-absent", conditions)
+        cap = _cap(score, "dataset-shape-unrecognised")
+        self.assertEqual(cap["ceiling"], 25)
+        self.assertNotIn("nothing to repair", cap["reason"])
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+class PreflightPayloadVersionTests(unittest.TestCase):
+    """#602: the forward skew direction, which used to be undetectable.
+
+    An older preflight read by a newer readiness was always handled - absence
+    is a measured none. A NEWER preflight read by an older readiness dropped
+    whatever the new key carried and scored on silently, which is the one
+    failure mode the rest of this boundary refuses by name.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.PREFLIGHT_MODULE = _load("first_run_preflight_for_version", PREFLIGHT)
+        cls.READINESS_MODULE = _load("first_run_readiness_for_version", READINESS)
+
+    def _records(self, version) -> list[dict]:
+        stamp = {
+            "check": self.PREFLIGHT_MODULE.PAYLOAD_CHECK,
+            "status": "PASS",
+            "detail": "payload",
+            "metrics": {"payload_version": version},
+        }
+        return [stamp] if version is not None else []
+
+    def test_the_real_preflight_stamps_a_version_this_script_reads(self) -> None:
+        """Both halves of the contract, read off the two scripts themselves."""
+        self.assertEqual(
+            self.PREFLIGHT_MODULE.PAYLOAD_VERSION,
+            self.READINESS_MODULE.READABLE_PAYLOAD_VERSION,
+        )
+        # And the NAME, which is the half that fails open: readiness skips any
+        # record whose check is not this string, so a rename on either side
+        # would disable the refusal silently rather than break anything.
+        self.assertEqual(
+            self.PREFLIGHT_MODULE.PAYLOAD_CHECK,
+            self.READINESS_MODULE.PAYLOAD_CHECK,
+        )
+
+    def test_a_newer_payload_is_refused_by_name(self) -> None:
+        with self.assertRaises(self.READINESS_MODULE.PreflightInputError) as caught:
+            self.READINESS_MODULE.refuse_unreadable_payload_version(self._records(99))
+        self.assertIn("re-run preflight.py --json", str(caught.exception))
+
+    def test_an_unusable_stamp_is_refused_rather_than_read_as_absent(self) -> None:
+        # `None` is deliberately absent from this list: the helper writes no
+        # stamp for it, which is the must-allow case below, not an unusable
+        # one. `True` is here because `isinstance(True, int)` holds and would
+        # otherwise read as version 1.
+        for bad in ("1", 0, -1, True, 1.5, [], {}):
+            with self.subTest(version=bad):
+                with self.assertRaises(self.READINESS_MODULE.PreflightInputError):
+                    self.READINESS_MODULE.refuse_unreadable_payload_version(
+                        self._records(bad)
+                    )
+
+    def test_a_payload_from_before_the_stamp_still_scores(self) -> None:
+        """The must-allow side: no stamp is the old shape, not a refusal."""
+        self.READINESS_MODULE.refuse_unreadable_payload_version([])
+        self.READINESS_MODULE.refuse_unreadable_payload_version(
+            [{"check": "dataset-shape", "status": "PASS", "detail": "x"}]
+        )
+        self.READINESS_MODULE.refuse_unreadable_payload_version(self._records(1))

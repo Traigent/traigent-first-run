@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +37,20 @@ from typing import Any, Iterable, Sequence
 # two surfaces the standing to contradict each other over one file, which is
 # what #410 was.
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
+# The version of the --json payload this script writes, bumped whenever a
+# consumer could read the new shape WRONG rather than merely miss something.
+#
+# #602: every other skew on this boundary refuses by name, and this direction
+# could not. An OLDER preflight read by a newer readiness is handled by reading
+# each count with `required=False` - absence is a measured none. The reverse -
+# a NEWER preflight read by an older readiness - was undetectable by
+# construction, because a key the consumer has never heard of is
+# indistinguishable from one an older writer never wrote, so the finding it
+# carries was silently dropped and the run proceeded with a weaker score.
+# #401, #409 and #69 each hit this same boundary; a stamp answers all three
+# shapes once instead of per metric.
+PAYLOAD_VERSION = 1
+PAYLOAD_CHECK = "preflight-payload"
 SUPPORTED_PYTHON_MIN = (3, 11)
 SUPPORTED_PYTHON_MAX = (3, 14)
 # The release this walkthrough was measured on, and the one its own
@@ -4511,23 +4526,104 @@ def check_evaluator(path: Path) -> None:
     )
 
 
+def structural_sql_gold_is_checkable(
+    evaluator_method: str | None, evaluator: Path | None
+) -> bool:
+    """Whether this run's comparison IS the bundled structural one.
+
+    Two ways to be, and #603 is the second. The declared method is the obvious
+    one. The other is an evaluator whose own form proves it: a single scorer
+    that returns the bundled comparator's call, with a byte-identical copy of
+    that module beside it. `references/evaluation-and-dataset.md` tells a
+    customer with their own comparator to declare `composite`, so a verbatim
+    copy declared that way is exactly the case the declared word misses - and
+    it fails on precisely the same rows.
+
+    Keyed on the form rather than the word for the reason that reference
+    already gives about task fit: "the form is the contract". The derived half
+    needs no ordering change, because `derived_structural_sql_shape` is a pure
+    function of the evaluator's syntax tree and the copy beside it; this does
+    not read anything `check_evaluator` publishes.
+    """
+    if evaluator_method == STRUCTURAL_SQL_SHAPE:
+        return True
+    if evaluator is None or not evaluator.exists():
+        return False
+    try:
+        tree = ast.parse(evaluator.read_text(), filename=str(evaluator))
+    except (
+        OSError,
+        UnicodeDecodeError,
+        SyntaxError,
+        MemoryError,
+        RecursionError,
+        ValueError,
+    ):
+        # Every refusal is "not established", never a traceback out of `main`:
+        # the same tuple and the same reading `check_evaluator` already uses
+        # for this file, and an unparsable evaluator is its finding to make,
+        # not this one's.
+        return False
+    return derived_structural_sql_shape(tree, evaluator) is not None
+
+
 def check_dataset(
     path: Path,
     outcome_field: str | None = None,
     input_field: str = "input",
     expected_field: str = "output",
     evaluator_method: str | None = None,
+    evaluator: Path | None = None,
 ) -> list[dict[str, Any]] | None:
     if not path.exists():
         emit("dataset-shape", FAIL, f"{path} does not exist")
         return None
 
     reference_free = evaluator_method in REFERENCE_FREE_METHODS
+    sql_comparator = None
+    if structural_sql_gold_is_checkable(evaluator_method, evaluator):
+        # Only the trusted bundled asset is loaded, never the evaluator or its copy.
+        # Guarded like the equivalent load in `calibrate_evaluator.load_function`,
+        # and degrading the way `_tree_of` already does for this same asset: a
+        # missing or unparsable bundle must surface as a named finding, not as a
+        # traceback out of `main` that reports the whole run as "internal error,
+        # treat nothing as checked".
+        try:
+            spec = importlib.util.spec_from_file_location(
+                "_first_run_sql_gold", STRUCTURAL_SQL_ASSET
+            )
+            if spec is None or spec.loader is None:
+                raise ImportError(f"cannot load {STRUCTURAL_SQL_ASSET}")
+            sql_comparator = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(sql_comparator)
+            # The name is checked HERE, not left to the call site in the row
+            # loop. Only the names read off this module are the contract with
+            # it, and a stale or hand-edited bundle that no longer carries the
+            # content-free summary would otherwise raise `AttributeError` deep
+            # in the loop and reach `main` as "internal error, treat nothing as
+            # checked" - the exact degradation the comment above promises not to
+            # do. Raised as `ImportError` so it lands in the same finding.
+            if not callable(getattr(sql_comparator, "_unreadable_reason", None)):
+                raise ImportError(
+                    f"{STRUCTURAL_SQL_ASSET} carries no _unreadable_reason; "
+                    "the gold check cannot say why a row failed"
+                )
+        except (OSError, SyntaxError, ImportError) as error:
+            sql_comparator = None
+            emit(
+                "dataset-integrity",
+                FAIL,
+                "the bundled SQL comparator could not be loaded, so gold answers "
+                f"could not be checked before paid work: {error}",
+            )
+            return None
     rows: list[dict[str, Any]] = []
     present_rows: list[dict[str, Any]] = []
     present_row_records: list[tuple[int, dict[str, Any]]] = []
     invalid_rows: list[tuple[int, str]] = []
     unlabelled_present = 0
+    unreadable_gold_present = 0
+    unreadable_gold_ids: list[Any] = []
     candidate_count = 0
     for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
         if not raw_line.strip():
@@ -4562,11 +4658,59 @@ def check_dataset(
             continue
         if normalized_row is None:
             raise RuntimeError("dataset normalization returned no row without an error")
+        # Only a LABELLED row can have unreadable gold. A blank or absent
+        # expected answer is the `dataset-outputs` finding, which names it
+        # exactly ("1/2 expected outputs are empty") and routes to a different
+        # remedy; reporting it here as SQL the comparator cannot read is a
+        # wrong diagnosis, and it also zeroed `unlabelled_rows` for a row that
+        # is unlabelled. Same class as the bucket confusion above, one bucket
+        # over.
+        if sql_comparator is not None and dataset_row_is_labelled(row, expected_field):
+            expected = normalized_row["output"]
+            # This detail is PUBLISHED - card, written report, and the
+            # assistant's own context - so it may not carry a slice of the
+            # customer's answer. What makes that safe is in the comparator:
+            # `_Parser._where` names a token's KIND and never its text, and
+            # `tests/test_sql_structure.py` holds that property over the
+            # shapes that broke the first attempt. Nothing here re-adds it.
+            reason = (
+                f"expected SQL is {type(expected).__name__}, not a string"
+                if not isinstance(expected, str)
+                else sql_comparator._unreadable_reason(expected)
+            )
+            if reason is not None:
+                # The cause carries NO row id. The grouping below keys on this
+                # string to bound the message by DISTINCT causes rather than by
+                # rows, and an id in it makes every row its own cause - six
+                # identical findings then spent all five reported slots and
+                # pushed a malformed line and a missing input out of the
+                # message entirely. The ids travel in the metric instead, where
+                # they are also machine-readable for the exclusion record.
+                unreadable_gold_present += 1
+                # DIGESTS, not the ids. `row_id_digest` exists one screen
+                # above for exactly this - "so the payload does not carry the
+                # customer's own strings out of their file a second time" -
+                # and the `dataset-ids` check beside it already publishes
+                # digests only. A row id is free text: a dataset in the wild
+                # carries `patient <name>, MRN <n>` there, and it would have
+                # travelled verbatim beside a finding whose whole purpose is
+                # that the row's content does not.
+                unreadable_gold_ids.append(
+                    row_id_digest(str(row_metadata_value(row, "id")))
+                )
+                invalid_rows.append(
+                    (
+                        line_number,
+                        f"expected SQL cannot self-match ({reason}); "
+                        "repair the working copy or choose a suitable evaluator before paid work",
+                    )
+                )
+                continue
         rows.append(normalized_row)
         present_rows.append(row)
         present_row_records.append((line_number, row))
 
-    malformed_rows = len(invalid_rows) - unlabelled_present
+    malformed_rows = len(invalid_rows) - unlabelled_present - unreadable_gold_present
     if invalid_rows:
         invalid_percentage = len(invalid_rows) / candidate_count * 100
         # One entry per unusable ROW made the message grow with the size of the
@@ -4601,6 +4745,14 @@ def check_dataset(
                 "invalid_rows": len(invalid_rows),
                 "malformed_rows": malformed_rows,
                 "unlabelled_rows": unlabelled_present,
+                "unreadable_gold_rows": unreadable_gold_present,
+                # Truncated like every other reported list, and the FULL
+                # count travels beside it in `unreadable_gold_rows`, so a
+                # reader of five digests is not misled about how many rows
+                # there are.
+                "unreadable_gold_ids": unreadable_gold_ids[
+                    :MAX_REPORTED_DATASET_ERRORS
+                ],
                 "candidate_rows": candidate_count,
             },
         )
@@ -4611,14 +4763,26 @@ def check_dataset(
             # so the readiness adapter reaches the "no expected outputs" branch
             # (a partial score) instead of "no dataset at all", then stop - there
             # are no labelled rows to run the remaining quality checks against.
-            emit_dataset_provenance(present_rows, labelled=0)
+            emit_dataset_provenance(present_rows, labelled=unreadable_gold_present or 0)
             emit_dataset_id_findings(present_row_records)
-            emit(
-                "dataset-shape",
-                FAIL,
-                f"{len(present_rows)} rows carry inputs but none carry an "
-                "expected output",
-            )
+            # Say which of the two it is. These rows DO carry expected answers
+            # when the gold check is what emptied `rows`, and telling a customer
+            # none of them does is the same false sentence this check is being
+            # kept honest about one bucket over.
+            if unreadable_gold_present and not unlabelled_present:
+                emit(
+                    "dataset-shape",
+                    FAIL,
+                    f"{unreadable_gold_present} rows carry an expected answer "
+                    "the declared comparator cannot read, so none can be scored",
+                )
+            else:
+                emit(
+                    "dataset-shape",
+                    FAIL,
+                    f"{len(present_rows)} rows carry inputs but none carry an "
+                    "expected output",
+                )
             return None
         emit("dataset-shape", FAIL, "dataset has no usable rows")
         return None
@@ -5594,6 +5758,15 @@ def run() -> int:
     # are added (traigent-first-run#458).
     RESULTS.clear()
     EMISSION_FAULTS.clear()
+    # First record, before any check can fail or exit: a consumer that refuses
+    # this payload must be able to do so from the payload, and a stamp that
+    # only appears on a clean run is a stamp the skewed cases never carry.
+    emit(
+        PAYLOAD_CHECK,
+        PASS,
+        f"preflight --json payload version {PAYLOAD_VERSION}",
+        {"payload_version": PAYLOAD_VERSION},
+    )
     args = parse_args()
     env_path = Path(args.env)
     env, file_values, process_values = read_env(env_path)
@@ -5632,6 +5805,10 @@ def run() -> int:
             input_field=args.input_field,
             expected_field=args.expected_field,
             evaluator_method=args.evaluator_method,
+            # So the gold check can key on the evaluator's FORM as well as the
+            # declared word (#603). Read-only here; `check_evaluator` below
+            # still owns every finding about this file.
+            evaluator=Path(args.evaluator) if args.evaluator else None,
         )
 
     if args.evaluator:
@@ -5645,11 +5822,15 @@ def run() -> int:
     if args.json:
         print(json.dumps([asdict(result) for result in RESULTS], indent=2))
     else:
-        width = max(len(result.check) for result in RESULTS)
-        for result in RESULTS:
+        # The payload stamp is for the machine that reads `--json`, not for a
+        # customer reading their checks: it names a flag they did not pass and
+        # it moved the pass count. It stays in the payload and out of here.
+        printable = [result for result in RESULTS if result.check != PAYLOAD_CHECK]
+        width = max(len(result.check) for result in printable)
+        for result in printable:
             print(f"{result.check:<{width}}  {result.status:<4}  {result.detail}")
         counts = {
-            status: sum(result.status == status for result in RESULTS)
+            status: sum(result.status == status for result in printable)
             for status in (PASS, WARN, FAIL, SKIP)
         }
         print(

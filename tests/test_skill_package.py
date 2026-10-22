@@ -92,6 +92,20 @@ def sdk_execution_python_fences(text: str | None = None) -> list[str]:
     return [asset, *re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)]
 
 
+def sdk_pre_import_nodes(wrapper: str) -> list[ast.stmt]:
+    """Read launch state without executing a dependency import, including a guarded one."""
+    prefix = []
+    for node in ast.parse(wrapper).body:
+        if any(
+            isinstance(child, ast.Import)
+            and any(alias.name == "litellm" for alias in child.names)
+            for child in ast.walk(node)
+        ):
+            return prefix
+        prefix.append(node)
+    raise AssertionError("the wrapper has no LiteLLM import boundary")
+
+
 def sdk_execution_reference_text() -> str:
     """Read the assistant's execution guidance and its copied Python asset."""
     return (
@@ -12055,7 +12069,7 @@ class SkillPackageTests(unittest.TestCase):
         of what it asserts is read instead of run.
         """
         text = sdk_execution_reference_text()
-        self.assertIn('os.environ["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
+        self.assertIn('LAUNCH_ENVIRONMENT["TRAIGENT_FIRST_RUN_STRONG_MODEL"]', text)
         self.assertIn("TRAIGENT_FIRST_RUN_STRONG_REASONING_EFFORT", text)
         code = sdk_execution_python_fences(text)[0]
         call_path_nodes = [
@@ -12144,9 +12158,17 @@ class SkillPackageTests(unittest.TestCase):
         """A required variable nobody names is a baseline that stops at import."""
         text = sdk_execution_reference_text()
         wrapper = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
+        # Plain again, and that is the point: `values=LAUNCH_BOUNDS` existed
+        # because this ONE read had to dodge the merged environment. Every
+        # launch read now goes through `LAUNCH_ENVIRONMENT` inside the three
+        # readers, so the parameter and its single caller are gone and the
+        # guarantee covers nine more names instead of one.
         self.assertIn(
-            'positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")', wrapper
+            'positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")',
+            " ".join(wrapper.split()),
         )
+        self.assertIn("LAUNCH_ENVIRONMENT = dict(os.environ)", wrapper)
+        self.assertNotIn("LAUNCH_BOUNDS", wrapper)
         normalized = " ".join(text.casefold().split())
         for phrase in (
             "`traigent_first_run_baseline_timeout_seconds`, the fourth process "
@@ -12205,7 +12227,10 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "RUN_DIR = Path(__file__).resolve().parent",
             'SDK_RESULTS_DIR = RUN_DIR / "sdk-results"',
-            'if not os.environ.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
+            # Read from the snapshot, written to the live environment: the
+            # SDK reads it from there, and `run-safety.md` calls this the
+            # process-only results folder, so a `.env` may not decide it.
+            'if not LAUNCH_ENVIRONMENT.get("TRAIGENT_RESULTS_FOLDER", "").strip()',
             'os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)',
             'TUNING_DATASET = str(RUN_DIR / "tuning.jsonl")',
             'HOLDOUT_DATASET = str(RUN_DIR / "holdout.jsonl")',
@@ -12520,10 +12545,11 @@ class SkillPackageTests(unittest.TestCase):
         )
         for raw in (" openai", "openai ", "OpenAI\n", "\tOPENAI "):
             with self.subTest(raw=raw):
+                # `LAUNCH_ENVIRONMENT`, not `os.environ`: the assignment
+                # reads the pre-dotenv snapshot now. What this subTest pins is
+                # the NORMALISATION either way - strip then casefold.
                 namespace = {
-                    "os": SimpleNamespace(
-                        environ={"TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": raw}
-                    )
+                    "LAUNCH_ENVIRONMENT": {"TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": raw}
                 }
                 exec(ast.unparse(literal_assignment), namespace)  # noqa: S102
                 self.assertEqual(namespace["SELECTED_CURRENT_PROVIDER"], "openai")
@@ -16398,7 +16424,11 @@ class SkillPackageTests(unittest.TestCase):
         wrapper = " ".join(sdk_execution_reference_text().split())
         self.assertIn('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"', wrapper)
         self.assertNotIn('os.environ.pop("TRAIGENT_REQUIRE_CLOUD"', wrapper)
-        self.assertIn('os.environ.pop("TRAIGENT_API_KEY", None)', wrapper)
+        # Blanked rather than popped - `load_dotenv` refills an absent name,
+        # so only a present empty string makes the removal stick. What this
+        # line pins is that the baseline neutralises the key at all.
+        self.assertIn('os.environ[_offline_blank] = ""', wrapper)
+        self.assertIn('"TRAIGENT_API_KEY",', wrapper)
 
         block = sdk_execution_reference_text()
         setting = block.index('os.environ["TRAIGENT_REQUIRE_CLOUD"] = "1"')
@@ -16604,14 +16634,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_false_process_value_overrides_true_dotenv_baseline_policy(self) -> None:
         """Unsetting loops; an approved explicit false survives dotenv loading."""
         fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        tree = ast.parse(fence)
-        prefix: list[ast.stmt] = []
-        for node in tree.body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(fence)
         program = compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             "<baseline-environment-policy>",
@@ -16827,6 +16850,39 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("scorer_calls_per_row: int = 0", normalized)
         self.assertNotIn("then set `scorer_calls_per_row`", normalized)
 
+    def test_pre_import_reader_never_executes_an_import_guard(self) -> None:
+        import builtins
+
+        real_import = builtins.__import__
+
+        def reject_litellm(name, *args, **kwargs):
+            if name == "litellm":
+                raise AssertionError("the reader executed the SDK import")
+            return real_import(name, *args, **kwargs)
+
+        for imports in (
+            "import litellm",
+            "try:\n    import litellm\nfinally:\n    after_import = True",
+        ):
+            with self.subTest(imports=imports):
+                source = "before_import = True\n" + imports + "\nafter_import = True"
+                namespace = {}
+                with mock.patch("builtins.__import__", reject_litellm):
+                    exec(
+                        compile(
+                            ast.Module(
+                                body=sdk_pre_import_nodes(source), type_ignores=[]
+                            ),
+                            "<pre-import-reader>",
+                            "exec",
+                        ),
+                        namespace,
+                    )
+                self.assertTrue(namespace["before_import"])
+                self.assertNotIn("after_import", namespace)
+        with self.assertRaisesRegex(AssertionError, "no LiteLLM import boundary"):
+            sdk_pre_import_nodes("before_import = True")
+
     def test_wrapper_contract_tests_read_the_bundled_asset(self) -> None:
         """The file customers copy is the source every wrapper test reads."""
         fences = sdk_execution_python_fences(sdk_execution_reference_text())
@@ -16849,7 +16905,10 @@ class SkillPackageTests(unittest.TestCase):
         decorator = sdk_execution_python_fences(text)[0]
         phase = decorator.index("FIRST_RUN_PHASE = (")
         dotenv = decorator.index('load_dotenv(PROJECT_ROOT / ".env"')
-        remove_key = decorator.index('os.environ.pop("TRAIGENT_API_KEY", None)')
+        # Blanked, not popped: `load_dotenv` fills an ABSENT name, so a popped
+        # key came back from `.env` the next time anything loaded it. The
+        # ordering this test pins is unchanged; only the verb is.
+        remove_key = decorator.index('"TRAIGENT_API_KEY",')
         force_offline = decorator.index('os.environ["TRAIGENT_OFFLINE_MODE"] = "true"')
         import_traigent = decorator.index("import traigent")
         self.assertLess(phase, dotenv)
@@ -16886,13 +16945,7 @@ class SkillPackageTests(unittest.TestCase):
     def test_proof_phase_needs_no_approval_and_has_zero_call_budget(self) -> None:
         """Proof ignores stale dotenv figures and starts behind a closed spend door."""
         wrapper = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        prefix: list[ast.stmt] = []
-        for node in ast.parse(wrapper).body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(wrapper)
         program = compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             "<proof-phase-environment>",
@@ -16925,11 +16978,17 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertEqual(namespace["RUN_COST_REMAINING_USD"], 0.0)
                 self.assertEqual(namespace["RUN_COST_CEILING_USD"], 0.0)
                 self.assertEqual(namespace["APPROVED_FIGURES"], {})
-                self.assertNotIn("TRAIGENT_API_KEY", os.environ)
-                self.assertNotIn("TRAIGENT_FIRST_RUN_COST_CEILING_USD", os.environ)
-                self.assertNotIn(
-                    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS", os.environ
-                )
+                # Present and EMPTY, not absent. An absent name is the one
+                # thing `load_dotenv` refills, so blanking is what makes the
+                # removal survive a later load - in the SDK, or in the
+                # customer's own agent module. Empty is also what every reader
+                # here refuses, so the fail-closed direction is unchanged.
+                for cleared in (
+                    "TRAIGENT_API_KEY",
+                    "TRAIGENT_FIRST_RUN_COST_CEILING_USD",
+                    "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS",
+                ):
+                    self.assertEqual(os.environ.get(cleared), "", cleared)
         timeout_assignment = next(
             node
             for node in ast.parse(wrapper).body
@@ -17278,14 +17337,7 @@ class SkillPackageTests(unittest.TestCase):
     ) -> None:
         """Baseline isolation must not silently turn the enhanced run local."""
         fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        tree = ast.parse(fence)
-        prefix: list[ast.stmt] = []
-        for node in tree.body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(fence)
         program = compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             "<phase-environment-policy>",
@@ -17304,11 +17356,12 @@ class SkillPackageTests(unittest.TestCase):
             ):
                 exec(program, {"__file__": str(script)})  # noqa: S102
                 self.assertEqual(os.environ["TRAIGENT_OFFLINE_MODE"], "true")
-                self.assertNotIn(
-                    "TRAIGENT_API_KEY",
-                    os.environ,
-                    "the baseline must drop a key loaded from the preserved .env "
-                    "before the SDK import",
+                self.assertEqual(
+                    os.environ.get("TRAIGENT_API_KEY"),
+                    "",
+                    "the baseline must neutralise a key loaded from the "
+                    "preserved .env before the SDK import - blank rather than "
+                    "absent, or a later load puts it straight back",
                 )
 
             # A fresh process starts from its own launch environment; the
@@ -17531,6 +17584,15 @@ class SkillPackageTests(unittest.TestCase):
             "approval-gated question",
             '"A `no` is never a silent edit" below owns whether a question is needed '
             "and how to settle it",
+            # #599's rung. The four above phrase the ask as reviewing answers
+            # somebody suspects are WRONG; this one's rows are not suspect -
+            # they are valid answers our comparator cannot parse - so its
+            # passage names the two ways out instead of asking for a verdict
+            # on the answers. The shared remedy still fits, because
+            # `CAP_ACTION_SENTENCES` says "Review the expected answers that
+            # support this comparison", which is an instruction to look at
+            # them and not a claim that they are wrong.
+            "repair or replace those rows, or declare a method that reads them",
         ),
         "add-examples": (
             "more comparable examples is what lifts this",
@@ -18788,7 +18850,16 @@ class SkillPackageTests(unittest.TestCase):
         # #378 added `dataset-repeated-rows` as the seventeenth: rows that
         # repeat another row's input, which used to reach a ceiling only when
         # their ids happened to collide and then under the integrity reason.
-        self.assertEqual(len(conditions), 17)
+        # #599 added `dataset-gold-unreadable` as the eighteenth: gold the
+        # declared comparator cannot parse, which arrived inside the integrity
+        # cap and was moved out because that one blocks and this finding is
+        # this guide's grammar rather than the customer's data. It needs no new
+        # routing bullet of its own in `evaluation-and-dataset.md`, because
+        # every condition the scorer can raise needs one, and it carries the
+        # half that is easy to get wrong: the limit is this guide's grammar,
+        # so the data is not defective. It needed no new REMEDY, though - it
+        # shares `review-answer-key` with the answer-key rungs.
+        self.assertEqual(len(conditions), 18)
         normalized = " ".join(
             section_text(
                 SKILL_ROOT / "references" / "evaluation-and-dataset.md",
@@ -18860,6 +18931,13 @@ class SkillPackageTests(unittest.TestCase):
         scoping = {
             "dataset-fully-synthetic",
             "dataset-mostly-synthetic",
+            # #599's rung, and the same argument the provenance pair below
+            # makes: a repair asserts the file is defective, and these rows
+            # are not. They parse, they carry both fields, and the expected
+            # answers are valid SQL - what cannot read them is the comparator
+            # this guide ships. It arrived in `blocking` inside the integrity
+            # cap, which is exactly the misplacement that comment describes.
+            "dataset-gold-unreadable",
             # #165's two rungs, moved here by #211. They were `blocking`,
             # because `declare-data-provenance` asks the user to change the
             # file and #149's two-way rule read any change as a repair. Measured
@@ -22079,13 +22157,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
     def launch_program(label: str):
         """The wrapper's pre-import block, compiled - everything before litellm."""
         fence = sdk_execution_python_fences(sdk_execution_reference_text())[0]
-        prefix: list[ast.stmt] = []
-        for node in ast.parse(fence).body:
-            if isinstance(node, ast.Import) and any(
-                alias.name == "litellm" for alias in node.names
-            ):
-                break
-            prefix.append(node)
+        prefix = sdk_pre_import_nodes(fence)
         return compile(
             ast.fix_missing_locations(ast.Module(body=prefix, type_ignores=[])),
             label,
@@ -22189,8 +22261,12 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         self.assertAlmostEqual(
             float(namespace["_environment"]["TRAIGENT_RUN_COST_LIMIT"]), 5.00, places=6
         )
+        # Cleared to empty, not removed. An absent name is what `load_dotenv`
+        # fills, so popping these left the file free to put them back; an empty
+        # string is left alone by every loader and is refused by every reader,
+        # so a child still inherits no approval it was not launched with.
         for name in sorted(APPROVED_LAUNCH_ENV):
-            self.assertNotIn(name, namespace["_environment"])
+            self.assertEqual(namespace["_environment"].get(name), "", name)
 
     def test_the_remaining_total_becomes_the_limit_the_sdk_enforces(self) -> None:
         """The approved figures, minus what is spent, in the SDK's own variable.
