@@ -31,9 +31,8 @@ def run_probe(guide_source: str | None = None) -> subprocess.CompletedProcess[st
                 "LITELLM_LOCAL_MODEL_COST_MAP": "true",
                 "TRAIGENT_OFFLINE_MODE": "true",
                 "TRAIGENT_COST_APPROVED": "true",
-                # The wrapper sets this; the probe runs its decision, which must
-                # blank it for the unpriced probe route before the SDK reads it.
-                "TRAIGENT_RUN_COST_LIMIT": "1.0",
+                # No TRAIGENT_RUN_COST_LIMIT: the probe replays the wrapper's own
+                # statements, one of which sets the approved limit.
                 "TRAIGENT_RESULTS_FOLDER": directory,
                 "TRAIGENT_LOG_EXAMPLE_CONTENT": "false",
                 "TRAIGENT_AUTO_SYNC": "false",
@@ -83,13 +82,14 @@ class SDKUnpricedJourneyTests(unittest.TestCase):
 
     def test_the_wrapper_blanks_the_limit_for_the_unpriced_route(self) -> None:
         result = self.result()
-        self.assertEqual(result["limit_before_policy"], "1.0")
+        self.assertEqual(float(result["limit_before_policy"]), 1.0)
         self.assertEqual(result["limit_after_policy"], "")
 
     def test_every_sdk_read_of_the_limit_sees_the_blank(self) -> None:
         reads = self.result()["limit_reads"]
-        self.assertTrue(reads, "no read of the limit was observed")
-        self.assertEqual(set(reads), {""}, reads)
+        nonblank = [value for value in reads if value not in ("", None)]
+        self.assertEqual(nonblank, [], "a read saw the approved limit")
+        self.assertIn("", reads, "no read of the blanked limit was observed")
 
     def test_without_the_removal_the_sdk_refuses_the_unpriced_run(self) -> None:
         source = WRAPPER.read_text(encoding="utf-8")
