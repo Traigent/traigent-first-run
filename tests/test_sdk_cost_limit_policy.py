@@ -9,6 +9,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import os
+import types
 import unittest
 from pathlib import Path
 
@@ -33,19 +34,25 @@ def lift(namespace: dict, *names: str) -> None:
 
 class SDKCostLimitPolicyTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.ns: dict = {}
+        self.litellm = types.SimpleNamespace()
+        self.ns: dict = {"litellm": self.litellm}
         lift(self.ns, "keep_sdk_cost_limit", "models_without_sdk_price")
 
+    def keep(self, unpriced: list[str], ledger: bool | None) -> bool:
+        if ledger is not None:
+            self.litellm._first_run_ledgered = ledger
+        return self.ns["keep_sdk_cost_limit"](unpriced)
+
     def test_a_priced_route_keeps_the_sdk_limit(self) -> None:
-        keep = self.ns["keep_sdk_cost_limit"]
-        self.assertTrue(keep([], True))
-        self.assertTrue(keep([], False))
+        self.assertTrue(self.keep([], True))
+        self.assertTrue(self.keep([], False))
 
     def test_an_unpriced_route_with_the_ledger_installed_drops_the_limit(self) -> None:
-        self.assertFalse(self.ns["keep_sdk_cost_limit"](["x/unpriced"], True))
+        self.assertFalse(self.keep(["x/unpriced"], True))
 
     def test_an_unpriced_route_without_the_ledger_keeps_the_limit(self) -> None:
-        self.assertTrue(self.ns["keep_sdk_cost_limit"](["x/unpriced"], False))
+        self.assertTrue(self.keep(["x/unpriced"], False))
+        self.assertTrue(self.keep(["x/unpriced"], None))
 
     def test_the_wrapper_decides_from_the_ledger_flag_and_never_swallows_the_error(
         self,

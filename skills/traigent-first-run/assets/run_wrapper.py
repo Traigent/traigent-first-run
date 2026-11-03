@@ -143,11 +143,10 @@ else:
 def approved_usd(name: str) -> float:
     """One figure out of the approval, in USD. No default, ever.
 
-    A default here would be a number nobody approved. Absent one of these, the
-    SDK's own per-optimization default governs instead - built fresh per call,
-    so every phase would get the whole of it and none of them would know what
-    the earlier phases already debited. Read out of the pre-dotenv capture above,
-    which is what makes "never in .env" a refusal rather than a request.
+    A default would be a number nobody approved, and absent one the SDK's own
+    per-optimization default would govern every phase afresh, unaware of what
+    earlier phases debited. Read from the pre-dotenv capture, which makes
+    "never in .env" a refusal rather than a request.
     """
     raw = (APPROVED_FIGURES.get(name) or "").strip()
     if not raw:
@@ -159,9 +158,7 @@ def approved_usd(name: str) -> float:
     try:
         value = float(raw)
     except ValueError:
-        # Caught rather than left to surface: every other way this figure can
-        # be wrong stops with a sentence naming the remedy, and a bare
-        # ValueError on a comma decimal would be the one that does not.
+        # Caught so a comma decimal stops with a remedy, not a bare ValueError.
         raise SystemExit(
             f"{name} is {raw!r}, which is not a number of USD. Write it plainly "
             "as 5.00 - a decimal comma, a currency symbol, or a thousands "
@@ -200,28 +197,19 @@ if FIRST_RUN_PHASE != "proof" and RUN_COST_REMAINING_USD < UNTRACKED_CALL_COST_U
         f"provider call at ${UNTRACKED_CALL_COST_USD:.4f}. Take a larger total "
         "back to the user; do not start a phase that cannot finish one call."
     )
-# Placed with the other process-scoped SDK settings, before the import, so it is
-# already in the environment whenever the SDK builds its enforcer from it. That
-# enforcer polices this number per trial for this phase, in place of a default
-# that knows nothing about this walkthrough. `repr` rather than a rounded
-# format: a remaining that rounds to zero is refused above, not written out as
-# a limit no trial can fit under.
+# Set before the import so the SDK's enforcer polices this number per trial. `repr`,
+# not a rounded format: a remaining that rounds to zero is refused above.
 if FIRST_RUN_PHASE != "proof":
     os.environ["TRAIGENT_RUN_COST_LIMIT"] = repr(RUN_COST_REMAINING_USD)
-# Process-only. Without it the SDK opens its own handshake whenever its pre-run
-# estimate exceeds the limit, and that handshake can raise the limit past the
-# approved total on one keystroke. Its cost: the SDK's pre-run refusals of an
-# unpriced model or an oversize phase become warnings; admission per trial holds.
+# Process-only. Without it the SDK's pre-run handshake can raise the limit past the
+# approved total; its pre-run refusals of an unpriced or oversize phase become warnings.
 os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
-# Read from the snapshot, written to the live environment: `run-safety.md`
-# calls this "the process-only SDK results folder", so a `.env` naming it is
-# not the project speaking - it is the one file that must not decide where
-# this run's logs land. The write below is what the SDK then reads.
+# Read from the snapshot, written to the live environment: `run-safety.md` calls
+# this the process-only SDK results folder, so a `.env` must not decide it.
 if not LAUNCH_ENVIRONMENT.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
-# SDK 0.31.1 otherwise stores query/response/expected text in local per-example
-# logs. The first-run record needs ids and metrics, not another copy of content.
+# SDK 0.31.1 otherwise logs example text locally; the record needs ids and metrics.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
 if FIRST_RUN_PHASE in {"proof", "baseline"}:
@@ -1474,7 +1462,7 @@ if not getattr(litellm, "_first_run_ledgered", False):
 
 
 def models_without_sdk_price(models) -> list[str]:
-    """Models the SDK's price lookup cannot price; an unreachable lookup prices none."""
+    """Models the SDK cannot price; the absent lookup prices none."""
     try:
         from traigent.utils.cost_calculator import find_models_missing_price_coverage
     except ImportError:
@@ -1482,28 +1470,19 @@ def models_without_sdk_price(models) -> list[str]:
     return find_models_missing_price_coverage(sorted(set(models)))
 
 
-def keep_sdk_cost_limit(unpriced: list[str], ledger_active: bool) -> bool:
-    """Drop the SDK limit only for an unpriced route AND only with the ledger installed.
+def keep_sdk_cost_limit(unpriced: list[str]) -> bool:
+    """Drop the SDK limit only for an unpriced route with the ledger installed.
 
-    SDK 0.31 refuses a trial that reports no cost under an explicit limit. Without
-    the ledger the limit stays, so the SDK fails the run loudly rather than it
-    running with no budget gate.
+    Without the ledger, the limit stays.
     """
-    return not unpriced or not ledger_active
+    return not unpriced or not getattr(litellm, "_first_run_ledgered", False)
 
 
-if FIRST_RUN_PHASE != "proof":
-    SDK_UNPRICED_MODELS = models_without_sdk_price(
-        [*BASELINE_SPACE["model"], *ENHANCED_SPACE["model"]]
-    )
-    if not keep_sdk_cost_limit(
-        SDK_UNPRICED_MODELS, bool(getattr(litellm, "_first_run_ledgered", False))
-    ):
-        # The SDK reads this when it builds its enforcer for a run, after this line.
-        os.environ.pop("TRAIGENT_RUN_COST_LIMIT", None)
-        print(
-            f"SDK cost limit not set for {SDK_UNPRICED_MODELS}; the ledger gates spend."
-        )
+if FIRST_RUN_PHASE != "proof" and not keep_sdk_cost_limit(
+    models_without_sdk_price([*BASELINE_SPACE["model"], *ENHANCED_SPACE["model"]])
+):
+    # SDK 0.31 refuses unreported trial cost under an explicit limit.
+    os.environ.pop("TRAIGENT_RUN_COST_LIMIT", None)
 
 
 def refuse_unless_it_fits(calls: int, what: str) -> None:
