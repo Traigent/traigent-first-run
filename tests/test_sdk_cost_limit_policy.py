@@ -104,6 +104,39 @@ class SDKCostLimitPolicyTests(unittest.TestCase):
             config = CostEnforcer.__new__(CostEnforcer)._load_config()
         self.assertFalse(config.limit_explicit)
 
+    def test_the_module_level_call_is_guarded_and_precedes_the_optimizer(self) -> None:
+        body = ast.parse(TEXT).body
+
+        def calls_policy(node: ast.stmt) -> bool:
+            return (
+                isinstance(node, ast.If)
+                and ast.unparse(node.test) == "FIRST_RUN_PHASE != 'proof'"
+                and len(node.body) == 1
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Call)
+                and ast.unparse(node.body[0].value.func)
+                == "apply_sdk_cost_limit_policy"
+                and not node.orelse
+            )
+
+        calls = [i for i, node in enumerate(body) if calls_policy(node)]
+        self.assertEqual(len(calls), 1, "the guarded module-level call is missing")
+        optimizer = [
+            i
+            for i, node in enumerate(body)
+            if isinstance(node, ast.FunctionDef)
+            and any("optimize" in ast.unparse(d) for d in node.decorator_list)
+        ]
+        self.assertTrue(optimizer, "the optimizer-decorated function moved")
+        self.assertLess(calls[0], min(optimizer))
+        install = next(
+            i
+            for i, node in enumerate(body)
+            if isinstance(node, ast.If)
+            and "_first_run_ledgered" in ast.unparse(node.test)
+        )
+        self.assertLess(install, calls[0])
+
     def test_the_wrapper_decides_from_the_ledger_flag_and_never_swallows_the_error(
         self,
     ) -> None:

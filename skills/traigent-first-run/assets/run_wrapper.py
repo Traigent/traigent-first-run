@@ -198,7 +198,7 @@ if FIRST_RUN_PHASE != "proof" and RUN_COST_REMAINING_USD < UNTRACKED_CALL_COST_U
 # Set before the import; `repr`, since a remaining that rounds to zero is refused above.
 if FIRST_RUN_PHASE != "proof":
     os.environ["TRAIGENT_RUN_COST_LIMIT"] = repr(RUN_COST_REMAINING_USD)
-# Process-only: else the SDK's pre-run handshake can raise the limit past the total.
+# Process-only: else the SDK's pre-run handshake can raise the cap.
 # The SDK's pre-run refusals become only warnings.
 os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
@@ -1482,8 +1482,8 @@ def apply_sdk_cost_limit_policy(models) -> None:
         return
     os.environ["TRAIGENT_RUN_COST_LIMIT"] = ""
     print(
-        f"Explicit SDK cost limit removed for unpriced models {unpriced}; "
-        "the SDK default and the guide's ledger gate spend."
+        f"Explicit SDK cost limit removed for unpriced models {unpriced}: the SDK "
+        "cannot measure their spend, so the guide's ledger gates it."
     )
 
 
