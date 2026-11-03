@@ -202,8 +202,9 @@ max_escape_normalization_passes = 8
 # `public_repos`; "not a repository" and "a public repository" are
 # different claims. The corpus assertion below rejects stale entries.
 non_repository_hyphenated_terms = {
-    "traigent-0.30.0-py3-none-any.whl",
-    "traigent-0.30.0.tar.gz",
+    "traigent-0.31.1-py3-none-any.whl",
+    "traigent-0.31.1.tar.gz",
+    "traigent-schema",  # PyPI package the SDK depends on, not a repository
     "traigent-first-run-deps",
     "traigent-runs",
     "traigent-audit-report.md",

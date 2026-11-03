@@ -4658,7 +4658,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.30.0",
+                "traigent==0.31.1",
                 "litellm==1.101.3",
                 "python-dotenv==1.2.2",
             ],
@@ -5004,7 +5004,7 @@ class SkillPackageTests(unittest.TestCase):
             "without resolving again",
             "**version guard.**",
             "not a requirement for their environment",
-            "`traigent` at or above `0.30.0` and `litellm` at or above its pin are kept",
+            "`traigent` at or above `0.31.1` and `litellm` at or above its pin are kept",
             "`not the tested versions`",
             "including prerelease, development, post-release, local and epoch segments",
             "`this will change <package> <installed> to <pinned>` receives a yes",
@@ -14953,7 +14953,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.30.0.
+        """Verified against installed traigent 0.31.1.
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
@@ -22428,7 +22428,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         money it had spent: three calls at $0.01 left `run_remaining_usd()`
         reporting the whole of a $0.03 remaining.
 
-        The SDK cannot close it either. At the pinned 0.30.0 its local
+        The SDK cannot close it either. At the pinned 0.31.1 its local
         evaluator settles a trial's cost before it applies the metric
         functions, so a call made inside one is already past that trial's
         accounting.

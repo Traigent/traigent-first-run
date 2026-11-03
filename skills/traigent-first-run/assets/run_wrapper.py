@@ -220,7 +220,7 @@ SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 # this run's logs land. The write below is what the SDK then reads.
 if not LAUNCH_ENVIRONMENT.get("TRAIGENT_RESULTS_FOLDER", "").strip():
     os.environ["TRAIGENT_RESULTS_FOLDER"] = str(SDK_RESULTS_DIR)
-# SDK 0.30.0 otherwise stores query/response/expected text in local per-example
+# SDK 0.31.1 otherwise stores query/response/expected text in local per-example
 # logs. The first-run record needs ids and metrics, not another copy of content.
 os.environ["TRAIGENT_LOG_EXAMPLE_CONTENT"] = "false"
 
