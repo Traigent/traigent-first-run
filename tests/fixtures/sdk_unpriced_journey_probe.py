@@ -23,6 +23,8 @@ from types import SimpleNamespace
 
 from offline_socket_probe import ATTEMPTS, install_guard
 
+LIMIT = "TRAIGENT_RUN_COST_LIMIT"
+
 
 def guide_nodes(text: str) -> tuple[dict[str, ast.FunctionDef], ast.Assign, ast.Assign]:
     fences = re.findall(r"```python\n(.*?)\n```", text, re.DOTALL)
@@ -177,31 +179,58 @@ def run(text: str, record: dict) -> None:
     )
     agent = namespace["agent"]
     namespace["TRACKED_RUN"] = agent
-    # The wrapper's own decision, executed from its source: with the SDK limit
-    # in the environment (the parent sets it), this model is unpriced and the
-    # ledger is installed, so the limit must be blanked before the optimizer
-    # builds its enforcer. Deleting that step makes the SDK refuse the run.
-    policy = ("models_without_sdk_price", "keep_sdk_cost_limit")
-    exec(  # noqa: S102
-        compile(
-            ast.Module(
-                body=[
-                    *(functions[name] for name in policy),
-                    functions["apply_sdk_cost_limit_policy"],
-                ],
-                type_ignores=[],
-            ),
-            "<guide-cost-limit-policy>",
-            "exec",
-        ),
-        namespace,
+    # The wrapper's own module-level statements, executed from its source: every
+    # statement from the ledger install through the policy call, so a read of the
+    # SDK limit placed before that call would run here too. The parent sets the
+    # limit; this model is unpriced and the ledger is installed, so the call
+    # must blank it before the optimizer builds its enforcer.
+    body = ast.parse(text).body
+    install = next(
+        i
+        for i, node in enumerate(body)
+        if isinstance(node, ast.If) and "_first_run_ledgered" in ast.unparse(node.test)
     )
+    call = next(
+        i
+        for i, node in enumerate(body)
+        if isinstance(node, ast.If)
+        and "apply_sdk_cost_limit_policy" in ast.unparse(node)
+        and not isinstance(node, ast.FunctionDef)
+    )
+    real_space = namespace["ENHANCED_SPACE"]
+    namespace["BASELINE_SPACE"] = {"model": ["synthetic/provider"]}
+    namespace["ENHANCED_SPACE"] = {"model": ["synthetic/provider"]}
     namespace["os"] = os
-    record["limit_before_policy"] = os.environ.get("TRAIGENT_RUN_COST_LIMIT")
-    namespace["apply_sdk_cost_limit_policy"](["synthetic/provider"])
-    record["limit_after_policy"] = os.environ.get("TRAIGENT_RUN_COST_LIMIT")
-    record["phase"] = "optimization"
-    result = agent.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
+    record["limit_before_policy"] = os.environ.get(LIMIT)
+    reads: list[str | None] = []
+    real_getitem = os._Environ.__getitem__
+
+    def recording_getitem(self, key):
+        if key == LIMIT:
+            try:
+                reads.append(real_getitem(self, key))
+            except KeyError:
+                reads.append(None)
+        return real_getitem(self, key)
+
+    os._Environ.__getitem__ = recording_getitem
+    try:
+        exec(  # noqa: S102
+            compile(
+                ast.Module(body=body[install + 1 : call + 1], type_ignores=[]),
+                "<guide-cost-limit-policy>",
+                "exec",
+            ),
+            namespace,
+        )
+        namespace["ENHANCED_SPACE"] = real_space
+        namespace.pop("BASELINE_SPACE")
+        record["limit_after_policy"] = real_getitem(os.environ, LIMIT)
+        record["phase"] = "optimization"
+        result = agent.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
+    finally:
+        os._Environ.__getitem__ = real_getitem
+    record["limit_reads"] = reads
     record["journey"] = {
         "objectives": result.objectives,
         "best_config": (

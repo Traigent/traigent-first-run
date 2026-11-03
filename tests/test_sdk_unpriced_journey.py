@@ -86,6 +86,11 @@ class SDKUnpricedJourneyTests(unittest.TestCase):
         self.assertEqual(result["limit_before_policy"], "1.0")
         self.assertEqual(result["limit_after_policy"], "")
 
+    def test_every_sdk_read_of_the_limit_sees_the_blank(self) -> None:
+        reads = self.result()["limit_reads"]
+        self.assertTrue(reads, "no read of the limit was observed")
+        self.assertEqual(set(reads), {""}, reads)
+
     def test_without_the_removal_the_sdk_refuses_the_unpriced_run(self) -> None:
         source = WRAPPER.read_text(encoding="utf-8")
         removal = 'os.environ["TRAIGENT_RUN_COST_LIMIT"] = ""'
