@@ -28,7 +28,7 @@ SPEC.loader.exec_module(MODULE)
 
 def installed_sdk_fixture(site: Path) -> None:
     """Metadata is enough: preflight must never import the package itself."""
-    distribution, version = "traigent", "0.30.0"
+    distribution, version = "traigent", "0.31.1"
     dist = site / f"{distribution}-{version}.dist-info"
     dist.mkdir(parents=True)
     (dist / "METADATA").write_text(f"Name: {distribution}\nVersion: {version}\n")

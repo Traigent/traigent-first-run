@@ -31,7 +31,8 @@ def run_probe(guide_source: str | None = None) -> subprocess.CompletedProcess[st
                 "LITELLM_LOCAL_MODEL_COST_MAP": "true",
                 "TRAIGENT_OFFLINE_MODE": "true",
                 "TRAIGENT_COST_APPROVED": "true",
-                "TRAIGENT_RUN_COST_LIMIT": "1.0",
+                # No TRAIGENT_RUN_COST_LIMIT: the probe replays the wrapper's own
+                # statements, one of which sets the approved limit.
                 "TRAIGENT_RESULTS_FOLDER": directory,
                 "TRAIGENT_LOG_EXAMPLE_CONTENT": "false",
                 "TRAIGENT_AUTO_SYNC": "false",
@@ -78,6 +79,25 @@ class SDKUnpricedJourneyTests(unittest.TestCase):
         self.assertEqual(result["network_attempts"], [])
         self.assertEqual(result["sdk_version"], result["pinned_sdk_version"])
         return result
+
+    def test_the_wrapper_blanks_the_limit_for_the_unpriced_route(self) -> None:
+        result = self.result()
+        self.assertEqual(float(result["limit_before_policy"]), 1.0)
+        self.assertEqual(result["limit_after_policy"], "")
+
+    def test_every_sdk_read_of_the_limit_sees_the_blank(self) -> None:
+        reads = self.result()["limit_reads"]
+        nonblank = [value for value in reads if value not in ("", None)]
+        self.assertEqual(nonblank, [], "a read saw the approved limit")
+        self.assertIn("", reads, "no read of the blanked limit was observed")
+
+    def test_without_the_removal_the_sdk_refuses_the_unpriced_run(self) -> None:
+        source = WRAPPER.read_text(encoding="utf-8")
+        removal = 'os.environ["TRAIGENT_RUN_COST_LIMIT"] = ""'
+        self.assertEqual(source.count(removal), 1)
+        process = run_probe(source.replace(removal, "pass"))
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("CostTrackingRequired", process.stdout + process.stderr)
 
     def test_primary_only_guide_reaches_a_real_sdk_winner_without_vendor_metadata(
         self,

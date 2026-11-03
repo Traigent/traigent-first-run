@@ -14,13 +14,31 @@ import hashlib
 import importlib.metadata
 import io
 import json
+import os
 import re
 import sys
 import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
-from offline_socket_probe import ATTEMPTS, install_guard
+LIMIT = "TRAIGENT_RUN_COST_LIMIT"
+LIMIT_READS: list[str | None] = []
+_ORIGINAL_GETITEM = os._Environ.__getitem__
+
+
+def _recording_getitem(self, key):
+    """Record every read of the SDK cost limit, from before any SDK import."""
+    if key == LIMIT:
+        try:
+            LIMIT_READS.append(_ORIGINAL_GETITEM(self, key))
+        except KeyError:
+            LIMIT_READS.append(None)
+    return _ORIGINAL_GETITEM(self, key)
+
+
+os._Environ.__getitem__ = _recording_getitem
+
+from offline_socket_probe import ATTEMPTS, install_guard  # noqa: E402
 
 
 def guide_nodes(text: str) -> tuple[dict[str, ast.FunctionDef], ast.Assign, ast.Assign]:
@@ -122,7 +140,73 @@ def schema_values(schema) -> list[dict]:
     ]
 
 
+def replay_wrapper(text: str, record: dict) -> None:
+    """Execute the wrapper's real module statements up to its policy call.
+
+    From its first statement through `apply_sdk_cost_limit_policy(...)`, in
+    order, including the statement that sets the approved limit and the SDK
+    import. Unpriced synthetic models are chosen so the policy must blank the
+    limit. Nothing after the call runs, so no paid phase starts.
+    """
+    import atexit
+
+    directory = Path.cwd()
+    (directory / "tuning.jsonl").write_text(
+        "".join(
+            json.dumps(
+                {
+                    "example_id": str(row),
+                    "input": {"message": f"synthetic row {row}"},
+                    "expected_output": "correct",
+                }
+            )
+            + "\n"
+            for row in (1, 2)
+        ),
+        encoding="utf-8",
+    )
+    os.environ.update(
+        {
+            "TRAIGENT_FIRST_RUN_PHASE": "baseline",
+            "TRAIGENT_FIRST_RUN_COST_CEILING_USD": "1.0",
+            "TRAIGENT_FIRST_RUN_COST_SPENT_USD": "0",
+            "TRAIGENT_FIRST_RUN_UNTRACKED_CALL_COST_USD": "0.05",
+            "TRAIGENT_FIRST_RUN_CURRENT_MODEL": "synthetic/m1",
+            "TRAIGENT_FIRST_RUN_ALTERNATIVE_MODEL": "synthetic/m2",
+            "TRAIGENT_FIRST_RUN_STRONG_MODEL": "synthetic/m3",
+            "TRAIGENT_FIRST_RUN_CURRENT_PROVIDER": "openai",
+            "TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS": "60",
+        }
+    )
+    body = ast.parse(text).body
+    sets_limit = next(
+        i
+        for i, node in enumerate(body)
+        if isinstance(node, ast.If) and f"environ['{LIMIT}']" in ast.unparse(node)
+    )
+    call = next(
+        i
+        for i, node in enumerate(body)
+        if isinstance(node, ast.If)
+        and "apply_sdk_cost_limit_policy(" in ast.unparse(node)
+    )
+    namespace = {"__file__": str(directory / "run_wrapper.py"), "__name__": "replay"}
+
+    def run_statements(nodes: list[ast.stmt]) -> None:
+        module = ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[]))
+        exec(compile(module, "<wrapper-replay>", "exec"), namespace)  # noqa: S102
+
+    run_statements(body[: sets_limit + 1])
+    record["limit_before_policy"] = _ORIGINAL_GETITEM(os.environ, LIMIT)
+    run_statements(body[sets_limit + 1 : call + 1])
+    record["limit_after_policy"] = _ORIGINAL_GETITEM(os.environ, LIMIT)
+    # The replay never reaches the paid phases; its exit-time spend line would
+    # only pollute this probe's JSON.
+    atexit.unregister(namespace["report_run_spend"])
+
+
 def run(text: str, record: dict) -> None:
+    replay_wrapper(text, record)
     import traigent
     from test_skill_package import pinned_sdk_version
 
@@ -178,6 +262,7 @@ def run(text: str, record: dict) -> None:
     namespace["TRACKED_RUN"] = agent
     record["phase"] = "optimization"
     result = agent.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
+    record["limit_reads"] = LIMIT_READS
     record["journey"] = {
         "objectives": result.objectives,
         "best_config": (

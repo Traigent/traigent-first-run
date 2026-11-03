@@ -36,7 +36,7 @@ Every scenario here runs the import (and, for the "happy path", a mock
 Dependency reproducibility (acceptance criterion 5): the repo already pins
 top-level versions for this exact path in
 ``skills/traigent-first-run/assets/requirements-first-run.txt``
-(``traigent==0.30.0``, ``litellm==1.101.3``, ``python-dotenv==1.2.2``), and
+(``traigent==0.31.1``, ``litellm==1.101.3``, ``python-dotenv==1.2.2``), and
 this test imports whatever ``litellm``/``traigent`` happen to be installed
 from that file - so a version bump there is exercised here automatically.
 That file pins exact versions but not hashes, and does not pin the
@@ -354,7 +354,16 @@ class OfflineSocketContractTests(unittest.TestCase):
         result = _run_mock_plumbing_probe("raw")
         self.assertIsNone(result["error"], result)
         self.assertTrue(result["active"], result)
-        self.assertTrue(result["attempts"], result)
+        # Through 0.30.x the raw call reached the socket and this probe's guard
+        # recorded the attempt. From 0.31.1 the SDK refuses an HTTP request to a
+        # known provider host itself while mock mode is on, so no connection is
+        # attempted at all. Either way the raw call gets no canned response and
+        # no trial succeeds; the SDK's own refusal is asserted instead of an
+        # attempt the guard no longer sees.
+        self.assertEqual(result["attempts"], [], result)
+        self.assertIn(
+            "blocked with an error while mock mode is on", result["diagnostic"]
+        )
         self.assertEqual(result["responses"], [])
         self.assertEqual(len(result["calls"]), 2, result)
         self.assertEqual(len(result["trials"]), 2, result)

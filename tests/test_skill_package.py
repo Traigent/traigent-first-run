@@ -4658,7 +4658,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertEqual(
             requirements,
             [
-                "traigent==0.30.0",
+                "traigent==0.31.1",
                 "litellm==1.101.3",
                 "python-dotenv==1.2.2",
             ],
@@ -5004,7 +5004,7 @@ class SkillPackageTests(unittest.TestCase):
             "without resolving again",
             "**version guard.**",
             "not a requirement for their environment",
-            "`traigent` at or above `0.30.0` and `litellm` at or above its pin are kept",
+            "`traigent` at or above `0.31.1` and `litellm` at or above its pin are kept",
             "`not the tested versions`",
             "including prerelease, development, post-release, local and epoch segments",
             "`this will change <package> <installed> to <pinned>` receives a yes",
@@ -11193,50 +11193,63 @@ class SkillPackageTests(unittest.TestCase):
                         "the offline baseline cannot catch",
                     )
 
-    def test_the_pinned_sdk_rejects_a_boolean_space_before_its_api_path(self) -> None:
-        """Pin the external contract which the generated encoding works around.
+    def test_the_pinned_sdk_no_longer_rejects_a_boolean_space_client_side(
+        self,
+    ) -> None:
+        """Pin the 0.31 contract: native boolean choices are not refused by the SDK.
 
-        This deliberately uses the installed SDK rather than copying its
-        validator. The request is rejected before its API method is reached,
-        so it neither needs credentials nor permits egress.
+        Through 0.30.x `SessionOperations` raised a `ValidationError` naming the
+        knob before any API call. 0.31 removed that guard on purpose (SDK PR
+        #2594, "native Boolean choices"). The guide still encodes its own
+        booleans as strings, so this pins that a recording client receives the
+        Boolean choices intact as booleans, with any other error failing the test. It uses the installed SDK, needs no credentials, permits no egress.
         """
+        from unittest import mock
+
         from traigent.cloud.session_operations import SessionOperations
-        from traigent.utils.exceptions import ValidationError
 
-        class NoNetworkClient:
-            called = False
+        class RecordingClient:
+            """Accepts a session and records exactly what it was asked to create."""
 
-            def _create_traigent_session_via_api(self, request):
-                self.called = True
-                raise AssertionError("a rejected boolean space reached the API path")
+            def __init__(self) -> None:
+                self.requests: list = []
+                self.auth_manager = mock.Mock()
+                self.auth_manager.has_api_key.return_value = True
+                self.local_storage = None
+                self.backend_config = mock.Mock()
+                self.session_bridge = mock.Mock()
+                self._active_sessions: dict = {}
+                self._active_sessions_lock = mock.MagicMock()
+                self._max_active_sessions = 5
+                self.cloud_egress_intent = True
 
-        client = NoNetworkClient()
-        with self.assertRaises(ValidationError) as rejected:
-            SessionOperations(client).create_session(
-                "first-run-guide",
-                {"reflect": [False, True]},
-                metadata={"max_trials": 12},
-            )
-        self.assertIn("reflect", str(rejected.exception))
-        self.assertIn("boolean", str(rejected.exception).lower())
-        self.assertFalse(client.called)
+            async def _create_traigent_session_via_api(self, request, *args, **kwargs):
+                self.requests.append(request)
+                return ("session-id", "token", {})
 
-        for candidate_key in ("choices", "values"):
-            with self.subTest(candidate_key=candidate_key):
-                typed_client = NoNetworkClient()
-                with self.assertRaises(ValidationError) as typed_rejected:
-                    SessionOperations(typed_client).create_session(
-                        "first-run-guide",
-                        {
-                            "reflect": {
-                                "type": "categorical",
-                                candidate_key: [False, True],
-                            }
-                        },
-                        metadata={"max_trials": 12},
-                    )
-                self.assertIn("reflect", str(typed_rejected.exception))
-                self.assertFalse(typed_client.called)
+            def _register_security_session(self, *args, **kwargs) -> None:
+                return None
+
+        spaces = (
+            {"reflect": [False, True]},
+            {"reflect": {"type": "categorical", "choices": [False, True]}},
+            {"reflect": {"type": "categorical", "values": [False, True]}},
+        )
+        for space in spaces:
+            with self.subTest(space=space):
+                client = RecordingClient()
+                SessionOperations(client).create_session(
+                    "first-run-guide", space, metadata={"max_trials": 12}
+                )
+                self.assertEqual(len(client.requests), 1)
+                submitted = client.requests[0].configuration_space["reflect"]
+                self.assertEqual(submitted, space["reflect"])
+                choices = (
+                    submitted
+                    if isinstance(submitted, list)
+                    else submitted.get("choices", submitted.get("values"))
+                )
+                self.assertEqual([type(item) for item in choices], [bool, bool])
 
     def test_the_pinned_sdk_omits_example_content_from_standard_trial_payload(
         self,
@@ -14953,7 +14966,7 @@ class SkillPackageTests(unittest.TestCase):
                 self.assertNotIn(phrase, combined)
 
     def test_baseline_sync_never_uses_all_and_never_reads_private_layout(self) -> None:
-        """Verified against installed traigent 0.30.0.
+        """Verified against installed traigent 0.31.1.
 
         `--all` pushes every optimization ever logged on the machine - 1042
         sessions on the box used to check this, including unrelated projects.
@@ -22428,7 +22441,7 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         money it had spent: three calls at $0.01 left `run_remaining_usd()`
         reporting the whole of a $0.03 remaining.
 
-        The SDK cannot close it either. At the pinned 0.30.0 its local
+        The SDK cannot close it either. At the pinned 0.31.1 its local
         evaluator settles a trial's cost before it applies the metric
         functions, so a call made inside one is already past that trial's
         accounting.
