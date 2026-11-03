@@ -14,6 +14,7 @@ import hashlib
 import importlib.metadata
 import io
 import json
+import os
 import re
 import sys
 import traceback
@@ -176,6 +177,29 @@ def run(text: str, record: dict) -> None:
     )
     agent = namespace["agent"]
     namespace["TRACKED_RUN"] = agent
+    # The wrapper's own decision, executed from its source: with the SDK limit
+    # in the environment (the parent sets it), this model is unpriced and the
+    # ledger is installed, so the limit must be blanked before the optimizer
+    # builds its enforcer. Deleting that step makes the SDK refuse the run.
+    policy = ("models_without_sdk_price", "keep_sdk_cost_limit")
+    exec(  # noqa: S102
+        compile(
+            ast.Module(
+                body=[
+                    *(functions[name] for name in policy),
+                    functions["apply_sdk_cost_limit_policy"],
+                ],
+                type_ignores=[],
+            ),
+            "<guide-cost-limit-policy>",
+            "exec",
+        ),
+        namespace,
+    )
+    namespace["os"] = os
+    record["limit_before_policy"] = os.environ.get("TRAIGENT_RUN_COST_LIMIT")
+    namespace["apply_sdk_cost_limit_policy"](["synthetic/provider"])
+    record["limit_after_policy"] = os.environ.get("TRAIGENT_RUN_COST_LIMIT")
     record["phase"] = "optimization"
     result = agent.optimize_sync(algorithm="grid", max_trials=2, progress_bar=False)
     record["journey"] = {

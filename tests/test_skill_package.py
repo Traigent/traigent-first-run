@@ -11201,20 +11201,34 @@ class SkillPackageTests(unittest.TestCase):
         Through 0.30.x `SessionOperations` raised a `ValidationError` naming the
         knob before any API call. 0.31 removed that guard on purpose (SDK PR
         #2594, "native Boolean choices"). The guide still encodes its own
-        booleans as strings, so this pins only that the SDK no longer raises the
-        boolean `ValidationError`, which is the premise the encoding no longer
-        rests on. It uses the installed SDK, needs no credentials, permits no egress.
+        booleans as strings, so this pins that a recording client receives the
+        Boolean choices intact as booleans, with any other error failing the test. It uses the installed SDK, needs no credentials, permits no egress.
         """
+        from unittest import mock
+
         from traigent.cloud.session_operations import SessionOperations
-        from traigent.utils.exceptions import ValidationError
 
-        self.assertFalse(
-            hasattr(SessionOperations, "_validate_configuration_space_no_bools")
-        )
+        class RecordingClient:
+            """Accepts a session and records exactly what it was asked to create."""
 
-        class NoNetworkClient:
-            def _create_traigent_session_via_api(self, request):
-                raise AssertionError("no request may leave this test")
+            def __init__(self) -> None:
+                self.requests: list = []
+                self.auth_manager = mock.Mock()
+                self.auth_manager.has_api_key.return_value = True
+                self.local_storage = None
+                self.backend_config = mock.Mock()
+                self.session_bridge = mock.Mock()
+                self._active_sessions: dict = {}
+                self._active_sessions_lock = mock.MagicMock()
+                self._max_active_sessions = 5
+                self.cloud_egress_intent = True
+
+            async def _create_traigent_session_via_api(self, request, *args, **kwargs):
+                self.requests.append(request)
+                return ("session-id", "token", {})
+
+            def _register_security_session(self, *args, **kwargs) -> None:
+                return None
 
         spaces = (
             {"reflect": [False, True]},
@@ -11223,14 +11237,19 @@ class SkillPackageTests(unittest.TestCase):
         )
         for space in spaces:
             with self.subTest(space=space):
-                try:
-                    SessionOperations(NoNetworkClient()).create_session(
-                        "first-run-guide", space, metadata={"max_trials": 12}
-                    )
-                except ValidationError as error:  # pragma: no cover - the regression
-                    self.fail(f"the SDK refused a boolean space again: {error}")
-                except Exception:  # noqa: BLE001 - the stub client is incomplete
-                    pass
+                client = RecordingClient()
+                SessionOperations(client).create_session(
+                    "first-run-guide", space, metadata={"max_trials": 12}
+                )
+                self.assertEqual(len(client.requests), 1)
+                submitted = client.requests[0].configuration_space["reflect"]
+                self.assertEqual(submitted, space["reflect"])
+                choices = (
+                    submitted
+                    if isinstance(submitted, list)
+                    else submitted.get("choices", submitted.get("values"))
+                )
+                self.assertEqual([type(item) for item in choices], [bool, bool])
 
     def test_the_pinned_sdk_omits_example_content_from_standard_trial_payload(
         self,

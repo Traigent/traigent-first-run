@@ -31,11 +31,9 @@ def run_probe(guide_source: str | None = None) -> subprocess.CompletedProcess[st
                 "LITELLM_LOCAL_MODEL_COST_MAP": "true",
                 "TRAIGENT_OFFLINE_MODE": "true",
                 "TRAIGENT_COST_APPROVED": "true",
-                # No TRAIGENT_RUN_COST_LIMIT: the probe's routes are unpriced, and
-                # the wrapper drops the SDK limit for those (the ledger gates
-                # spend instead). With it set, SDK 0.31.1 refuses the run with
-                # CostTrackingRequiredError, which is the behaviour this
-                # replaces; test_sdk_cost_limit_policy.py pins the decision.
+                # The wrapper sets this; the probe runs its decision, which must
+                # blank it for the unpriced probe route before the SDK reads it.
+                "TRAIGENT_RUN_COST_LIMIT": "1.0",
                 "TRAIGENT_RESULTS_FOLDER": directory,
                 "TRAIGENT_LOG_EXAMPLE_CONTENT": "false",
                 "TRAIGENT_AUTO_SYNC": "false",
@@ -82,6 +80,19 @@ class SDKUnpricedJourneyTests(unittest.TestCase):
         self.assertEqual(result["network_attempts"], [])
         self.assertEqual(result["sdk_version"], result["pinned_sdk_version"])
         return result
+
+    def test_the_wrapper_blanks_the_limit_for_the_unpriced_route(self) -> None:
+        result = self.result()
+        self.assertEqual(result["limit_before_policy"], "1.0")
+        self.assertEqual(result["limit_after_policy"], "")
+
+    def test_without_the_removal_the_sdk_refuses_the_unpriced_run(self) -> None:
+        source = WRAPPER.read_text(encoding="utf-8")
+        removal = 'os.environ["TRAIGENT_RUN_COST_LIMIT"] = ""'
+        self.assertEqual(source.count(removal), 1)
+        process = run_probe(source.replace(removal, "pass"))
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("CostTrackingRequired", process.stdout + process.stderr)
 
     def test_primary_only_guide_reaches_a_real_sdk_winner_without_vendor_metadata(
         self,

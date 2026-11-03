@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import ast
 import importlib.util
+import contextlib
+import io
 import os
+import tempfile
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 WRAPPER = (
@@ -54,6 +58,52 @@ class SDKCostLimitPolicyTests(unittest.TestCase):
         self.assertTrue(self.keep(["x/unpriced"], False))
         self.assertTrue(self.keep(["x/unpriced"], None))
 
+    def apply(self, models: list[str]) -> str:
+        lift(
+            self.ns,
+            "keep_sdk_cost_limit",
+            "models_without_sdk_price",
+            "apply_sdk_cost_limit_policy",
+        )
+        self.ns["os"] = os
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.ns["apply_sdk_cost_limit_policy"](models)
+        return output.getvalue()
+
+    def test_a_removed_limit_survives_a_later_dotenv_load(self) -> None:
+        from dotenv import load_dotenv
+
+        self.litellm._first_run_ledgered = True
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            os.environ, {"TRAIGENT_RUN_COST_LIMIT": "1.0"}
+        ):
+            env_file = os.path.join(directory, ".env")
+            with open(env_file, "w", encoding="utf-8") as handle:
+                handle.write("TRAIGENT_RUN_COST_LIMIT=5.0\n")
+            notice = self.apply(["no-such-vendor/no-such-model-9"])
+            self.assertEqual(os.environ["TRAIGENT_RUN_COST_LIMIT"], "")
+            load_dotenv(env_file, override=False)
+            self.assertEqual(os.environ["TRAIGENT_RUN_COST_LIMIT"], "")
+        self.assertIn("Explicit SDK cost limit removed", notice)
+        self.assertIn("no-such-vendor/no-such-model-9", notice)
+
+    def test_a_priced_route_leaves_the_limit_and_prints_nothing(self) -> None:
+        self.litellm._first_run_ledgered = True
+        os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "true")
+        with mock.patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": "1.0"}):
+            self.assertEqual(self.apply(["gpt-4o-mini"]), "")
+            self.assertEqual(os.environ["TRAIGENT_RUN_COST_LIMIT"], "1.0")
+
+    def test_the_sdk_reads_a_blank_limit_as_not_explicit(self) -> None:
+        if importlib.util.find_spec("traigent") is None:
+            raise unittest.SkipTest("traigent is not installed")
+        from traigent.core.cost_enforcement import CostEnforcer
+
+        with mock.patch.dict(os.environ, {"TRAIGENT_RUN_COST_LIMIT": ""}):
+            config = CostEnforcer.__new__(CostEnforcer)._load_config()
+        self.assertFalse(config.limit_explicit)
+
     def test_the_wrapper_decides_from_the_ledger_flag_and_never_swallows_the_error(
         self,
     ) -> None:
@@ -63,7 +113,7 @@ class SDKCostLimitPolicyTests(unittest.TestCase):
     def test_the_removal_follows_the_ledger_install(self) -> None:
         self.assertLess(
             TEXT.index("litellm._first_run_ledgered = True"),
-            TEXT.index('os.environ.pop("TRAIGENT_RUN_COST_LIMIT"'),
+            TEXT.index('os.environ["TRAIGENT_RUN_COST_LIMIT"] = ""'),
         )
 
     def test_the_real_sdk_lookup_separates_priced_from_unpriced(self) -> None:

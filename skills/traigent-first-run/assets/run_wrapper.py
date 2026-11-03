@@ -169,13 +169,11 @@ def approved_usd(name: str) -> float:
     return value
 
 
-# The total the user approved, and the single running total at the moment this
-# process starts - the tracked-or-deducted spend of every earlier paid phase,
-# `0` only while nothing has been spent yet. Two figures rather than one
-# remaining, so the process says what was approved as well as what is left.
+# The approved total, and the running total at process start: the spend of every
+# earlier paid phase. Two figures, so it says what was approved and what is left.
 if FIRST_RUN_PHASE == "proof":
-    # Proof has no approval and no provider calls. A zero remaining balance
-    # makes the existing ledger door refuse any accidental attempt to spend.
+    # Proof has no approval and no provider calls; a zero balance makes the
+    # ledger door refuse any accidental spend.
     RUN_COST_CEILING_USD = 0.0
     RUN_COST_SPENT_USD = 0.0
     UNTRACKED_CALL_COST_USD = 1.0
@@ -197,12 +195,11 @@ if FIRST_RUN_PHASE != "proof" and RUN_COST_REMAINING_USD < UNTRACKED_CALL_COST_U
         f"provider call at ${UNTRACKED_CALL_COST_USD:.4f}. Take a larger total "
         "back to the user; do not start a phase that cannot finish one call."
     )
-# Set before the import so the SDK's enforcer polices this number per trial. `repr`,
-# not a rounded format: a remaining that rounds to zero is refused above.
+# Set before the import; `repr`, since a remaining that rounds to zero is refused above.
 if FIRST_RUN_PHASE != "proof":
     os.environ["TRAIGENT_RUN_COST_LIMIT"] = repr(RUN_COST_REMAINING_USD)
-# Process-only. Without it the SDK's pre-run handshake can raise the limit past the
-# approved total; its pre-run refusals of an unpriced or oversize phase become warnings.
+# Process-only: else the SDK's pre-run handshake can raise the limit past the total.
+# The SDK's pre-run refusals become only warnings.
 os.environ["TRAIGENT_COST_APPROVED"] = "true"
 SDK_RESULTS_DIR = RUN_DIR / "sdk-results"
 # Read from the snapshot, written to the live environment: `run-safety.md` calls
@@ -1478,11 +1475,20 @@ def keep_sdk_cost_limit(unpriced: list[str]) -> bool:
     return not unpriced or not getattr(litellm, "_first_run_ledgered", False)
 
 
-if FIRST_RUN_PHASE != "proof" and not keep_sdk_cost_limit(
-    models_without_sdk_price([*BASELINE_SPACE["model"], *ENHANCED_SPACE["model"]])
-):
-    # SDK 0.31 refuses unreported trial cost under an explicit limit.
-    os.environ.pop("TRAIGENT_RUN_COST_LIMIT", None)
+def apply_sdk_cost_limit_policy(models) -> None:
+    """Blank, not pop: a later `load_dotenv` would refill an absent name."""
+    unpriced = models_without_sdk_price(models)
+    if keep_sdk_cost_limit(unpriced):
+        return
+    os.environ["TRAIGENT_RUN_COST_LIMIT"] = ""
+    print(
+        f"Explicit SDK cost limit removed for unpriced models {unpriced}; "
+        "the SDK default and the guide's ledger gate spend."
+    )
+
+
+if FIRST_RUN_PHASE != "proof":
+    apply_sdk_cost_limit_policy([*BASELINE_SPACE["model"], *ENHANCED_SPACE["model"]])
 
 
 def refuse_unless_it_fits(calls: int, what: str) -> None:
