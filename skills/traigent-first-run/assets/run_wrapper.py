@@ -1473,6 +1473,39 @@ if not getattr(litellm, "_first_run_ledgered", False):
     litellm._first_run_ledgered = True
 
 
+def models_without_sdk_price(models) -> list[str]:
+    """Models the SDK's price lookup cannot price; an unreachable lookup prices none."""
+    try:
+        from traigent.utils.cost_calculator import find_models_missing_price_coverage
+    except ImportError:
+        return sorted(set(models))
+    return find_models_missing_price_coverage(sorted(set(models)))
+
+
+def keep_sdk_cost_limit(unpriced: list[str], ledger_active: bool) -> bool:
+    """Drop the SDK limit only for an unpriced route AND only with the ledger installed.
+
+    SDK 0.31 refuses a trial that reports no cost under an explicit limit. Without
+    the ledger the limit stays, so the SDK fails the run loudly rather than it
+    running with no budget gate.
+    """
+    return not unpriced or not ledger_active
+
+
+if FIRST_RUN_PHASE != "proof":
+    SDK_UNPRICED_MODELS = models_without_sdk_price(
+        [*BASELINE_SPACE["model"], *ENHANCED_SPACE["model"]]
+    )
+    if not keep_sdk_cost_limit(
+        SDK_UNPRICED_MODELS, bool(getattr(litellm, "_first_run_ledgered", False))
+    ):
+        # The SDK reads this when it builds its enforcer for a run, after this line.
+        os.environ.pop("TRAIGENT_RUN_COST_LIMIT", None)
+        print(
+            f"SDK cost limit not set for {SDK_UNPRICED_MODELS}; the ledger gates spend."
+        )
+
+
 def refuse_unless_it_fits(calls: int, what: str) -> None:
     """Refuse a fixed run of calls the remaining cannot fund in full.
 

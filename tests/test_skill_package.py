@@ -11193,50 +11193,44 @@ class SkillPackageTests(unittest.TestCase):
                         "the offline baseline cannot catch",
                     )
 
-    def test_the_pinned_sdk_rejects_a_boolean_space_before_its_api_path(self) -> None:
-        """Pin the external contract which the generated encoding works around.
+    def test_the_pinned_sdk_no_longer_rejects_a_boolean_space_client_side(
+        self,
+    ) -> None:
+        """Pin the 0.31 contract: native boolean choices are not refused by the SDK.
 
-        This deliberately uses the installed SDK rather than copying its
-        validator. The request is rejected before its API method is reached,
-        so it neither needs credentials nor permits egress.
+        Through 0.30.x `SessionOperations` raised a `ValidationError` naming the
+        knob before any API call. 0.31 removed that guard on purpose (SDK PR
+        #2594, "native Boolean choices"). The guide still encodes its own
+        booleans as strings, so this pins only that the SDK no longer raises the
+        boolean `ValidationError`, which is the premise the encoding no longer
+        rests on. It uses the installed SDK, needs no credentials, permits no egress.
         """
         from traigent.cloud.session_operations import SessionOperations
         from traigent.utils.exceptions import ValidationError
 
+        self.assertFalse(
+            hasattr(SessionOperations, "_validate_configuration_space_no_bools")
+        )
+
         class NoNetworkClient:
-            called = False
-
             def _create_traigent_session_via_api(self, request):
-                self.called = True
-                raise AssertionError("a rejected boolean space reached the API path")
+                raise AssertionError("no request may leave this test")
 
-        client = NoNetworkClient()
-        with self.assertRaises(ValidationError) as rejected:
-            SessionOperations(client).create_session(
-                "first-run-guide",
-                {"reflect": [False, True]},
-                metadata={"max_trials": 12},
-            )
-        self.assertIn("reflect", str(rejected.exception))
-        self.assertIn("boolean", str(rejected.exception).lower())
-        self.assertFalse(client.called)
-
-        for candidate_key in ("choices", "values"):
-            with self.subTest(candidate_key=candidate_key):
-                typed_client = NoNetworkClient()
-                with self.assertRaises(ValidationError) as typed_rejected:
-                    SessionOperations(typed_client).create_session(
-                        "first-run-guide",
-                        {
-                            "reflect": {
-                                "type": "categorical",
-                                candidate_key: [False, True],
-                            }
-                        },
-                        metadata={"max_trials": 12},
+        spaces = (
+            {"reflect": [False, True]},
+            {"reflect": {"type": "categorical", "choices": [False, True]}},
+            {"reflect": {"type": "categorical", "values": [False, True]}},
+        )
+        for space in spaces:
+            with self.subTest(space=space):
+                try:
+                    SessionOperations(NoNetworkClient()).create_session(
+                        "first-run-guide", space, metadata={"max_trials": 12}
                     )
-                self.assertIn("reflect", str(typed_rejected.exception))
-                self.assertFalse(typed_client.called)
+                except ValidationError as error:  # pragma: no cover - the regression
+                    self.fail(f"the SDK refused a boolean space again: {error}")
+                except Exception:  # noqa: BLE001 - the stub client is incomplete
+                    pass
 
     def test_the_pinned_sdk_omits_example_content_from_standard_trial_payload(
         self,

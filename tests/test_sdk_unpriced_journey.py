@@ -31,7 +31,11 @@ def run_probe(guide_source: str | None = None) -> subprocess.CompletedProcess[st
                 "LITELLM_LOCAL_MODEL_COST_MAP": "true",
                 "TRAIGENT_OFFLINE_MODE": "true",
                 "TRAIGENT_COST_APPROVED": "true",
-                "TRAIGENT_RUN_COST_LIMIT": "1.0",
+                # No TRAIGENT_RUN_COST_LIMIT: the probe's routes are unpriced, and
+                # the wrapper drops the SDK limit for those (the ledger gates
+                # spend instead). With it set, SDK 0.31.1 refuses the run with
+                # CostTrackingRequiredError, which is the behaviour this
+                # replaces; test_sdk_cost_limit_policy.py pins the decision.
                 "TRAIGENT_RESULTS_FOLDER": directory,
                 "TRAIGENT_LOG_EXAMPLE_CONTENT": "false",
                 "TRAIGENT_AUTO_SYNC": "false",
