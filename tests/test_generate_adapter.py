@@ -68,19 +68,31 @@ def exact(output, expected):
     return 1.0 if output == expected else 0.0
 """
 ROWS = [
-    {"id": "a", "payload": {"q": "billing please"}, "gold": {"label": "billing"}},
-    {"id": "b", "payload": {"q": "technical issue"}, "gold": {"label": "technical"}},
+    {
+        "id": "a",
+        "payload": {"q": "billing please"},
+        "gold": {"label": "billing"},
+        "metadata": {"example_id": "a"},
+    },
+    {
+        "id": "b",
+        "payload": {"q": "technical issue"},
+        "gold": {"label": "technical"},
+        "metadata": {"example_id": "b"},
+    },
 ]
 
 
 def base_config() -> dict:
     return {
         "schema_version": 1,
+        "primary_metric": {"name": "task_quality", "orientation": "maximize"},
         "dataset": {
             "path": "rows.jsonl",
             "input": "payload.q",
             "expected": "gold.label",
-            "id": "id",
+            "id": "metadata.example_id",
+            "metadata": "metadata",
         },
         "agent": {
             "callable": "agent:answer",
@@ -119,6 +131,16 @@ class Project:
         self.root.mkdir()
         (self.root / "agent.py").write_text(agent, encoding="utf-8")
         (self.root / "evaluator.py").write_text(evaluator, encoding="utf-8")
+        rows = [
+            {
+                **row,
+                "metadata": {
+                    "example_id": row.get("id", index),
+                    **row.get("metadata", {}),
+                },
+            }
+            for index, row in enumerate(rows)
+        ]
         (self.root / "rows.jsonl").write_text(
             "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
         )
@@ -759,7 +781,6 @@ class SharedRuntimeTests(unittest.TestCase):
         )
         rows = [{"payload": {"q": "x"}, "gold": {"label": "true|0|"}}]
         project = Project(self, agent=agent, rows=rows)
-        project.config["dataset"].pop("id")
         project.config["agent"] = {
             "callable": "agent:answer",
             "args": {"text": "$input", "k": "$config.k"},
@@ -1591,8 +1612,7 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
                 project.config["dataset"][field] = path
                 project.config["agent"]["args"]["suffix"] = token
                 self.assertTrue(any("gold answer" in r for r in self.refused(project)))
-        project = Project(self)  # a harmless metadata field is still allowed
-        project.config["dataset"]["metadata"] = "id"
+        project = Project(self)  # preserved metadata with an SDK identity is allowed
         project.config["agent"]["args"]["suffix"] = "$metadata"
         self.assertEqual(project.generate().returncode, 0)
 

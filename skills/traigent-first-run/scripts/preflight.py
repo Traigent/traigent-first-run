@@ -2492,7 +2492,11 @@ def row_metadata_value(row: dict[str, Any], key: str) -> Any:
     if key in row:
         return row[key]
     metadata = row.get("metadata")
-    return metadata.get(key) if isinstance(metadata, dict) else None
+    if not isinstance(metadata, dict):
+        return None
+    if key == "id" and key not in metadata:
+        return metadata.get("example_id")
+    return metadata.get(key)
 
 
 def nested_output_value(output: Any, field_path: str) -> tuple[bool, Any]:

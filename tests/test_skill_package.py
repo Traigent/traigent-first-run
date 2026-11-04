@@ -16859,6 +16859,7 @@ class SkillPackageTests(unittest.TestCase):
                 "WIRED_KNOBS = [",
                 "def holdout_agent_input(input_data):",
                 "INCLUDE_COST_OBJECTIVE = False",
+                "COST_REMOVAL_RECORD = None",
                 "def build_prompt(",
                 "def build_request(message: str, config: dict) -> dict:",
                 "SCORER_CALLS_PER_ROW: int = 0",
@@ -20137,7 +20138,7 @@ class SkillPackageTests(unittest.TestCase):
                 returned_trials.append(result.trials)
                 return result
 
-            def read_transfer(*_args):
+            def read_transfer(*_args, **_kwargs):
                 order.append("transfer")
                 return [], baseline_incumbent
 
@@ -20162,6 +20163,9 @@ class SkillPackageTests(unittest.TestCase):
                     "BASELINE_TRANSFER_FILE": str(
                         document.parent / "baseline-transfer.json"
                     ),
+                    "BASELINE_RESULTS": str(document.parent / "baseline-results.json"),
+                    "COST_REMOVAL_RECORD": None,
+                    "TUNING_EXAMPLES": (),
                     "TUNING_DATASET": str(document.parent / "tuning.jsonl"),
                     "TUNING_DATASET_INITIAL_FINGERPRINT": "a" * 64,
                     "tuning_dataset_fingerprint": lambda _path: next(
@@ -22471,10 +22475,9 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         money it had spent: three calls at $0.01 left `run_remaining_usd()`
         reporting the whole of a $0.03 remaining.
 
-        The SDK cannot close it either. At the pinned 0.31.1 its local
-        evaluator settles a trial's cost before it applies the metric
-        functions, so a call made inside one is already past that trial's
-        accounting.
+        SDK 0.31.1 folds intercepted metric-function calls into trial costs.
+        This direct wrapper test still proves the cross-phase ledger, including
+        calls outside an SDK trial, rather than relying on SDK-local accounting.
         """
         namespace, placed = self.compiled_scorer_path(
             ceiling=1.00, remaining=0.09, per_call=0.02, reported_cost=0.03
@@ -24303,16 +24306,12 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
     def test_the_claim_about_uncovered_paid_calls_is_made_once(self) -> None:
         """One claim in two documents drifts, and this pair already had.
 
-        `run-safety.md` called the held-out agent and judge calls the
-        walkthrough's only paid calls the SDK never sees. `task_score` places
-        `SCORER_CALLS_PER_ROW` calls on EVERY scored row, the search included,
-        and the SDK cannot see those either - it settles a trial's cost before
-        it applies the metric functions - so the "only" was false for any run
-        an LLM judge grades. Both sentences arrived together; the one that
-        stayed is the one that is true, and the other points at it rather than
-        restating it in its own words a second time.
+        The accounting explanation belongs to sdk-execution. SDK 0.31.1 sees
+        intercepted judges inside metric functions; direct held-out calls are
+        outside those trial permits. The recovery document references that
+        boundary rather than restating a version-sensitive SDK claim.
         """
-        owner = "the walkthrough's only paid calls that no permit covers"
+        owner = "Direct held-out agent and judge calls run outside SDK trial permits"
         self.assertIn(owner, " ".join(sdk_execution_reference_text().split()))
         safety = " ".join(RUN_SAFETY.read_text().split())
         self.assertNotIn(

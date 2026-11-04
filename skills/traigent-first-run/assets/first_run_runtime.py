@@ -17,12 +17,14 @@ import asyncio
 import atexit
 import contextvars
 import functools
+import hashlib
 import importlib.util
 import inspect
 import itertools
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -75,6 +77,69 @@ INSIDE_THE_DOOR: contextvars.ContextVar = contextvars.ContextVar(
     "traigent_first_run_inside_the_door", default=False
 )
 litellm = None  # imported by `start`, after the environment is pinned
+
+# SDK 0.31.1 metrics_tracker.RESERVED_METRIC_KEYS, excluding the two explicitly
+# supported custom scoring channels. Keep the dependency-parity test when the
+# pinned SDK changes; the generator must validate this before any paid baseline.
+GENERATED_PRIMARY_RESERVED = frozenset(
+    {
+        "avg_output_length",
+        "avg_response_time",
+        "avg_response_time_ms",
+        "completion_tokens",
+        "cost",
+        "cost_lower_bound",
+        "cost_per_example_mean",
+        "cost_provider_billed_fraction",
+        "cost_unmeasured",
+        "cost_unpriced",
+        "duration",
+        "empty_output_rate",
+        "error_rate",
+        "exact_match_default",
+        "examples_attempted",
+        "examples_consumed",
+        "execution_time_ms",
+        "input_cost",
+        "input_tokens",
+        "latency",
+        "measures",
+        "output_cost",
+        "output_tokens",
+        "prompt_tokens",
+        "response_time_ms",
+        "success",
+        "success_rate",
+        "successful_examples",
+        "summary_stats",
+        "surrogate_score",
+        "tokens_estimated",
+        "tokens_per_second",
+        "total_cost",
+        "total_examples",
+        "total_tokens",
+        "truncated_output_rate",
+    }
+)
+
+
+def generated_primary_name(primary):
+    """Validate the named mean score against the pinned SDK's public wire shape."""
+    name = primary.get("name") if isinstance(primary, dict) else None
+    if (
+        not isinstance(name, str)
+        or re.fullmatch(r"[a-zA-Z_]\w*", name, flags=re.ASCII) is None
+        or name.casefold() in GENERATED_PRIMARY_RESERVED
+        or "p95" in name.casefold()
+        or primary.get("orientation") != "maximize"
+    ):
+        raise ValueError(
+            "primary_metric must name a normalized maximizing mean with an ASCII "
+            "identifier (letters, digits and underscores; no leading digit), not an "
+            "SDK accounting/diagnostic name or p95 percentile; use the hand-adapted "
+            "route before paid work for another aggregation or raw minimized measure"
+        )
+    return name
 
 
 # --- copied verbatim from references/sdk-execution.md (compared by test) ---------------------
@@ -773,6 +838,54 @@ def normalized_score(raw) -> float:
     return score
 
 
+def comparison_rows_fingerprint(rows: list[dict]) -> str:
+    """Bind the ordered inputs, targets and metadata, without saving their contents."""
+    values = [
+        {key: row[key] for key in ("input", "expected", "metadata")} for row in rows
+    ]
+    if any(not isinstance(row["metadata"], dict) for row in values):
+        raise ValueError("comparison requires dictionary metadata for every tuning row")
+    encoded = json.dumps(
+        values, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def generated_comparison_transfer(document, baseline, fingerprint, metric_name):
+    """Project measured bridge rows into the existing local comparison interface."""
+    trials = [
+        {
+            "config": result["config"],
+            "status": "completed",
+            "metrics": {metric_name: result["mean_score"]},
+            "example_results": [
+                {"success": True, "metrics": {metric_name: row["score"]}}
+                for row in result["rows"]
+            ],
+        }
+        for result in document["results"]
+    ]
+    # The calibrated generated metric is higher-is-better. Stable ties keep
+    # the first actually measured grid configuration, without inventing cost.
+    incumbent = max(range(len(trials)), key=lambda i: trials[i]["metrics"][metric_name])
+    return {
+        "format_version": 3,
+        "producer": "generated-bridge",
+        "baseline_config": baseline["config"],
+        "baseline_space": baseline["space"],
+        "tuning_rows": document["tuning_rows"],
+        "tuning_fingerprint": fingerprint,
+        "tuning_fingerprint_kind": "normalized-input-expected-metadata-v1",
+        "metric_name": metric_name,
+        "objective_signature": [
+            {"name": metric_name, "orientation": "maximize", "weight": 1.0}
+        ],
+        "incumbent_config": trials[incumbent]["config"],
+        "incumbent_index": incumbent,
+        "trials": trials,
+    }
+
+
 def resolve(token, context: dict):
     """One argument of a mapped call: `$name`, `$config.knob`, or `{"value": literal}`."""
     if isinstance(token, dict):
@@ -1086,12 +1199,87 @@ class Bridge:
 
     def run_baseline(self) -> int:
         timeout = positive_number("TRAIGENT_FIRST_RUN_BASELINE_TIMEOUT_SECONDS")
-        self.start()
+        dataset_path = (self.project_root / self.spec["dataset"]["path"]).resolve()
+        if not dataset_path.is_relative_to(self.project_root):
+            raise SystemExit("the dataset must be inside the project")
+        dataset_fingerprint = hashlib.sha256(dataset_path.read_bytes()).hexdigest()
         space = self.spec["baseline"]["space"]
         configs = self.configurations(space)
+        if not configs:
+            raise SystemExit("the baseline space has no configurations")
         rows = self.tuning_rows()
         if not rows:
             raise SystemExit("the tuning split has no rows")
+        primary = self.spec.get("primary_metric")
+        metric_name = None
+        comparison_blocker = None
+        if primary is None:
+            comparison_blocker = (
+                "legacy adapter has no recorded primary metric identity"
+            )
+        else:
+            try:
+                metric_name = generated_primary_name(primary)
+            except ValueError as error:
+                raise SystemExit(str(error)) from None
+            metadata_path = self.spec["dataset"].get("metadata")
+            id_path = self.spec["dataset"].get("id")
+            if not metadata_path or id_path != metadata_path + ".example_id":
+                raise SystemExit(
+                    "dataset.id must name example_id inside dataset.metadata before paid "
+                    "work; preserve the existing identity mapping or use the hand-adapted route"
+                )
+            ids = set()
+            for row in rows:
+                if dotted(row["metadata"], "example_id") != (True, row["id"]):
+                    raise SystemExit(
+                        "every tuning row needs its original example_id in preserved metadata before paid work"
+                    )
+                aliases = [
+                    container["id"]
+                    for container in (
+                        row["raw"],
+                        row["raw"].get("metadata"),
+                        row["metadata"],
+                    )
+                    if isinstance(container, dict) and "id" in container
+                ]
+                if any(
+                    type(alias) is not type(row["id"]) or alias != row["id"]
+                    for alias in aliases
+                ):
+                    raise SystemExit(
+                        "existing row id aliases disagree with metadata.example_id; "
+                        "preserve and reconcile the identity mapping before paid work"
+                    )
+                try:
+                    if row["id"] in ids:
+                        raise SystemExit(
+                            "tuning example_id values must be unique before paid work"
+                        )
+                    ids.add(row["id"])
+                except TypeError:
+                    raise SystemExit(
+                        "tuning example_id values must be hashable before paid work"
+                    ) from None
+        initial_rows_fingerprint = baseline_snapshot = None
+        row_fingerprints = []
+        if metric_name is not None:
+            try:
+                initial_rows_fingerprint = comparison_rows_fingerprint(rows)
+                row_fingerprints = [comparison_rows_fingerprint([row]) for row in rows]
+                baseline_snapshot = json.dumps(
+                    self.spec["baseline"], sort_keys=True, allow_nan=False
+                )
+            except (TypeError, ValueError):
+                raise SystemExit(
+                    "baseline identity requires finite JSON inputs, configurations and dictionary metadata before paid work"
+                ) from None
+        if hashlib.sha256(dataset_path.read_bytes()).hexdigest() != dataset_fingerprint:
+            raise SystemExit(
+                "the dataset changed while loading; no baseline was started"
+            )
+        self.start()
         per_row = (
             max(1, self.spec["agent"]["calls_per_row"])
             + self.spec["evaluator"]["calls_per_row"]
@@ -1100,17 +1288,38 @@ class Bridge:
         self.function("agent"), self.function(
             "evaluator"
         )  # load after the interceptors
+
+        def preserve_comparison_identity(row, row_index):
+            nonlocal comparison_blocker
+            if metric_name is None:
+                return
+            try:
+                unchanged = (
+                    comparison_rows_fingerprint([row]) == row_fingerprints[row_index]
+                    and json.dumps(
+                        self.spec["baseline"], sort_keys=True, allow_nan=False
+                    )
+                    == baseline_snapshot
+                )
+            except (TypeError, ValueError):
+                unchanged = False
+            if not unchanged:
+                comparison_blocker = "effective tuning inputs or baseline configuration changed during measurement"
+                raise SafetyRefusal(comparison_blocker)
+
         began, results, complete = time.monotonic(), [], True
         stop_reason = None
         for config in configs:
             scores, failures = [], {}
-            for row in rows:
+            for row_index, row in enumerate(rows):
                 if time.monotonic() - began > timeout:
                     complete = False
                     stop_reason = "timeout"
                     break
                 try:
+                    preserve_comparison_identity(row, row_index)
                     output = self.agent_output(row, config)
+                    preserve_comparison_identity(row, row_index)
                     scores.append(
                         {
                             "id": row["id"],
@@ -1122,11 +1331,16 @@ class Bridge:
                             ),
                         }
                     )
+                    preserve_comparison_identity(row, row_index)
                 except SafetyRefusal:
                     # Finalize observations already paid for, without scheduling
                     # another row or keeping potentially private exception text.
                     complete = False
-                    stop_reason = "safety_refusal"
+                    stop_reason = (
+                        "identity_changed"
+                        if metric_name is not None and comparison_blocker
+                        else "safety_refusal"
+                    )
                     break
                 except Exception as error:  # class name only: provider text is not kept
                     failures[type(error).__name__] = (
@@ -1163,11 +1377,38 @@ class Bridge:
             "known_cost_usd": round(sum(c for c in RUN_CALL_COSTS if c is not None), 6),
             "elapsed_seconds": round(time.monotonic() - began, 3),
         }
+        try:
+            unchanged = metric_name is None or (
+                hashlib.sha256(dataset_path.read_bytes()).hexdigest()
+                == dataset_fingerprint
+                and comparison_rows_fingerprint(rows) == initial_rows_fingerprint
+                and json.dumps(self.spec["baseline"], sort_keys=True, allow_nan=False)
+                == baseline_snapshot
+            )
+        except (OSError, TypeError, ValueError):
+            unchanged = False
+        if not unchanged:
+            comparison_blocker = "dataset, effective tuning inputs or baseline configuration changed during measurement"
+        if comparison_blocker is not None:
+            document["comparison_blocker"] = comparison_blocker
+        elif document["complete"]:
+            document["comparison_transfer"] = generated_comparison_transfer(
+                document,
+                json.loads(baseline_snapshot),
+                initial_rows_fingerprint,
+                metric_name,
+            )
         out = self.run_dir / "baseline-results.json"
         out.write_text(
             json.dumps(document, indent=2, default=str) + "\n", encoding="utf-8"
         )
         print(f"wrote {out}")
+        if comparison_blocker is not None:
+            print(
+                "Connected comparison is unavailable: "
+                + comparison_blocker
+                + "; keep the saved observations and do not replay the completed baseline automatically."
+            )
         if stop_reason == "safety_refusal":
             print(
                 "stopped before any further spend: safety refusal; review accounting "
@@ -1183,7 +1424,7 @@ class Bridge:
                 f"{len(unscored)} configuration(s) scored no row; "
                 "see stop_reason and failure_types"
             )
-        return 0 if document["complete"] and not unscored else 3
+        return 0 if document["complete"] and not unscored and unchanged else 3
 
     def run_probe(self) -> int:
         """Does each searched knob change the request the agent places? No network, no key."""

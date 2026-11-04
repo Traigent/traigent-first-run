@@ -96,6 +96,17 @@ def load_sibling(name: str):
     return module
 
 
+def runtime_contract():
+    """Load only the bundled stdlib runtime; no customer or SDK code is imported."""
+    spec = importlib.util.spec_from_file_location(
+        "_first_run_runtime_contract", RUNTIME_SOURCE
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def inside(path: Path, root: Path) -> bool:
     try:
         return path.resolve().is_relative_to(root.resolve())
@@ -429,6 +440,7 @@ def normalized_spec(config: dict, agent, evaluator) -> dict:
     dataset = dict(config["dataset"])
     return {
         "dataset": dataset,
+        "primary_metric": dict(config["primary_metric"]),
         "agent": {
             "file": agent[0],
             "function": agent[1],
@@ -456,6 +468,17 @@ def validate(config: object, root: Path) -> tuple[dict, dict, Path]:
     if problems:
         raise Refusal(problems)
     dataset = config["dataset"]
+    try:
+        runtime_contract().generated_primary_name(config["primary_metric"])
+    except ValueError as error:
+        problems.append(str(error))
+    metadata_path = dataset.get("metadata")
+    if not metadata_path or dataset.get("id") != metadata_path + ".example_id":
+        problems.append(
+            "dataset.id must name example_id inside dataset.metadata so both phases "
+            "preserve the existing row identity; use a prepared mapping that preserves "
+            "the actual call semantics or the hand-adapted wrapper before paid work"
+        )
     for key in ("path", "holdout_path"):
         if key in dataset and not inside(root / dataset[key], root):
             problems.append(f"dataset.{key} is outside the project")
@@ -591,7 +614,7 @@ INPUT_NAMES = re.compile(r"input|question|prompt|query|text|message|ticket", re.
 EXPECTED_NAMES = re.compile(
     r"expected|answer|label|target|gold|reference|truth|output", re.I
 )
-ID_NAMES = re.compile(r"(^|\.)(id|uid|key)$", re.I)
+ID_NAMES = re.compile(r"(^|\.)(id|example_id|uid|key)$", re.I)
 EVALUATOR_NAMES = re.compile(r"score|eval|grade|match|metric|judge|accuracy", re.I)
 
 

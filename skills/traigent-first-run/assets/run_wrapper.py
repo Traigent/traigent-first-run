@@ -489,8 +489,9 @@ def tuning_dataset_fingerprint(path: str) -> str:
 # Keep row contents in memory; only the file fingerprint crosses the phase boundary.
 _tuning_fingerprint_before_load = tuning_dataset_fingerprint(TUNING_DATASET)
 _tuning_for_probe = traigent.Dataset.from_jsonl(TUNING_DATASET)
+TUNING_EXAMPLES = tuple(_tuning_for_probe.examples)
 PROBE_INPUTS = tuple(
-    holdout_agent_input(example.input_data) for example in _tuning_for_probe.examples
+    holdout_agent_input(example.input_data) for example in TUNING_EXAMPLES
 )
 TUNING_DATASET_INITIAL_FINGERPRINT = tuning_dataset_fingerprint(TUNING_DATASET)
 if TUNING_DATASET_INITIAL_FINGERPRINT != _tuning_fingerprint_before_load:
@@ -641,28 +642,154 @@ def load_baseline_transfer(
     tuning_fingerprint: str,
     metric_name: str,
     objective_signature: list[dict[str, object]],
+    *,
+    cost_removal_record: dict[str, str] | None = None,
+    baseline_results_path: str | None = None,
+    tuning_examples=None,
 ) -> tuple[list, object]:
-    """Validate and restore the local baseline record before paid search."""
+    """Restore baseline evidence, including a disclosed cost-only transition.
+
+    The optional record references a current approved transition; it is not
+    itself permission for paid work. The original artifact is never rewritten.
+    """
     from types import SimpleNamespace
 
-    remedy = (
-        "Re-run the completed baseline transfer step; do not start connected search."
-    )
+    remedy = "Review the saved baseline evidence and recorded transition; do not start connected search or repeat paid baseline work to repair metadata."
     try:
-        payload = json.loads(Path(path).read_text())
+        # The two baseline producers share a comparison view, not an SDK
+        # execution identity. Prefer the producer identified by the actual
+        # saved result so a stale SDK transfer cannot replace a newer bridge run.
+        generated = None
+        saved_results = None
+        if baseline_results_path is not None:
+            saved_results = json.loads(Path(baseline_results_path).read_text())
+            if not isinstance(saved_results, dict):
+                raise ValueError("saved baseline results must contain an object")
+            if (
+                isinstance(saved_results, dict)
+                and saved_results.get("kind") == "first-run-bridge-baseline"
+            ):
+                if (
+                    saved_results.get("complete") is not True
+                    or saved_results.get("stop_reason") is not None
+                ):
+                    raise ValueError("generated baseline is incomplete")
+                generated = saved_results.get("comparison_transfer")
+                if not isinstance(generated, dict):
+                    raise ValueError(
+                        "saved generated baseline lacks baseline-time comparison identity; "
+                        "preserve its observations as a baseline-only result"
+                    )
+            elif (
+                "kind" in saved_results
+                or not isinstance(saved_results.get("trials"), list)
+                or not isinstance(saved_results.get("best_config"), dict)
+            ):
+                raise ValueError(
+                    "saved baseline results have an unknown producer shape"
+                )
+        payload = (
+            generated if generated is not None else json.loads(Path(path).read_text())
+        )
         if not isinstance(payload, dict):
             raise ValueError("baseline transfer must contain a JSON object")
+        if saved_results is not None and generated is None:
+            if _canonical_json(saved_results["best_config"]) != _canonical_json(
+                payload.get("incumbent_config")
+            ) or _canonical_json(
+                [item["config"] for item in saved_results["trials"]]
+            ) != _canonical_json(
+                [item["config"] for item in payload.get("trials", [])]
+            ):
+                raise ValueError(
+                    "SDK baseline transfer does not match the saved result"
+                )
+        expected_version = 2
+        expected_space = baseline_space
+        expected_fingerprint = tuning_fingerprint
+        if generated is not None:
+            # Read the SDK's actual loaded examples, including metadata. This
+            # permits an approved nested-field mapping without guessing that
+            # differently serialized files contain the same tuning material.
+            if (
+                payload.get("producer") != "generated-bridge"
+                or type(payload.get("format_version")) is not int
+                or type(payload.get("tuning_rows")) is not int
+                or type(expected_rows) is not int
+                or expected_rows <= 0
+                or payload.get("tuning_fingerprint_kind")
+                != "normalized-input-expected-metadata-v1"
+                or tuning_examples is None
+            ):
+                raise ValueError("generated baseline comparison identity is invalid")
+            comparison_rows = [
+                {
+                    "input": example.input_data,
+                    "expected": example.expected_output,
+                    "metadata": example.metadata or {},
+                }
+                for example in tuning_examples
+            ]
+            if len(comparison_rows) != expected_rows:
+                raise ValueError("generated baseline tuning row count changed")
+            expected_fingerprint = hashlib.sha256(
+                _canonical_json(comparison_rows).encode("utf-8")
+            ).hexdigest()
+            expected_space = baseline_space["knobs"]
+            expected_version = 3
+        previous_objectives = payload.get("objective_signature")
+        same_objectives = _canonical_json(previous_objectives) == _canonical_json(
+            objective_signature
+        )
+        if not same_objectives:
+            # Preserve every definition and its order except the unavailable
+            # secondary cost. A generic allow-mismatch switch would also admit
+            # changed quality scoring and invalidate the measured comparison.
+            if (
+                metric_name == "cost"
+                or not isinstance(previous_objectives, list)
+                or not isinstance(objective_signature, list)
+                or not isinstance(cost_removal_record, dict)
+                or set(cost_removal_record) != {"reason", "approval_reference"}
+                or any(
+                    not isinstance(value, str) or not value.strip()
+                    for value in cost_removal_record.values()
+                )
+            ):
+                raise ValueError("baseline identity or evidence shape changed")
+            names = []
+            for objective in previous_objectives:
+                if (
+                    not isinstance(objective, dict)
+                    or set(objective) != {"name", "orientation", "weight"}
+                    or not isinstance(objective["name"], str)
+                    or not objective["name"].strip()
+                    or objective["orientation"] not in ("maximize", "minimize")
+                    or type(objective["weight"]) not in (int, float)
+                    or not math.isfinite(objective["weight"])
+                    or objective["weight"] <= 0
+                ):
+                    raise ValueError("baseline objective definition is invalid")
+                names.append(objective["name"])
+            if (
+                len(names) != len(set(names))
+                or names.count(metric_name) != 1
+                or names.count("cost") != 1
+                or _canonical_json(
+                    [item for item in previous_objectives if item["name"] != "cost"]
+                )
+                != _canonical_json(objective_signature)
+            ):
+                raise ValueError("baseline identity or evidence shape changed")
         if (
-            payload.get("format_version") != 2
+            payload.get("format_version") != expected_version
             or _canonical_json(payload.get("baseline_config"))
             != _canonical_json(baseline_config)
             or _canonical_json(payload.get("baseline_space"))
-            != _canonical_json(baseline_space)
+            != _canonical_json(expected_space)
             or payload.get("tuning_rows") != expected_rows
-            or payload.get("tuning_fingerprint") != tuning_fingerprint
+            or payload.get("tuning_fingerprint") != expected_fingerprint
             or payload.get("metric_name") != metric_name
-            or _canonical_json(payload.get("objective_signature"))
-            != _canonical_json(objective_signature)
             or not isinstance(payload.get("trials"), list)
         ):
             raise ValueError("baseline identity or evidence shape changed")
@@ -675,9 +802,66 @@ def load_baseline_transfer(
             )
             for item in payload["trials"]
         ]
+        if generated is not None:
+            import itertools
+
+            expected_configs = [
+                dict(zip(expected_space, values))
+                for values in itertools.product(*expected_space.values())
+            ]
+            if sorted(_canonical_json(trial.config) for trial in trials) != sorted(
+                _canonical_json(config) for config in expected_configs
+            ):
+                raise ValueError(
+                    "generated baseline does not contain the complete grid"
+                )
+            for trial in trials:
+                rows = trial.metadata["example_results"]
+                if (
+                    trial.status != "completed"
+                    or set(trial.metrics) != {metric_name}
+                    or type(trial.metrics[metric_name]) not in (int, float)
+                    or not 0 <= trial.metrics[metric_name] <= 1
+                    or len(rows) != expected_rows
+                    or any(
+                        row.get("success") is not True
+                        or set(row.get("metrics", {})) != {metric_name}
+                        or type(row["metrics"][metric_name]) not in (int, float)
+                        or not 0 <= row["metrics"][metric_name] <= 1
+                        for row in rows
+                    )
+                    or not math.isclose(
+                        trial.metrics[metric_name],
+                        sum(row["metrics"][metric_name] for row in rows)
+                        / expected_rows,
+                        rel_tol=1e-12,
+                        abs_tol=1e-12,
+                    )
+                ):
+                    raise ValueError(
+                        "generated baseline contains incomplete measurements"
+                    )
+                trial.metadata["baseline_producer"] = "generated-bridge"
+        if not same_objectives:
+            for trial in trials:
+                trial.metadata.update(
+                    baseline_objective_signature=[
+                        dict(item) for item in previous_objectives
+                    ],
+                    comparison_objective_signature=[
+                        dict(item) for item in objective_signature
+                    ],
+                    cost_removal_record=dict(cost_removal_record),
+                )
         index = payload.get("incumbent_index")
         if type(index) is not int or index < 0 or index >= len(trials):
             raise ValueError("baseline incumbent index is invalid")
+        if generated is not None and index != max(
+            range(len(trials)), key=lambda i: trials[i].metrics[metric_name]
+        ):
+            raise ValueError(
+                "generated baseline incumbent does not match its measured winner"
+            )
         incumbent = trials[index]
         matches = [
             trial
@@ -700,7 +884,14 @@ def load_baseline_transfer(
         ):
             raise ValueError("baseline incumbent is not a complete matching trial")
         return trials, incumbent
-    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        OverflowError,
+    ) as exc:
         raise SystemExit(
             f"Connected search is blocked: its baseline evidence is missing or invalid "
             f"({type(exc).__name__}: {exc}). {remedy}"
@@ -771,6 +962,10 @@ OBJECTIVE_SIGNATURE = [
     }
     for objective in OBJECTIVES.objectives
 ]
+# ADAPT: None normally; for the next already approved primary-only operation,
+# record {"reason": "...", "approval_reference": "run-plan.md: ..."} when
+# unavailable secondary cost is removed. This records a decision, not permission.
+COST_REMOVAL_RECORD = None
 
 
 # ADAPT: with build_request below - how the customer's agent turns one
@@ -932,10 +1127,11 @@ def build_request(message: str, config: dict) -> dict:
 REFUSED_TRIAL_COSTS: list[float] = []
 # Every provider call this PROCESS places, in the order it placed them - not
 # every call this wrapper places, which is a smaller set and was the defect. The
-# two searches run under the SDK's enforcement of the limit set above; a
-# held-out row and an LLM judge's grading call do not, because they reach
-# `litellm.completion` and the orchestrator's permit never sees it. One list
-# holds all of them, because they spend the same approved total: after a search
+# two searches run under the SDK's enforcement of the limit set above. SDK
+# 0.31.1 also folds intercepted metric-function judge calls into trial cost
+# and permit accounting; pre-run estimates and uncaptured calls are separate.
+# Direct held-out calls outside a search still need this cross-phase ledger.
+# One list holds every intercepted call because they spend the same approved total: after a search
 # has spent most of it, held-out scoring has to see what is actually left rather
 # than what was left when this process started.
 #
