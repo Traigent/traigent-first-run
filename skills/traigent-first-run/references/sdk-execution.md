@@ -300,15 +300,15 @@ the scorer it prints there, rather than typing either path: both follow the run 
 selected, and are already shell-quoted.
 
 A generated-bridge baseline that ends **exit 3** has not produced a complete comparison, and the
-printed means are diagnostic only. Three states reach it: a configuration scored no row, some
-examples failed, or the phase hit its wall-clock bound. **A timeout is not this paragraph's** - with
-or without completed trials it follows `run-safety.md`'s Recovery rules, which own it. For the other
-two: do not read a **winner** from the run and do not re-run it blind, because the spend already
-happened. The cumulative debit is still carried forward exactly as below - that is a budget figure,
-not a result, and dropping it would launch the next phase against the full ceiling again. Say plainly
-that the comparison is incomplete and what it cost, report the per-configuration failure types and
-counts the record carries, and fix the cause before any further paid phase. Approving more spend on
-an unexplained exit 3 is buying the same result twice.
+saved means are diagnostic only. This includes unscored configurations, failed examples, timeouts,
+and safety refusals. Read the record's stop reason, completed and unfinished row counts, and
+budget debit; a safety refusal can retain scored rows with no ordinary failures. **Timeout and
+cost-ceiling stops follow `run-safety.md`'s Recovery rules.** Diagnose other safety refusals and
+example failures before further paid work. Do not read a **winner** from the run
+or re-run blind: the spend already happened. Carry the cumulative debit forward exactly as below;
+dropping that budget figure would launch the next phase against the full ceiling again. Report
+the incomplete comparison, its saved observations, failure types and counts, and what it cost.
+Approving more spend on an unexplained exit 3 is buying the same result twice.
 
 Edit the bundled wrapper only when generation refuses, with every reason printed (another
 transport than OpenAI or litellm, an engine-reaching evaluator) or for the connected phase.

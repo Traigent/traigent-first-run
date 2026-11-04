@@ -1609,7 +1609,7 @@ account request:
 - State that no generalization or production-improvement claim exists yet and this phase created
   no portal experiment. Do not disclose the held-out score before section 8.
 
-Check whether the dataset and evaluator distinguish configurations. If not, stop before search
+Check calibration and reference evidence for defects. If one is established, stop before search
 and recommend the evidenced repair before any connected preview. For a free repair to code this
 run wrote or to a working copy preserving their files, use component-creation.md's repair routes:
 never offer a route that carries the diagnosed fault into paid work, and do not put abandoning the
@@ -1927,8 +1927,9 @@ Before claiming success, verify:
 1. Trials exist; distinguish failed examples, failed trials, and repeated configurations.
 2. Baseline was actually evaluated.
 3. Best configuration exists.
-4. Primary objective measures appear and vary meaningfully. Record any unavailable secondary cost
-   objective as a limitation under "Missing cost or usage telemetry"; it does not erase quality.
+4. Primary objective measures appear and satisfy the metric's contract; interpret flat scores
+   under the no-lift rules below. Record any unavailable secondary cost objective as a limitation
+   under "Missing cost or usage telemetry"; it does not erase quality.
 5. Real calls do not show the mock's constant response pattern.
 6. Verify the actual provider path and successful responses. Report provider token usage where
    available and mark it unverified where absent; missing usage alone does not invalidate quality.
@@ -1963,6 +1964,10 @@ Before claiming success, verify:
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
+Flat measured scores alone do not invalidate a calibrated comparison: all-one maximized accuracy
+and all-zero minimized error can be correct, and flat poor performance is a measured outcome, not
+an established evaluator defect. The gate in `evaluation-and-dataset.md`'s Mandatory calibration
+remains in force. Check calibration, references, truncation and provider failures before prescribing repair.
 Candidate hypotheses include an uninformative space, limited or easy data, evaluator mismatch,
 controls the search never varied, output truncation, generated data with no headroom, or insufficient
 model capability. Use the checks below to choose the next test, but say `cause not established by
@@ -2158,8 +2163,9 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   budgets` above refuses.
 - Timeout with zero trials: diagnose provider latency, a hung call, or setup failure before
   considering another run.
-- Evaluator exceptions or all-zero/all-one measures: repair evaluator/data and rerun only after
+- Evaluator exceptions or established evaluator/data defects: repair and rerun only after
   calibration, under a newly scoped approval that carries what was already spent.
+- Flat measures alone: follow Post-run verification's no-lift interpretation.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
 - Environment creation, installation, or installed-preflight failure: preserve every existing

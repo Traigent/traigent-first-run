@@ -532,6 +532,50 @@ class RefusalTests(unittest.TestCase):
         del project.config["agent"]["args"]["text"]
         self.assertTrue(any("requires text" in r for r in self.refused(project)))
 
+    def test_literal_keyword_names_are_validated_before_generation(self) -> None:
+        for role in ("agent", "evaluator"):
+            with self.subTest(role=role):
+                project = Project(self)
+                project.config[role]["args"]["typo"] = {"value": "literal"}
+                self.assertIn(
+                    f"{role}.args.typo: {role} has no parameter typo",
+                    self.refused(project),
+                )
+
+    def test_valid_literal_keywords_and_kwargs_extras_still_generate(self) -> None:
+        for role in ("agent", "evaluator"):
+            for extra in (False, True):
+                with self.subTest(role=role, extra=extra):
+                    agent, evaluator = AGENT, EVALUATOR
+                    if extra:
+                        if role == "agent":
+                            agent = agent.replace(
+                                'suffix=""):', 'suffix="", **kwargs):'
+                            )
+                        else:
+                            evaluator = evaluator.replace(
+                                "output, expected):", "output, expected, **kwargs):"
+                            )
+                    project = Project(self, agent=agent, evaluator=evaluator)
+                    parameter = (
+                        "additional"
+                        if extra
+                        else ("suffix" if role == "agent" else "expected")
+                    )
+                    project.config[role]["args"][parameter] = {"value": "literal"}
+                    done = project.generate()
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_malformed_literals_keep_their_shape_refusal(self) -> None:
+        project = Project(self)
+        project.config["agent"]["args"]["suffix"] = {
+            "value": "literal",
+            "extra": 1,
+        }
+        self.assertTrue(
+            any("a literal is" in reason for reason in self.refused(project))
+        )
+
     def test_an_evaluator_cannot_read_a_knob(self) -> None:
         project = Project(self)
         project.config["evaluator"]["args"]["expected"] = "$config.model"
@@ -1312,7 +1356,12 @@ class FirstRunAuditTests(unittest.TestCase):
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("stopped before any further spend", done.stdout + done.stderr)
         self.assertIn("this process placed 1 provider call(s)", done.stdout)
-        self.assertFalse((project.runs / "baseline-results.json").exists())
+        result = json.loads((project.runs / "baseline-results.json").read_text())
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["stop_reason"], "safety_refusal")
+        self.assertEqual(result["provider_calls"], 1)
+        self.assertEqual(result["results"][0]["n_failed"], 0)
+        self.assertEqual(result["results"][0]["n_unfinished"], len(ROWS))
 
     def test_an_ordinary_agent_failure_still_counts_as_one_failed_row(self) -> None:
         agent = AGENT.replace(

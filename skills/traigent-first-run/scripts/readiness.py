@@ -13469,6 +13469,33 @@ class StaticSourceEvidence:
     selected_callable: ast.FunctionDef | ast.AsyncFunctionDef
 
 
+def _python_source_text(raw: bytes) -> str:
+    """Decode bytes already accepted by ast.parse for matching line evidence.
+
+    PEP 263's cookie is ASCII even when its comment is not. Inspect those
+    bytes before decoding: tokenize.open decodes whole header lines as UTF-8
+    first and its binary readline does not split CR-only physical lines.
+    Python's parser remains the authority for validity and BOM conflicts.
+    """
+    if raw.startswith(b"\xef\xbb\xbf"):
+        encoding = "utf-8-sig"
+    else:
+        encoding = "utf-8"
+        for line in re.split(rb"\r\n|\r|\n", raw, maxsplit=2)[:2]:
+            cookie = re.match(rb"^[ \t\f]*#.*?coding[:=][ \t]*([-_.a-zA-Z0-9]+)", line)
+            if cookie:
+                # Let the public stdlib API normalize Python's encoding
+                # aliases using only the captured ASCII label, not a
+                # re-encoded or lossy projection of the customer's source.
+                header = b"# coding: " + cookie.group(1) + b"\n"
+                encoding, _ = tokenize.detect_encoding(io.BytesIO(header).readline)
+                break
+            content = line.lstrip(b" \t\f")
+            if content and not content.startswith(b"#"):
+                break  # A cookie after actual code is an ordinary comment.
+    return raw.decode(encoding).replace("\r\n", "\n").replace("\r", "\n")
+
+
 def static_source_evidence(
     source: Any,
     source_root: Path,
@@ -13533,9 +13560,10 @@ def static_source_evidence(
             "a sibling or another in-root file is not evidence for the selected agent"
         )
     try:
-        text = candidate.read_text(encoding="utf-8")
-        tree = ast.parse(text, filename=str(candidate))
-    except (OSError, UnicodeDecodeError, SyntaxError) as error:
+        raw = candidate.read_bytes()
+        tree = ast.parse(raw, filename=str(candidate))
+        text = _python_source_text(raw)
+    except (OSError, UnicodeError, LookupError, SyntaxError) as error:
         raise AgentDiscoveryInputError(
             f"agent-knobs source {source!r} is not readable Python for static validation: {error}"
         ) from error
@@ -13614,7 +13642,7 @@ def static_source_evidence(
         root,
         source,
         frozenset(executable),
-        tuple(text.splitlines()),
+        tuple(line.removesuffix("\n") for line in io.StringIO(text)),
         tree,
         parents,
         selected_nodes[0],

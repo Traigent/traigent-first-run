@@ -8835,7 +8835,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("obtain explicit approval for this connected stage", stage_seven)
         baseline_checkpoint = stage_seven.index("show a **local baseline checkpoint**")
         evidence_gate = stage_seven.index(
-            "check whether the dataset and evaluator distinguish configurations"
+            "check calibration and reference evidence for defects"
         )
         connected_preview = stage_seven.index("offer `a.` the bounded connected run")
         connected_approval = stage_seven.index("stage 4/5 · optimize")
@@ -8880,6 +8880,36 @@ class SkillPackageTests(unittest.TestCase):
         )
         for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
             self.assertNotIn("combined approval", document.read_text().casefold())
+
+    def test_generated_baseline_exit3_routes_safety_stops(self) -> None:
+        """A safety stop can retain scored rows without ordinary row failures."""
+        execution = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        incomplete = " ".join(
+            execution.split("A generated-bridge baseline that ends", 1)[1]
+            .split("Edit the bundled wrapper only", 1)[0]
+            .split()
+        )
+        for outcome in (
+            "unscored configurations",
+            "failed examples",
+            "timeouts",
+            "safety refusals",
+        ):
+            with self.subTest(outcome=outcome):
+                self.assertIn(outcome, incomplete)
+        for safeguard in (
+            "completed and unfinished row counts",
+            "budget debit",
+            "a safety refusal can retain scored rows with no ordinary failures",
+            "Timeout and cost-ceiling stops follow `run-safety.md`'s Recovery rules",
+            "Diagnose other safety refusals",
+            "Do not read a **winner** from the run or re-run blind",
+            "Carry the cumulative debit forward",
+        ):
+            with self.subTest(safeguard=safeguard):
+                self.assertIn(safeguard, incomplete)
+        self.assertNotIn("Three states reach it", incomplete)
+        self.assertNotIn("For the other two", incomplete)
 
     def test_run_plan_records_stage_specific_approvals(self) -> None:
         plan = " ".join(
@@ -25250,6 +25280,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
+            "whether flat measured scores alone invalidate a calibrated comparison",
+            (
+                "an optimized winner that does not beat the baseline is a valid no-lift result",
+            ),
+            (
+                "primary objective measures appear and vary meaningfully",
+                "best configuration and non-degenerate measures exist",
+                "evaluator exceptions or all-zero/all-one measures: repair",
+                "if the signal cannot distinguish configurations, recommend the evidenced repair",
+                "check whether the dataset and evaluator distinguish configurations. if not, stop",
+            ),
+        ),
+        (
             "whether preserving reference rows establishes any-of grading",
             ("keeping reference rows does not provide any-of scoring",),
             (
@@ -32059,9 +32102,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             section_text(RUN_SAFETY, "Comparison sequence").casefold().split()
         )
         self.assertLess(
-            comparison.index(
-                "check whether the dataset and evaluator distinguish configurations"
-            ),
+            comparison.index("check calibration and reference evidence for defects"),
             comparison.index("recommend the sound continuing route"),
         )
         self.assertIn(
