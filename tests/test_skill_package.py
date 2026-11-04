@@ -8835,7 +8835,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("obtain explicit approval for this connected stage", stage_seven)
         baseline_checkpoint = stage_seven.index("show a **local baseline checkpoint**")
         evidence_gate = stage_seven.index(
-            "check whether the dataset and evaluator distinguish configurations"
+            "check calibration and reference evidence for defects"
         )
         connected_preview = stage_seven.index("offer `a.` the bounded connected run")
         connected_approval = stage_seven.index("stage 4/5 · optimize")
@@ -25250,6 +25250,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
+            "whether flat measured scores alone invalidate a calibrated comparison",
+            (
+                "an optimized winner that does not beat the baseline is a valid no-lift result",
+            ),
+            (
+                "primary objective measures appear and vary meaningfully",
+                "best configuration and non-degenerate measures exist",
+                "evaluator exceptions or all-zero/all-one measures: repair",
+                "if the signal cannot distinguish configurations, recommend the evidenced repair",
+                "check whether the dataset and evaluator distinguish configurations. if not, stop",
+            ),
+        ),
+        (
             "whether preserving reference rows establishes any-of grading",
             ("keeping reference rows does not provide any-of scoring",),
             (
@@ -32059,9 +32072,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             section_text(RUN_SAFETY, "Comparison sequence").casefold().split()
         )
         self.assertLess(
-            comparison.index(
-                "check whether the dataset and evaluator distinguish configurations"
-            ),
+            comparison.index("check calibration and reference evidence for defects"),
             comparison.index("recommend the sound continuing route"),
         )
         self.assertIn(

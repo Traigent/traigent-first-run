@@ -173,7 +173,7 @@ def split_callable(spec: str, root: Path, role: str, problems: list[str]):
 
 def find_function(path: Path, name: str, role: str, problems: list[str]):
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(path.read_bytes(), filename=str(path))
     except (SyntaxError, UnicodeDecodeError, ValueError) as error:
         problems.append(f"{role} source {path.name} cannot be parsed: {error}")
         return None, None
@@ -197,6 +197,8 @@ def check_mapping(
         )
     names = {a.arg for a in signature.args + signature.kwonlyargs}
     for name, token in args.items():
+        if signature.kwarg is None and name not in names:
+            problems.append(f"{role}.args.{name}: {role} has no parameter {name}")
         if isinstance(token, dict):
             if set(token) != {"value"}:
                 problems.append(
@@ -218,8 +220,6 @@ def check_mapping(
             problems.append(
                 f"{role}.args.{name}: {token} is not available to the {role}"
             )
-        if signature.kwarg is None and name not in names:
-            problems.append(f"{role}.args.{name}: {role} has no parameter {name}")
     required = [
         a.arg
         for a in signature.args[: len(signature.args) - len(signature.defaults)]
@@ -292,7 +292,7 @@ def reachable_sources(
             )
             break
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = ast.parse(path.read_bytes(), filename=str(path))
         except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as error:
             problems.append(
                 f"{path.name} (imported from {start.name}) cannot be read or parsed "
@@ -628,7 +628,7 @@ def suggest(root: Path, dataset: Path | None) -> dict:
         break
     for path in sorted(root.glob("*.py"))[:20]:
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"))
+            tree = ast.parse(path.read_bytes(), filename=str(path))
         except (SyntaxError, UnicodeDecodeError, OSError):
             continue
         for node in tree.body:

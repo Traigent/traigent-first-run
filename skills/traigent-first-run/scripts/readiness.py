@@ -13533,7 +13533,8 @@ def static_source_evidence(
             "a sibling or another in-root file is not evidence for the selected agent"
         )
     try:
-        text = candidate.read_text(encoding="utf-8")
+        with tokenize.open(candidate) as stream:
+            text = stream.read()
         tree = ast.parse(text, filename=str(candidate))
     except (OSError, UnicodeDecodeError, SyntaxError) as error:
         raise AgentDiscoveryInputError(

@@ -4310,7 +4310,7 @@ def _tree_of(path: Path) -> str | None:
     and may not carry a different statement and still be it.
     """
     try:
-        return ast.dump(ast.parse(path.read_text()))
+        return ast.dump(ast.parse(path.read_bytes()))
     except (
         OSError,
         UnicodeDecodeError,
@@ -4418,12 +4418,12 @@ def check_evaluator(path: Path) -> None:
         emit("evaluator-shape", FAIL, f"{path} does not exist", {"exists": False})
         return
     try:
-        source = path.read_text()
-    except (OSError, UnicodeDecodeError) as error:
+        source = path.read_bytes()
+    except OSError as error:
         emit(
             "evaluator-shape",
             FAIL,
-            f"{path} could not be read as text: {error}",
+            f"{path} could not be read: {error}",
             {"exists": True, "parses": False},
         )
         return
@@ -4550,7 +4550,7 @@ def structural_sql_gold_is_checkable(
     if evaluator is None or not evaluator.exists():
         return False
     try:
-        tree = ast.parse(evaluator.read_text(), filename=str(evaluator))
+        tree = ast.parse(evaluator.read_bytes(), filename=str(evaluator))
     except (
         OSError,
         UnicodeDecodeError,

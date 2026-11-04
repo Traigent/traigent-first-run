@@ -26,6 +26,7 @@ import os
 import sys
 import threading
 import time
+import uuid
 from pathlib import Path
 
 sys.dont_write_bytecode = True  # nothing imported later writes __pycache__
@@ -821,10 +822,18 @@ class Bridge:
                     if str(directory) not in sys.path:
                         sys.path.insert(0, str(directory))
                 spec = importlib.util.spec_from_file_location(
-                    f"_first_run_{role}", path
+                    f"_first_run_{role}_{uuid.uuid4().hex}", path
                 )
                 module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
+                # Dataclasses and other import-time readers resolve their own module
+                # through this registry. Each load keeps its identity, including when
+                # another bridge loads the same role or a same-named source later.
+                sys.modules[spec.name] = module
+                try:
+                    spec.loader.exec_module(module)
+                except BaseException:
+                    sys.modules.pop(spec.name, None)
+                    raise
             function = getattr(module, entry["function"], None)
             if not callable(function):
                 raise SystemExit(f"{entry['file']} has no callable {entry['function']}")
@@ -1092,11 +1101,13 @@ class Bridge:
             "evaluator"
         )  # load after the interceptors
         began, results, complete = time.monotonic(), [], True
+        stop_reason = None
         for config in configs:
             scores, failures = [], {}
             for row in rows:
                 if time.monotonic() - began > timeout:
                     complete = False
+                    stop_reason = "timeout"
                     break
                 try:
                     output = self.agent_output(row, config)
@@ -1111,8 +1122,12 @@ class Bridge:
                             ),
                         }
                     )
-                except SafetyRefusal as refusal:
-                    raise SystemExit(f"stopped before any further spend: {refusal}")
+                except SafetyRefusal:
+                    # Finalize observations already paid for, without scheduling
+                    # another row or keeping potentially private exception text.
+                    complete = False
+                    stop_reason = "safety_refusal"
+                    break
                 except Exception as error:  # class name only: provider text is not kept
                     failures[type(error).__name__] = (
                         failures.get(type(error).__name__, 0) + 1
@@ -1123,6 +1138,7 @@ class Bridge:
                     "config": config,
                     "n_scored": len(values),
                     "n_failed": sum(failures.values()),
+                    "n_unfinished": len(rows) - len(values) - sum(failures.values()),
                     "failure_types": failures,
                     "mean_score": sum(values) / len(values) if values else None,
                     "rows": scores,
@@ -1133,6 +1149,7 @@ class Bridge:
         document = {
             "kind": "first-run-bridge-baseline",
             "phase": "baseline",
+            "stop_reason": stop_reason,
             "complete": (
                 complete
                 and len(results) == len(configs)
@@ -1151,13 +1168,21 @@ class Bridge:
             json.dumps(document, indent=2, default=str) + "\n", encoding="utf-8"
         )
         print(f"wrote {out}")
+        if stop_reason == "safety_refusal":
+            print(
+                "stopped before any further spend: safety refusal; review accounting "
+                "and the approved budget before another run. Saved observations are incomplete."
+            )
         if any(result["n_failed"] for result in results):
             print(
                 "Partial evaluation: failed examples; means are diagnostic, not a complete comparison"
             )
         unscored = [r for r in results if not r["n_scored"]]
         if unscored:
-            print(f"{len(unscored)} configuration(s) scored no row; see failure_types")
+            print(
+                f"{len(unscored)} configuration(s) scored no row; "
+                "see stop_reason and failure_types"
+            )
         return 0 if document["complete"] and not unscored else 3
 
     def run_probe(self) -> int:

@@ -18115,6 +18115,66 @@ class StaticAgentSourceEvidenceTests(unittest.TestCase):
         self.assertGreater(pillar.score, 0)
         self.assertFalse(any(cap.condition == "agent-no-varying-knobs" for cap in caps))
 
+    def test_python_source_encodings_preserve_lines_and_agent_credit(self) -> None:
+        source = (
+            "# café\n"
+            'MODELS = ["fast", "slow"]\n'
+            "def call(message, choice):\n"
+            "    return provider(model=MODELS[choice], message=message)\n"
+            "raise RuntimeError('static inspection must not execute this file')\n"
+        )
+        variants = {
+            "utf8": ("# coding: utf-8\n" + source).encode("utf-8"),
+            "bom": b"\xef\xbb\xbf" + ("# coding: utf-8\n" + source).encode("utf-8"),
+            "latin1": ("# coding: latin-1\n" + source).encode("latin-1"),
+        }
+        for name, raw in variants.items():
+            with self.subTest(
+                encoding=name
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                agent = root / "agent.py"
+                agent.write_bytes(raw)
+                evidence = MODULE.static_source_evidence(
+                    "agent.py", root, agent, "call"
+                )
+                self.assertEqual(evidence.selected_callable.lineno, 4)
+                self.assertEqual(evidence.text_by_line[1], "# café")
+                self.assertNotIn(2, evidence.executable_lines)
+                self.assertIn(3, evidence.executable_lines)
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("MODELS reach the selected call", source_lines=[3]),
+                    source_root=root,
+                    selected_agent=agent,
+                    selected_agent_callable="call",
+                )
+                self.assertTrue(
+                    facts.discovered[0].credited, facts.discovered[0].uncredited_reason
+                )
+                self.assertEqual(agent.read_bytes(), raw)
+
+    def test_invalid_source_encoding_keeps_agent_evidence_unverified(self) -> None:
+        for raw in (
+            b"# coding: no-such-codec\nMODELS = ['fast', 'slow']\ndef call(choice): return MODELS[choice]\n",
+            b"\xef\xbb\xbf# coding: latin-1\ndef call(choice): return choice\n",
+            b"def call(choice)\n    return choice\n",
+        ):
+            with self.subTest(source=raw), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                agent = root / "agent.py"
+                agent.write_bytes(raw)
+                with self.assertRaises(MODULE.AgentDiscoveryInputError):
+                    MODULE.static_source_evidence("agent.py", root, agent, "call")
+                facts = MODULE.agent_facts_from_discovery(
+                    self._document("unreadable source", source_lines=[2]),
+                    source_root=root,
+                    selected_agent=agent,
+                    selected_agent_callable="call",
+                )
+                self.assertFalse(facts.discovered[0].credited)
+                self.assertTrue(facts.discovered[0].unverified)
+                self.assertIn("cannot be parsed", facts.discovered[0].uncredited_reason)
+
     def test_mapping_keys_are_options_only_when_mapped_literals_differ(self) -> None:
         cases = (
             ({"plain": "same", "rich": "same"}, False),
