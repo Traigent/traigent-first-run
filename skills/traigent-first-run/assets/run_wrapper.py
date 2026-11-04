@@ -738,6 +738,17 @@ def load_baseline_transfer(
             expected_space = baseline_space["knobs"]
             expected_version = 3
         previous_objectives = payload.get("objective_signature")
+        if generated is not None:
+            generated_signature = [
+                {"name": metric_name, "orientation": "maximize", "weight": 1.0}
+            ]
+            if any(
+                _canonical_json(signature) != _canonical_json(generated_signature)
+                for signature in (previous_objectives, objective_signature)
+            ):
+                raise ValueError(
+                    "generated baseline requires its sole normalized maximizing primary"
+                )
         same_objectives = _canonical_json(previous_objectives) == _canonical_json(
             objective_signature
         )

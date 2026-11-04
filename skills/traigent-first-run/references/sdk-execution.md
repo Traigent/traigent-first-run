@@ -306,7 +306,12 @@ grade; raw minimized measures need the hand-adapted route before paid work. Its 
 complete numeric comparison evidence inside `baseline-results.json`, bound to the measured tuning
 inputs, expected answers, metadata, configuration space and primary definition. For the connected
 wrapper, normalize the same tuning rows into its SDK dataset shape without changing their order,
-values or metadata; its loader verifies that the SDK actually reads the same material. Keep the
+values or metadata: each derived JSONL row is exactly
+`{"input": mapped_input, "expected_output": mapped_expected, "metadata": preserved_metadata}`.
+These values come from the approved adapter mappings; keep `metadata.example_id` and all other
+mapped metadata unchanged. Leave the original dataset intact. Do not copy unmapped top-level
+fields into the derived rows: the SDK would promote those extras into metadata and change the
+comparison material. Its loader verifies that the SDK actually reads the same material. Keep the
 same primary definition and primary-only mode: the bridge's aggregate spend is not per-trial cost.
 The generated baseline is already measured; do not run the SDK baseline fence below again.
 
@@ -318,8 +323,13 @@ The generated handoff consumes the stable-ID shape specified for generated rows 
 `evaluation-and-dataset.md`. Point the adapter's dataset ID mapping at `metadata.example_id` and its
 metadata mapping at the containing object. Keep those same values and metadata in the connected
 dataset; do not drop IDs, add fields to the evaluator's input, or strip fields merely to make the
-fingerprint match. If this cannot preserve the existing agent/evaluator call arguments, generation
-refuses before paid work: use the hand-adapted SDK route for both phases.
+fingerprint match. Generation refuses unsupported ID mappings before paid work. Before starting
+that baseline, also verify that the connected adapter preserves the actual agent/evaluator call
+arguments: the SDK's default agent call receives input data, while metadata goes to scorers.
+An agent that needs row metadata requires the existing full-example `custom_evaluator` route
+described below, with its call arguments checked explicitly. Dataset fingerprint equality alone
+does not prove this. If those arguments cannot be preserved, use the hand-adapted SDK route for
+both phases before paid work.
 
 A generated-bridge baseline that ends **exit 3** has not produced a complete comparison, and the
 saved means are diagnostic only. This includes unscored configurations, failed examples, timeouts,

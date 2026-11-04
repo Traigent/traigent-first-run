@@ -122,7 +122,7 @@ with patch.object(socket.socket, 'connect', forbidden), patch.object(socket, 'ge
         self.assertEqual(len(trials), 2)
         self.assertEqual(incumbent.metrics, {"task_quality": 1.0})
 
-    def restore(self, bridge, examples=None):
+    def restore(self, bridge, examples=None, objective_signature=None):
         if examples is None:
             examples = [
                 SimpleNamespace(
@@ -140,7 +140,11 @@ with patch.object(socket.socket, 'connect', forbidden), patch.object(socket, 'ge
             len(examples),
             "SDK byte hash is deliberately different",
             name,
-            [{"name": name, "orientation": "maximize", "weight": 1.0}],
+            (
+                [{"name": name, "orientation": "maximize", "weight": 1.0}]
+                if objective_signature is None
+                else objective_signature
+            ),
             baseline_results_path=str(bridge.run_dir / "baseline-results.json"),
             tuning_examples=examples,
         )
@@ -372,6 +376,37 @@ with patch.object(socket.socket, 'connect', forbidden), patch.object(socket, 'ge
             path.unlink()
             with self.assertRaises(SystemExit):
                 self.restore(bridge)
+
+    def test_generated_semantics_are_validated_even_when_caller_agrees(self):
+        with self.runtime_bridge() as (_, bridge, placed):
+            _, original, _ = self.baseline_result(bridge)
+            _, examples = self.sdk_examples(bridge)
+            signature = original["comparison_transfer"]["objective_signature"]
+            self.restore(bridge, examples, signature)
+            calls_before = len(placed)
+            invalid = [
+                [],
+                signature
+                + [{"name": "cost", "orientation": "minimize", "weight": 1.0}],
+            ]
+            for field, values in (
+                ("orientation", ("minimize", "unknown", None)),
+                ("weight", (0, -1, True, 2.0, float("nan"), float("inf"))),
+            ):
+                for value in values:
+                    changed = copy.deepcopy(signature)
+                    changed[0][field] = value
+                    invalid.append(changed)
+            for index, changed in enumerate(invalid):
+                with self.subTest(case=index):
+                    document = copy.deepcopy(original)
+                    document["comparison_transfer"]["objective_signature"] = changed
+                    (bridge.run_dir / "baseline-results.json").write_text(
+                        json.dumps(document)
+                    )
+                    with self.assertRaises(SystemExit):
+                        self.restore(bridge, examples, changed)
+            self.assertEqual(len(placed), calls_before)
 
     def test_current_sdk_result_uses_sdk_transfer_instead_of_old_bridge_evidence(self):
         with self.runtime_bridge() as (_, bridge, _):
