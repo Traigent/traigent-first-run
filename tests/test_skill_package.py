@@ -8881,6 +8881,36 @@ class SkillPackageTests(unittest.TestCase):
         for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
             self.assertNotIn("combined approval", document.read_text().casefold())
 
+    def test_generated_baseline_exit3_routes_safety_stops(self) -> None:
+        """A safety stop can retain scored rows without ordinary row failures."""
+        execution = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        incomplete = " ".join(
+            execution.split("A generated-bridge baseline that ends", 1)[1]
+            .split("Edit the bundled wrapper only", 1)[0]
+            .split()
+        )
+        for outcome in (
+            "unscored configurations",
+            "failed examples",
+            "timeouts",
+            "safety refusals",
+        ):
+            with self.subTest(outcome=outcome):
+                self.assertIn(outcome, incomplete)
+        for safeguard in (
+            "completed and unfinished row counts",
+            "budget debit",
+            "a safety refusal can retain scored rows with no ordinary failures",
+            "Timeout and cost-ceiling stops follow `run-safety.md`'s Recovery rules",
+            "Diagnose other safety refusals",
+            "Do not read a **winner** from the run or re-run blind",
+            "Carry the cumulative debit forward",
+        ):
+            with self.subTest(safeguard=safeguard):
+                self.assertIn(safeguard, incomplete)
+        self.assertNotIn("Three states reach it", incomplete)
+        self.assertNotIn("For the other two", incomplete)
+
     def test_run_plan_records_stage_specific_approvals(self) -> None:
         plan = " ".join(
             (SKILL_ROOT / "assets" / "run-plan.md").read_text().casefold().split()

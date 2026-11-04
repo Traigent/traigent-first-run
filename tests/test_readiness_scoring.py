@@ -18032,6 +18032,180 @@ def _documented_agent_source_root():
 DOCUMENTED_AGENT_KNOBS = frozenset({"model", "temperature", "style"})
 
 
+class PythonSourceDecodingTests(unittest.TestCase):
+    """The AST and physical-line evidence must describe the same source bytes."""
+
+    BODY = (
+        "MODELS = ['fast', 'slow']\n"
+        "def call(choice):\n"
+        "    return provider(model=MODELS[choice])\n"
+        "raise RuntimeError('static inspection must not execute customer source')\n"
+    )
+
+    @classmethod
+    def valid_sources(cls):
+        sources = [("utf8", cls.BODY.encode(), cls.BODY)]
+        for name, header, encoding in (
+            ("bom", "# coding: utf-8; café\n", "utf-8-sig"),
+            ("latin1-comment", "# coding: latin-1; café\n", "latin-1"),
+            ("latin1-prefix", "# café; coding: latin-1\n", "latin-1"),
+            ("latin1-suffix", "# coding: latin-1é\n", "latin-1"),
+            ("latin1-alias", "# coding: iso-latin-1; café\n", "latin-1"),
+            ("utf8-alias", "# coding: utf-8-extra; café\n", "utf-8"),
+            ("cp1252", "# coding: cp1252; €\n", "cp1252"),
+            (
+                "unicode-non-newline",
+                "# coding: latin-1\n# café\x85comment\n",
+                "latin-1",
+            ),
+        ):
+            text = header + cls.BODY
+            sources.append((name, text.encode(encoding), text))
+        for name, newline in (("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")):
+            text = "# header\n# coding: latin-1; café\n" + cls.BODY
+            sources.append((name, text.replace("\n", newline).encode("latin-1"), text))
+        for name, prefix in (
+            ("after-code", "VALUE = 1\n# coding: latin-1; café\n"),
+            ("after-code-unknown", "VALUE = 1\n# coding: no-such-codec; café\n"),
+            ("third-line", "# header\n# second\n# coding: latin-1; café\n"),
+        ):
+            text = prefix + cls.BODY
+            sources.append((name, text.encode("utf-8"), text))
+        return sources
+
+    @classmethod
+    def invalid_sources(cls):
+        sources = [
+            (codec, (f"# coding: {codec}\n" + cls.BODY).encode())
+            for codec in ("base64_codec", "rot_13", "hex_codec", "no-such-codec")
+        ]
+        sources.extend(
+            [
+                (
+                    "conflicting-bom",
+                    b"\xef\xbb\xbf" + ("# coding: latin-1\n" + cls.BODY).encode(),
+                ),
+                ("syntax", b"def call(:\n    return 1\n"),
+            ]
+        )
+        return sources
+
+    def assert_cli(self, root: Path, agent: Path, line: int, *, credited: bool):
+        document = {
+            "source": "agent.py",
+            "knobs": {
+                "model": {
+                    "values": ["fast", "slow"],
+                    "source_lines": [line],
+                    "evidence": "MODELS reach the selected call",
+                }
+            },
+        }
+        knobs = root / "knobs.json"
+        knobs.write_text(json.dumps(document), encoding="utf-8")
+        done = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-B",
+                str(SCRIPT),
+                "--agent-knobs",
+                str(knobs),
+                "--agent-source-root",
+                str(root),
+                "--selected-agent",
+                str(agent),
+                "--selected-agent-callable",
+                "call",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(done.stderr, "")
+        payload = json.loads(done.stdout)
+        pillar = next(p for p in payload["pillars"] if p["name"] == "agent")
+        space = next(s for s in pillar["subscores"] if s["name"] == "search-space")
+        if credited:
+            self.assertGreater(space["value"], 0, space["evidence"])
+        else:
+            self.assertEqual(space["value"], 0, space["evidence"])
+            self.assertIn("cannot be parsed", space["evidence"])
+
+    def test_accepted_source_bytes_keep_text_lines_and_cli_credit(self) -> None:
+        for name, raw, expected in self.valid_sources():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                agent = root / "agent.py"
+                agent.write_bytes(raw)
+                tree = ast.parse(raw, filename=str(agent))
+                selected = next(
+                    node for node in tree.body if isinstance(node, ast.FunctionDef)
+                )
+                lines = tuple(expected.removesuffix("\n").split("\n"))
+                evidence = MODULE.static_source_evidence(
+                    "agent.py", root, agent, "call"
+                )
+                self.assertEqual(ast.dump(evidence.tree), ast.dump(tree))
+                self.assertEqual(evidence.text_by_line, lines)
+                self.assertEqual(evidence.selected_callable.lineno, selected.lineno)
+                model_line = next(
+                    index
+                    for index, line in enumerate(lines, 1)
+                    if line.startswith("MODELS =")
+                )
+                self.assertIn(model_line, evidence.executable_lines)
+                self.assertTrue(
+                    all(
+                        not line.lstrip().startswith("#")
+                        for index, line in enumerate(lines, 1)
+                        if index in evidence.executable_lines
+                    )
+                )
+                self.assert_cli(root, agent, model_line, credited=True)
+                self.assertEqual(agent.read_bytes(), raw)
+
+    def test_rejected_source_bytes_keep_structured_cli_output(self) -> None:
+        for name, raw in self.invalid_sources():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                agent = root / "agent.py"
+                agent.write_bytes(raw)
+                with self.assertRaises(SyntaxError):
+                    ast.parse(raw, filename=str(agent))
+                self.assert_cli(root, agent, 2, credited=False)
+                with self.assertRaises(MODULE.AgentDiscoveryInputError):
+                    MODULE.static_source_evidence("agent.py", root, agent, "call")
+                self.assertEqual(agent.read_bytes(), raw)
+
+    def test_ast_and_text_share_one_read_even_if_source_changes_after_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            agent = root / "agent.py"
+            agent.write_bytes(self.BODY.encode())
+            original_read = Path.read_bytes
+
+            def read_then_replace(path):
+                raw = original_read(path)
+                path.write_bytes(b"def changed(:\n")
+                return raw
+
+            with mock.patch.object(
+                Path, "read_bytes", autospec=True, side_effect=read_then_replace
+            ) as read:
+                evidence = MODULE.static_source_evidence(
+                    "agent.py", root, agent, "call"
+                )
+            read.assert_called_once_with(agent)
+            self.assertEqual(
+                evidence.text_by_line, tuple(self.BODY.removesuffix("\n").split("\n"))
+            )
+            self.assertEqual(evidence.selected_callable.name, "call")
+
+
 class StaticAgentSourceEvidenceTests(unittest.TestCase):
     """#330: only checked executable selected-agent source can earn credit."""
 
