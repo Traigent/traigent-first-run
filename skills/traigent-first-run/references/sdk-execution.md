@@ -299,16 +299,55 @@ ledger and offline boundary. Run the commands the generator prints under "next" 
 the scorer it prints there, rather than typing either path: both follow the run directory actually
 selected, and are already shell-quoted.
 
+For the connected walkthrough, keep the default `traigent-runs` directory before the baseline:
+the bundled wrapper and phase commands read their artifacts there. A different run directory
+requires a hand-adapted path for both phases; decide that before paid work.
+If a custom-directory baseline is already complete, preserve and report its actual artifact;
+do not automatically repeat it or claim connected reuse without proving the adapted paths.
+
+Name its normalized primary measure before the baseline, for example
+`"primary_metric": {"name": "task_quality", "orientation": "maximize"}`. Use the calibrated measure's meaningful
+name, not an assumed accuracy label. The generated scorer returns a normalized, higher-is-better
+grade; raw minimized measures need the hand-adapted route before paid work. Its baseline saves
+complete numeric comparison evidence inside `traigent-runs/baseline-results.json` by default
+(use the selected run directory if different), bound to the measured tuning
+inputs, expected answers, metadata, configuration space and primary definition. For the connected
+wrapper, normalize the same tuning rows into its SDK dataset shape without changing their order,
+values or metadata: each derived JSONL row is exactly
+`{"input": mapped_input, "expected_output": mapped_expected, "metadata": preserved_metadata}`.
+These values come from the approved adapter mappings; keep `metadata.example_id` and all other
+mapped metadata unchanged. Leave the original dataset intact. Do not copy unmapped top-level
+fields into the derived rows: the SDK would promote those extras into metadata and change the
+comparison material. Its loader verifies that the SDK actually reads the same material. Keep the
+same primary definition and primary-only mode: the bridge's aggregate spend is not per-trial cost.
+The generated baseline is already measured; do not run the SDK baseline fence below again.
+
+Older generated artifacts lack that baseline-time identity. Preserve them and report a
+baseline-only result when the loader refuses them; reconstructing missing identity from today's
+files or repeating paid work is not a metadata repair.
+
+The generated handoff consumes the stable-ID shape specified for generated rows in
+`evaluation-and-dataset.md`. Point the adapter's dataset ID mapping at `metadata.example_id` and its
+metadata mapping at the containing object. Keep those same values and metadata in the connected
+dataset; do not drop IDs, add fields to the evaluator's input, or strip fields merely to make the
+fingerprint match. Generation refuses unsupported ID mappings before paid work. Before starting
+that baseline, also verify that the connected adapter preserves the actual agent/evaluator call
+arguments: the SDK's default agent call receives input data, while metadata goes to scorers.
+An agent that needs row metadata requires the existing public full-example evaluator route
+described below, with its call arguments checked explicitly. Dataset fingerprint equality alone
+does not prove this. If those arguments cannot be preserved, use the hand-adapted SDK route for
+both phases before paid work.
+
 A generated-bridge baseline that ends **exit 3** has not produced a complete comparison, and the
-printed means are diagnostic only. Three states reach it: a configuration scored no row, some
-examples failed, or the phase hit its wall-clock bound. **A timeout is not this paragraph's** - with
-or without completed trials it follows `run-safety.md`'s Recovery rules, which own it. For the other
-two: do not read a **winner** from the run and do not re-run it blind, because the spend already
-happened. The cumulative debit is still carried forward exactly as below - that is a budget figure,
-not a result, and dropping it would launch the next phase against the full ceiling again. Say plainly
-that the comparison is incomplete and what it cost, report the per-configuration failure types and
-counts the record carries, and fix the cause before any further paid phase. Approving more spend on
-an unexplained exit 3 is buying the same result twice.
+saved means are diagnostic only. This includes unscored configurations, failed examples, timeouts,
+and safety refusals. Read the record's stop reason, completed and unfinished row counts, and
+budget debit; a safety refusal can retain scored rows with no ordinary failures. **Timeout and
+cost-ceiling stops follow `run-safety.md`'s Recovery rules.** Diagnose other safety refusals and
+example failures before further paid work. Do not read a **winner** from the run
+or re-run blind: the spend already happened. Carry the cumulative debit forward exactly as below;
+dropping that budget figure would launch the next phase against the full ceiling again. Report
+the incomplete comparison, its saved observations, failure types and counts, and what it cost.
+Approving more spend on an unexplained exit 3 is buying the same result twice.
 
 Edit the bundled wrapper only when generation refuses, with every reason printed (another
 transport than OpenAI or litellm, an engine-reaching evaluator) or for the connected phase.
@@ -323,6 +362,8 @@ process variables it reads.
 - `BASELINE_IS_USER_OWNED` - `True` only for an inspected customer baseline.
 - `INCLUDE_COST_OBJECTIVE` and `OBJECTIVES` - the measured primary criterion and the supported
   cost-comparison mode recorded for this operation.
+- `COST_REMOVAL_RECORD` - `None` normally; when secondary cost becomes unavailable, its reason
+  and a reference to the existing approval/run-plan entry for the next primary-only operation.
 - `BASELINE_CONFIG`, `BASELINE_SPACE`, `ENHANCED_SPACE` and `WIRED_KNOBS`, always together.
 - `build_prompt` and `build_request` - how the customer's agent turns a configuration into one
   request.
@@ -403,10 +444,10 @@ door counts an INVOCATION once: a re-entry taken while another invocation is in 
 by the reservation that invocation already took, and the two rules together are what "the money
 is seen" means here.
 
-A judge is the caller that made this necessary. It runs inside `task_score`, whose
-`metric_functions` contract returns a number with no ledger to debit through, and the SDK settles a
-trial's cost before applying the metric functions, so a call made inside one is already past that
-trial's accounting. The rule for generating a scorer is with `task_score` below.
+An evaluator may place its own judge calls inside `task_score`. SDK 0.31.1 folds intercepted
+metric-function calls into example/trial costs and permit accounting. That does not make pre-run
+estimates, uncaptured calls or direct held-out work the same accounting surface. The rule for
+generating a scorer is with `task_score` below.
 
 That is why the ledger counts search trials as well as direct calls: held-out scoring runs last, in
 the same process as the connected search, and reading the remaining as it stood at process start
@@ -488,6 +529,9 @@ recommendation trustworthy. Read candidates by the primary criterion alone, labe
 comparison unavailable, and use primary-only objectives for the next already planned operation.
 Never repeat a paid baseline merely to restore telemetry or describe the earlier cost-aware search
 as a quality-only search. The approval and next-step wording stays in `run-safety.md`.
+Set `COST_REMOVAL_RECORD` to `{"reason": "...", "approval_reference": "traigent-runs/run-plan.md: ..."}`
+for that transition. The loader retains both objective histories and permits only removal of
+secondary cost; the record documents the decision and does not authorize spending.
 
 Do not include `expected` in the agent signature: dataset inputs call the agent, and expected
 output belongs only to evaluation.
@@ -680,6 +724,9 @@ Comparison reads need two completed configurations. The generated grid qualifies
 baseline with one configuration must wait for the enhanced result or report insight unavailable.
 Neither read is meaningful under mock mode: identical canned responses describe the mock, not the
 dataset.
+The bridge's JSON record is not an SDK result object. Feature-detect these readers on the actual
+SDK result; for a bridge-only baseline, report its saved observations and mark SDK-only insights
+unavailable instead of inventing methods or result identity.
 
 Do not call the result's `analyze()` method. It requires a separate plugin that this run does not
 install and raises `ImportError` without it, so calling it turns a finished run into a crash at the
@@ -687,8 +734,10 @@ reporting step.
 
 ## Carrying the local baseline into the portal
 
-A baseline that ran without a Traigent key is logged locally. Upload it without another provider
-call only when the installed public result exposes an exact sync id:
+A generated-bridge baseline remains local-only: it has no SDK sync session, and its comparison
+transfer creates none. Skip the sync commands for that producer. An SDK-backed baseline that ran
+without a Traigent key is logged locally. Upload it without another provider call only when the
+installed public result exposes an exact sync id:
 
 ```bash
 SESSION_ID="<copy baseline_results.sync_session_id>"
@@ -774,6 +823,9 @@ baseline_trials, baseline_incumbent = load_baseline_transfer(
     TUNING_DATASET_INITIAL_FINGERPRINT,
     PRIMARY_OBJECTIVE.name,
     OBJECTIVE_SIGNATURE,
+    cost_removal_record=COST_REMOVAL_RECORD,
+    baseline_results_path=BASELINE_RESULTS,
+    tuning_examples=TUNING_EXAMPLES,
 )
 assert os.environ.get("TRAIGENT_API_KEY", "").strip(), "Traigent key is not active"
 os.environ["TRAIGENT_EXPERIMENT_NAME"] = "first-run Traigent optimization"
@@ -1022,8 +1074,8 @@ against `HOLDOUT_DATASET` through the same loader and the same `task_score` the 
 `references/evaluation-and-dataset.md` owns which configuration that is - one call of
 `evaluate_holdout`, never one per candidate, whatever the rounds returned. The returned
 cost joins the single running total exactly as a baseline phase does; `references/run-safety.md`
-owns what the approval discloses about those calls. These and a judge's are the walkthrough's only
-paid calls that no permit covers, so they are also the ones the two gates above are written for: the
+owns what the approval discloses about those calls. Direct held-out agent and judge calls run
+outside SDK trial permits, so they still need the two gates above: the
 pass refuses to start unless the remaining funds every row and its grading, and the wrapped
 `litellm.completion` refuses each call individually once it does not.
 
@@ -1060,23 +1112,27 @@ def evaluate_holdout(config: dict) -> tuple[float, float | None]:
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
 and direct portal links for every persisted run. Put the two results side by side, explain the
-knob differences, and state what changed in the measured tuning behavior. The baseline, search,
-and holdout must use the same selected public evaluation path, using the same installed public
-`traigent.Dataset.from_jsonl` loader. This first-run comparison does not establish generalization
+knob differences, and state what changed in the measured tuning behavior. Baseline, search, and
+holdout must preserve the same agent/evaluator argument contract and primary metric. Baseline and
+search use the same tuning rows; holdout uses the reserved rows. SDK phases use the same
+installed public `traigent.Dataset.from_jsonl` loader; the generated bridge's mapped tuning rows
+must match that loader's inputs, targets and metadata before the connected search. This first-run comparison does not establish generalization
 or expected production improvement, and the held-out score does not convert it into one: that
 split is assistant-visible, non-blind, and too small to settle a difference.
 `references/evaluation-and-dataset.md` owns the reservation, the disclosure format, and the
 small-sample caveat.
 
-At close, name the copied `traigent-runs/run_wrapper.py` and sanitized
-`traigent-runs/baseline-transfer.json` among this run's local artifacts.
+At close, name the copied `traigent-runs/run_wrapper.py` and the actual baseline evidence:
+`traigent-runs/baseline-results.json` by default for the generated bridge (use the selected run
+directory if different), or
+`traigent-runs/baseline-transfer.json` for the SDK-backed baseline. Keep these artifacts local.
 
 Before reporting:
 
 ```python
-assert baseline_results.trials, "baseline did not execute"
+assert baseline_trials, "baseline did not execute"
 assert optimized_results.trials, "optimization did not execute"
-assert baseline_results.best_config is not None, "no baseline winner selected"
+assert baseline_incumbent.config is not None, "no baseline winner selected"
 assert optimized_results.best_config is not None, "no best configuration selected"
 ```
 

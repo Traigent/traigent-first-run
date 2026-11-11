@@ -456,7 +456,7 @@ substitute limits, measured tuning results, available cost/latency and trials/fa
 frontier only when the measured-cost rule permits it; otherwise report the quality result and
 missing telemetry. Explain knobs plainly; distinguish the local grid from managed search. Do not
 disclose the held-out score before section 8, and make no generalization or production-improvement claim.
-If the signal cannot distinguish configurations, recommend the evidenced repair before search.
+If calibration or reference evidence establishes a defect, recommend its repair before search.
 A nearly perfect baseline may proceed as an optional verification with no expected gain, or stop
 with its baseline-only result. Recommend the sound continuing route without promising improvement;
 stopping preserves a real result. The comparison sequence owns the full decision and disclosure.
@@ -492,7 +492,7 @@ twelve-configuration default ran in full, its initial configuration among them -
 is never reduced, and an approved disclosure does not make it so; the enhanced run used real
 controls and either produced at least 10 of its 12 permitted trials, matched an explicitly approved
 and disclosed reduced target, or reports a concrete stop/failure reason; and a
-best configuration and non-degenerate measures exist. When held-out scoring completed, verify its
+best configuration and valid primary measures exist. When held-out scoring completed, verify its
 score belongs to the one configuration this run recommends, chosen on tuning scores, and that no
 other candidate was scored on those rows. Report truncation and persistence failures, require the portal
 probe to have stayed green, and verify each portal link before claiming visibility.

@@ -839,7 +839,10 @@ ceiling's.
 
 Every generated row must:
 
-- Have a unique stable `id`.
+- Have a unique stable `id`. For newly generated material, carry that identity in
+  `metadata.example_id` from the outset so both the generated bridge and SDK retain it. Do not
+  alter a provided evaluator's metadata inputs to fit this shape; the compatible-route choice
+  belongs to `sdk-execution.md`'s Decorator contract.
 - Record `difficulty`, `source: "synthetic"`, and a short `coverage`/scenario tag.
 - Match the exact agent input and evaluator gold contract.
 - Have a correct, scoreable expected outcome.

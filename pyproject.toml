@@ -1,0 +1,2 @@
+[tool.traigent.safe-push]
+python-policy = "ruff-check-black"
