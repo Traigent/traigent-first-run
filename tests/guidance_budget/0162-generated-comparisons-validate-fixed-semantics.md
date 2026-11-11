@@ -2,8 +2,8 @@
 
 follows: 0161
 follows-total-measured: 611_946
-total-ceiling: 613_500
-total-measured: 613_304
+total-ceiling: 614_000
+total-measured: 613_981
 
 Independent malformed-artifact review showed that matching saved and requested objective
 signatures did not establish the generated producer's fixed scoring contract. Both could name
@@ -21,7 +21,11 @@ The guidance separately requires proving the connected agent/evaluator arguments
 baseline: matching loaded dataset rows does not prove that a default SDK agent receives metadata.
 It names the existing full-example evaluator path when those arguments need that context.
 
-These corrections add 1,358 measured bytes to the prior committed package. They replace
+These corrections add 2,035 measured bytes to the prior committed package. They replace
 ambiguity in the existing handoff rather than create another guide or execution path. Resident
 instructions and the largest-document ceiling remain unchanged; the added code and local
 projection explanation justify only this bounded increase in the total corpus.
+
+The connected walkthrough also states its existing default-directory requirement before paid work;
+the wrapper resolves its project root and saved artifacts relative to that directory. Custom layouts
+need the hand-adapted route. The ceiling includes this bounded clarification.

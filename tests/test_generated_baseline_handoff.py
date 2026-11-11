@@ -85,7 +85,9 @@ class GeneratedBaselineHandoffTests(unittest.TestCase):
     def test_primary_name_contract_matches_the_pinned_sdk_reserved_set(self):
         distribution = importlib.metadata.distribution("traigent")
         self.assertEqual(distribution.version, "0.31.1")
-        source = distribution.locate_file("traigent/evaluators/metrics_tracker.py")
+        source = distribution.locate_file("traigent").joinpath(
+            "evaluators", "metrics_tracker.py"
+        )
         tree = ast.parse(source.read_text(encoding="utf-8"))
         reserved = next(
             node

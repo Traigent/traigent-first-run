@@ -11612,6 +11612,7 @@ class SkillPackageTests(unittest.TestCase):
             "PROBE_VERDICTS",
             "UNPROVEN_WIRED_KNOBS",
             "_tuning_for_probe",
+            "TUNING_EXAMPLES",
             "WIRED_KNOBS",
             "BEHAVIOUR_KNOBS",
             "PROBE_INPUTS",
@@ -13437,7 +13438,8 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "adapter around the preserved evaluator",
             "installed sdk's documented public `metric_functions` contract",
-            "baseline, search, and holdout must use the same selected public evaluation path",
+            "baseline, search, and holdout must preserve the same agent/evaluator argument contract and primary metric",
+            "baseline and search use the same tuning rows; holdout uses the reserved rows",
             "same installed public `traigent.dataset.from_jsonl` loader",
         ):
             self.assertIn(phrase, normalized)
@@ -20590,25 +20592,23 @@ class SkillPackageTests(unittest.TestCase):
             "PROBE_VERDICTS",
             "REQUEST_FINGERPRINT",
             "_tuning_for_probe",
+            "TUNING_EXAMPLES",
+        }
+        wanted_functions = {
+            "build_prompt",
+            "build_request",
+            "holdout_agent_input",
+            "require_wiring_probe_inputs",
+            "require_pinned_cloud_space_compatibility",
+            "probe_wiring",
+            "request_fingerprint",
+            "assert_wiring_still_proven",
+            "call_agent",
         }
         selected = [
             node
             for node in module.body
-            if (
-                isinstance(node, ast.FunctionDef)
-                and node.name
-                in {
-                    "build_prompt",
-                    "build_request",
-                    "holdout_agent_input",
-                    "require_wiring_probe_inputs",
-                    "require_pinned_cloud_space_compatibility",
-                    "probe_wiring",
-                    "request_fingerprint",
-                    "assert_wiring_still_proven",
-                    "call_agent",
-                }
-            )
+            if (isinstance(node, ast.FunctionDef) and node.name in wanted_functions)
             or (
                 isinstance(node, ast.Assign)
                 and any(
@@ -20618,7 +20618,9 @@ class SkillPackageTests(unittest.TestCase):
             )
         ]
         self.assertEqual(
-            len(selected), 19, "the template no longer defines the knobs it wires"
+            len(selected),
+            len(wanted_assignments) + len(wanted_functions),
+            "the template no longer defines the knobs it wires",
         )
         self.assertIn(
             "assert_wiring_still_proven()\nbaseline_tuning_fingerprint",
@@ -20814,19 +20816,19 @@ class SkillPackageTests(unittest.TestCase):
             for node in module.body
             if isinstance(node, ast.FunctionDef) and node.name == "holdout_agent_input"
         )
+        tuning_bindings = {"_tuning_for_probe", "TUNING_EXAMPLES", "PROBE_INPUTS"}
         tuning_load = [
             node
             for node in module.body
             if isinstance(node, ast.Assign)
             and any(
-                isinstance(target, ast.Name)
-                and target.id in {"_tuning_for_probe", "PROBE_INPUTS"}
+                isinstance(target, ast.Name) and target.id in tuning_bindings
                 for target in node.targets
             )
         ]
         self.assertEqual(
             len(tuning_load),
-            2,
+            len(tuning_bindings),
             "the local tuning proof must load rows and derive its inputs at import",
         )
         loaded: list[str] = []
@@ -20875,6 +20877,7 @@ class SkillPackageTests(unittest.TestCase):
             "PROBE_VERDICTS",
             "UNPROVEN_WIRED_KNOBS",
             "_tuning_for_probe",
+            "TUNING_EXAMPLES",
             "WIRED_KNOBS",
             "PROBE_INPUTS",
         }

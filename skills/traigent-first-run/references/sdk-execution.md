@@ -299,11 +299,18 @@ ledger and offline boundary. Run the commands the generator prints under "next" 
 the scorer it prints there, rather than typing either path: both follow the run directory actually
 selected, and are already shell-quoted.
 
+For the connected walkthrough, keep the default `traigent-runs` directory before the baseline:
+the bundled wrapper and phase commands read their artifacts there. A different run directory
+requires a hand-adapted path for both phases; decide that before paid work.
+If a custom-directory baseline is already complete, preserve and report its actual artifact;
+do not automatically repeat it or claim connected reuse without proving the adapted paths.
+
 Name its normalized primary measure before the baseline, for example
 `"primary_metric": {"name": "task_quality", "orientation": "maximize"}`. Use the calibrated measure's meaningful
 name, not an assumed accuracy label. The generated scorer returns a normalized, higher-is-better
 grade; raw minimized measures need the hand-adapted route before paid work. Its baseline saves
-complete numeric comparison evidence inside `baseline-results.json`, bound to the measured tuning
+complete numeric comparison evidence inside `traigent-runs/baseline-results.json` by default
+(use the selected run directory if different), bound to the measured tuning
 inputs, expected answers, metadata, configuration space and primary definition. For the connected
 wrapper, normalize the same tuning rows into its SDK dataset shape without changing their order,
 values or metadata: each derived JSONL row is exactly
@@ -326,7 +333,7 @@ dataset; do not drop IDs, add fields to the evaluator's input, or strip fields m
 fingerprint match. Generation refuses unsupported ID mappings before paid work. Before starting
 that baseline, also verify that the connected adapter preserves the actual agent/evaluator call
 arguments: the SDK's default agent call receives input data, while metadata goes to scorers.
-An agent that needs row metadata requires the existing full-example `custom_evaluator` route
+An agent that needs row metadata requires the existing public full-example evaluator route
 described below, with its call arguments checked explicitly. Dataset fingerprint equality alone
 does not prove this. If those arguments cannot be preserved, use the hand-adapted SDK route for
 both phases before paid work.
@@ -522,7 +529,7 @@ recommendation trustworthy. Read candidates by the primary criterion alone, labe
 comparison unavailable, and use primary-only objectives for the next already planned operation.
 Never repeat a paid baseline merely to restore telemetry or describe the earlier cost-aware search
 as a quality-only search. The approval and next-step wording stays in `run-safety.md`.
-Set `COST_REMOVAL_RECORD` to `{"reason": "...", "approval_reference": "run-plan.md: ..."}`
+Set `COST_REMOVAL_RECORD` to `{"reason": "...", "approval_reference": "traigent-runs/run-plan.md: ..."}`
 for that transition. The loader retains both objective histories and permits only removal of
 secondary cost; the record documents the decision and does not authorize spending.
 
@@ -1105,8 +1112,9 @@ def evaluate_holdout(config: dict) -> tuple[float, float | None]:
 Report the selected baseline configuration and the selected enhanced configuration on the tuning
 evidence actually produced in this run. Show the best config, score, cost, latency, stop reason,
 and direct portal links for every persisted run. Put the two results side by side, explain the
-knob differences, and state what changed in the measured tuning behavior. The baseline, search,
-and holdout must use the same selected inputs, targets and evaluator arguments. SDK phases use the
+knob differences, and state what changed in the measured tuning behavior. Baseline, search, and
+holdout must preserve the same agent/evaluator argument contract and primary metric. Baseline and
+search use the same tuning rows; holdout uses the reserved rows. SDK phases use the same
 installed public `traigent.Dataset.from_jsonl` loader; the generated bridge's mapped tuning rows
 must match that loader's inputs, targets and metadata before the connected search. This first-run comparison does not establish generalization
 or expected production improvement, and the held-out score does not convert it into one: that
@@ -1115,7 +1123,8 @@ split is assistant-visible, non-blind, and too small to settle a difference.
 small-sample caveat.
 
 At close, name the copied `traigent-runs/run_wrapper.py` and the actual baseline evidence:
-`traigent-runs/baseline-results.json` for the generated bridge, or
+`traigent-runs/baseline-results.json` by default for the generated bridge (use the selected run
+directory if different), or
 `traigent-runs/baseline-transfer.json` for the SDK-backed baseline. Keep these artifacts local.
 
 Before reporting:
