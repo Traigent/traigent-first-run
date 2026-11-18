@@ -2944,7 +2944,10 @@ litellm.use_litellm_proxy = False
 inventory = {}
 for route in json.loads(sys.argv[1]):
     literals = set()
-    for model in litellm.models_by_provider.get(route, ()):
+    # litellm 1.106+ ships no bundled openrouter/* entries, so the catalog files
+    # nothing under that route: ask the client's own get_llm_provider with one
+    # probe model instead of reading an empty inventory as "no literals".
+    for model in litellm.models_by_provider.get(route, ()) or [f"{route}/probe"]:
         bare = model.split("/", 1)[1] if model.startswith(f"{route}/") else model
         literals.add(litellm.get_llm_provider(model=f"{route}/{bare}")[1])
     inventory[route] = sorted(literals)
@@ -3056,6 +3059,10 @@ LITELLM_CREDENTIAL_SOURCES = {
         # already returned it as `dynamic_api_key` and `completion` assigns
         # that over `api_key` before the branch runs.
         delegates=(
+            (
+                "llms/mistral/chat/transformation.py",
+                "MistralConfig.get_openai_compatible_provider_info",
+            ),
             (
                 "llms/mistral/chat/transformation.py",
                 "MistralConfig._get_openai_compatible_provider_info",
@@ -4659,7 +4666,7 @@ class SkillPackageTests(unittest.TestCase):
             requirements,
             [
                 "traigent==0.31.1",
-                "litellm==1.101.3",
+                "litellm==1.108.6",
                 "python-dotenv==1.2.2",
             ],
         )
