@@ -68,19 +68,31 @@ def exact(output, expected):
     return 1.0 if output == expected else 0.0
 """
 ROWS = [
-    {"id": "a", "payload": {"q": "billing please"}, "gold": {"label": "billing"}},
-    {"id": "b", "payload": {"q": "technical issue"}, "gold": {"label": "technical"}},
+    {
+        "id": "a",
+        "payload": {"q": "billing please"},
+        "gold": {"label": "billing"},
+        "metadata": {"example_id": "a"},
+    },
+    {
+        "id": "b",
+        "payload": {"q": "technical issue"},
+        "gold": {"label": "technical"},
+        "metadata": {"example_id": "b"},
+    },
 ]
 
 
 def base_config() -> dict:
     return {
         "schema_version": 1,
+        "primary_metric": {"name": "task_quality", "orientation": "maximize"},
         "dataset": {
             "path": "rows.jsonl",
             "input": "payload.q",
             "expected": "gold.label",
-            "id": "id",
+            "id": "metadata.example_id",
+            "metadata": "metadata",
         },
         "agent": {
             "callable": "agent:answer",
@@ -119,6 +131,16 @@ class Project:
         self.root.mkdir()
         (self.root / "agent.py").write_text(agent, encoding="utf-8")
         (self.root / "evaluator.py").write_text(evaluator, encoding="utf-8")
+        rows = [
+            {
+                **row,
+                "metadata": {
+                    "example_id": row.get("id", index),
+                    **row.get("metadata", {}),
+                },
+            }
+            for index, row in enumerate(rows)
+        ]
         (self.root / "rows.jsonl").write_text(
             "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
         )
@@ -532,6 +554,50 @@ class RefusalTests(unittest.TestCase):
         del project.config["agent"]["args"]["text"]
         self.assertTrue(any("requires text" in r for r in self.refused(project)))
 
+    def test_literal_keyword_names_are_validated_before_generation(self) -> None:
+        for role in ("agent", "evaluator"):
+            with self.subTest(role=role):
+                project = Project(self)
+                project.config[role]["args"]["typo"] = {"value": "literal"}
+                self.assertIn(
+                    f"{role}.args.typo: {role} has no parameter typo",
+                    self.refused(project),
+                )
+
+    def test_valid_literal_keywords_and_kwargs_extras_still_generate(self) -> None:
+        for role in ("agent", "evaluator"):
+            for extra in (False, True):
+                with self.subTest(role=role, extra=extra):
+                    agent, evaluator = AGENT, EVALUATOR
+                    if extra:
+                        if role == "agent":
+                            agent = agent.replace(
+                                'suffix=""):', 'suffix="", **kwargs):'
+                            )
+                        else:
+                            evaluator = evaluator.replace(
+                                "output, expected):", "output, expected, **kwargs):"
+                            )
+                    project = Project(self, agent=agent, evaluator=evaluator)
+                    parameter = (
+                        "additional"
+                        if extra
+                        else ("suffix" if role == "agent" else "expected")
+                    )
+                    project.config[role]["args"][parameter] = {"value": "literal"}
+                    done = project.generate()
+                    self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+
+    def test_malformed_literals_keep_their_shape_refusal(self) -> None:
+        project = Project(self)
+        project.config["agent"]["args"]["suffix"] = {
+            "value": "literal",
+            "extra": 1,
+        }
+        self.assertTrue(
+            any("a literal is" in reason for reason in self.refused(project))
+        )
+
     def test_an_evaluator_cannot_read_a_knob(self) -> None:
         project = Project(self)
         project.config["evaluator"]["args"]["expected"] = "$config.model"
@@ -715,7 +781,6 @@ class SharedRuntimeTests(unittest.TestCase):
         )
         rows = [{"payload": {"q": "x"}, "gold": {"label": "true|0|"}}]
         project = Project(self, agent=agent, rows=rows)
-        project.config["dataset"].pop("id")
         project.config["agent"] = {
             "callable": "agent:answer",
             "args": {"text": "$input", "k": "$config.k"},
@@ -1312,7 +1377,12 @@ class FirstRunAuditTests(unittest.TestCase):
         self.assertNotEqual(done.returncode, 0)
         self.assertIn("stopped before any further spend", done.stdout + done.stderr)
         self.assertIn("this process placed 1 provider call(s)", done.stdout)
-        self.assertFalse((project.runs / "baseline-results.json").exists())
+        result = json.loads((project.runs / "baseline-results.json").read_text())
+        self.assertFalse(result["complete"])
+        self.assertEqual(result["stop_reason"], "safety_refusal")
+        self.assertEqual(result["provider_calls"], 1)
+        self.assertEqual(result["results"][0]["n_failed"], 0)
+        self.assertEqual(result["results"][0]["n_unfinished"], len(ROWS))
 
     def test_an_ordinary_agent_failure_still_counts_as_one_failed_row(self) -> None:
         agent = AGENT.replace(
@@ -1542,8 +1612,7 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
                 project.config["dataset"][field] = path
                 project.config["agent"]["args"]["suffix"] = token
                 self.assertTrue(any("gold answer" in r for r in self.refused(project)))
-        project = Project(self)  # a harmless metadata field is still allowed
-        project.config["dataset"]["metadata"] = "id"
+        project = Project(self)  # preserved metadata with an SDK identity is allowed
         project.config["agent"]["args"]["suffix"] = "$metadata"
         self.assertEqual(project.generate().returncode, 0)
 
