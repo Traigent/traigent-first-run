@@ -1,11 +1,14 @@
 """Bounded-time checks for the wheel download and isolated pip steps.
 
-Every server here listens on 127.0.0.1 only, and every thread is joined in
-tearDown so a stalled fixture can never hang the suite.
+Every server here listens on 127.0.0.1 only, and every server thread is joined
+in its cleanup so a stalled fixture can never hang the suite. Download worker
+threads are daemons: by design they may outlive a test by a few seconds, because
+a stalled name lookup cannot be interrupted.
 """
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import subprocess
 import tempfile
@@ -192,6 +195,46 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertFalse(target.exists())
 
 
+class CacheWheelTests(unittest.TestCase):
+    def test_cache_wheel_downloads_through_bounded_helper(self):
+        module = load_module()
+        payload = b"wheel-bytes"
+        url = "https://files.example.invalid/pkg-1.0-py3-none-any.whl"
+        item = {
+            "download_info": {
+                "url": url,
+                "archive_info": {
+                    "hashes": {"sha256": hashlib.sha256(payload).hexdigest()}
+                },
+            },
+            "metadata": {"name": "pkg", "version": "1.0"},
+        }
+
+        def fake_download(url_arg, target, read_timeout, deadline):
+            target.write_bytes(payload)
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(
+                module, "_download", side_effect=fake_download
+            ) as download,
+            mock.patch.object(
+                module.urllib.request,
+                "urlopen",
+                side_effect=AssertionError("unbounded"),
+            ),
+        ):
+            cached = module.cache_wheel(item, Path(directory))
+            download.assert_called_once_with(
+                url,
+                Path(directory) / "pkg-1.0-py3-none-any.whl",
+                module.DOWNLOAD_READ_TIMEOUT_SECONDS,
+                module.DOWNLOAD_DEADLINE_SECONDS,
+            )
+        self.assertEqual(cached["name"], "pkg")
+        self.assertEqual(cached["version"], "1.0")
+
+
 class IsolatedPipTimeoutTests(unittest.TestCase):
     def test_pip_timeout_is_bounded_and_leaks_no_child_output(self):
         module = load_module()
@@ -253,11 +296,14 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertIn("retry plan when the network is stable", message)
         self.assertNotIn("partly changed", message)
 
-    def test_apply_timeout_reports_possible_partial_change(self):
+    def test_apply_timeout_reports_possible_partial_change_without_inviting_retry(self):
         message = self._pip_timeout_message(changes_environment=True)
+        self.assertIn("during apply", message)
         self.assertIn("may be partly changed", message)
-        self.assertIn("inspect the target and re-run plan before retrying", message)
+        self.assertIn("Stop and inspect it before any further change.", message)
         self.assertNotIn("nothing was installed", message)
+        self.assertNotIn("retry", message)
+        self.assertNotIn("re-run", message)
 
 
 if __name__ == "__main__":

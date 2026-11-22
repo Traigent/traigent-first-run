@@ -186,8 +186,8 @@ def isolated_pip(
 ) -> None:
     """Run this adapter in a fresh trusted child, never the candidate executable.
 
-    Callers set changes_environment: False for the plan's --dry-run, which installs
-    nothing, and True for apply, whose install may stop partway.
+    Callers set changes_environment: False for the plan step's resolve-only pip run,
+    which installs nothing, and True for apply, whose install may stop partway.
     """
     environment = {
         key: value
@@ -221,18 +221,17 @@ def isolated_pip(
     else:
         timed_out = False
     if timed_out:
-        if changes_environment:
-            outcome = (
-                "the environment may be partly changed; inspect the target and re-run "
-                "plan before retrying."
-            )
-        else:
-            outcome = "nothing was installed or changed; retry plan when the network is stable."
         # Raised outside the except block so no __context__ holds TimeoutExpired.output,
         # which can carry index URLs with credentials. Child output is omitted here.
+        if changes_environment:
+            raise ValueError(
+                f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound "
+                "during apply; the environment may be partly changed. Stop and inspect "
+                "it before any further change."
+            )
         raise ValueError(
             f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound; "
-            + outcome
+            "nothing was installed or changed; retry plan when the network is stable."
         )
     if result.returncode:
         # pip may include index credentials in verbose diagnostics. Retain only
