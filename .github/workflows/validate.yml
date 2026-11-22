@@ -13,11 +13,11 @@ on:
     branches: [first-run-guide]
 
 # A newer push to the same pull request cancels the superseded run. Trunk
-# pushes are keyed by commit, so each gets its own group and is never cancelled
-# or replaced: GitHub replaces a pending run in a shared group even when
-# cancel-in-progress is false.
+# pushes are keyed by run id, which no pull request can predict, so each trunk
+# run gets a group of its own and is never cancelled or replaced: GitHub
+# replaces a pending run in a shared group even when cancel-in-progress is false.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
