@@ -23,6 +23,7 @@ import sys
 import sysconfig
 import tempfile
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
@@ -208,12 +209,17 @@ def isolated_pip(candidate: Path, arguments: list[str], working: Path) -> None:
             timeout=PIP_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        # Child output is deliberately omitted: it may echo index URLs with credentials.
+        timed_out = True
+    else:
+        timed_out = False
+    if timed_out:
+        # Raised outside the except block so no __context__ holds TimeoutExpired.output,
+        # which can carry index URLs with credentials. Child output is omitted here.
         raise ValueError(
             f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound; "
             "the environment may be partly changed. Inspect the target and re-run plan "
             "before retrying."
-        ) from None
+        )
     if result.returncode:
         # pip may include index credentials in verbose diagnostics. Retain only
         # URL-redacted output in the error that the approval workflow displays.
@@ -359,7 +365,18 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         f"Wheel download stalled: exceeded the {deadline:g}s download deadline "
         f"or the {read_timeout:g}s read timeout; retry plan when the network is stable"
     )
-    with urllib.request.urlopen(url, timeout=read_timeout) as response:
+    # Connect and header-phase stalls surface here, before any file exists.
+    try:
+        response = urllib.request.urlopen(url, timeout=read_timeout)
+    except TimeoutError:
+        raise ValueError(message) from None
+    except urllib.error.URLError as error:
+        if not isinstance(error.reason, TimeoutError):
+            raise
+        raise ValueError(message) from None
+    with response:
+        # Opened outside the cleanup block: a FileExistsError must not unlink a file
+        # this call did not create.
         stream = target.open("xb")
         try:
             with stream:

@@ -15,6 +15,7 @@ import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
+from urllib import error as urllib_error
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills/traigent-first-run/scripts/environment_install.py"
@@ -115,6 +116,21 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertIn("stalled", str(raised.exception))
             self.assertFalse(target.exists())
 
+    def test_connect_timeout_maps_to_stalled_message_without_partial_file(self):
+        module = load_module()
+        connect_stall = urllib_error.URLError(TimeoutError("timed out"))
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with mock.patch.object(
+                module.urllib.request, "urlopen", side_effect=connect_stall
+            ):
+                with self.assertRaises(ValueError) as raised:
+                    module._download(
+                        "http://127.0.0.1:9/x.whl", target, read_timeout=0.5, deadline=5
+                    )
+            self.assertIn("stalled", str(raised.exception))
+            self.assertFalse(target.exists())
+
 
 class IsolatedPipTimeoutTests(unittest.TestCase):
     def test_pip_timeout_is_bounded_and_leaks_no_child_output(self):
@@ -140,7 +156,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("secret", message)
         self.assertNotIn("https://", message)
         self.assertIsNone(raised.exception.__cause__)
-        self.assertTrue(raised.exception.__suppress_context__)
+        self.assertIsNone(
+            raised.exception.__context__, "secret-bearing exception must not be chained"
+        )
 
 
 if __name__ == "__main__":
