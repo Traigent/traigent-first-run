@@ -1,0 +1,28 @@
+# Security Policy
+
+## Reporting a vulnerability
+
+Please report security issues privately rather than in a public issue or pull request.
+
+1. **Preferred:** GitHub private vulnerability reporting: <https://github.com/Traigent/traigent-first-run/security/advisories/new>.
+2. **Alternatively:** email [security@traigent.ai](mailto:security@traigent.ai).
+
+Please include:
+
+- a description of the issue and where it is (a file, or the guide step);
+- steps to reproduce;
+- the potential impact;
+- the commit you tested;
+- a suggested fix, if you have one.
+
+Do not include real secrets or customer data in a report.
+
+We will acknowledge receipt within 48 hours and provide a detailed response within 7 days.
+
+## Supported versions
+
+This repository publishes no releases. The guide is used from the `first-run-guide` branch, and fixes land there. Only its current tip is supported.
+
+## Disclosure
+
+We follow coordinated disclosure. We will work with you on a fix and a timeline, publish an advisory when a fix is available, and credit you in the advisory if you want to be credited. Please give us a reasonable chance to fix the issue before you disclose it publicly.

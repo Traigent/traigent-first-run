@@ -1,0 +1,31 @@
+"""The repository publishes a root security policy that tells reporters where to write.
+
+Without it, a reporter of a vulnerability in this public repository has no
+documented private channel. The policy must point at this repository's own
+advisory form, not another repository's.
+"""
+
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class SecurityPolicyTests(unittest.TestCase):
+    def test_the_policy_sits_at_the_repository_root(self) -> None:
+        self.assertTrue((ROOT / "SECURITY.md").is_file())
+
+    def test_it_names_this_repositorys_private_advisory_form(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "https://github.com/Traigent/traigent-first-run/security/advisories/new",
+            policy,
+        )
+
+    def test_it_names_the_security_mailbox(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn("security@traigent.ai", policy)
+
+
+if __name__ == "__main__":
+    unittest.main()
