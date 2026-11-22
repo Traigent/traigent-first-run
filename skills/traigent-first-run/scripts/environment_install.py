@@ -22,10 +22,17 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
+
+# Bounds on network and installer time so a stalled mirror fails loudly instead of
+# hanging the guided run with no message.
+DOWNLOAD_READ_TIMEOUT_SECONDS = 30  # max silence on the socket before one read fails
+DOWNLOAD_DEADLINE_SECONDS = 600  # max total wall time for one wheel download
+PIP_TIMEOUT_SECONDS = 900  # max wall time for one isolated pip child
 
 SPEC = importlib.util.spec_from_file_location(
     "_first_run_environments", Path(__file__).with_name("find_environments.py")
@@ -179,25 +186,34 @@ def isolated_pip(candidate: Path, arguments: list[str], working: Path) -> None:
         if not key.startswith(("PYTHON", "PIP_", "LD_", "DYLD_"))
     }
     environment["PIP_CONFIG_FILE"] = os.devnull
-    result = subprocess.run(
-        [
-            str(ENV.trusted_interpreter()),
-            "-I",
-            "-S",
-            "-B",
-            str(Path(__file__).resolve()),
-            "_pip",
-            "--candidate",
-            str(candidate),
-            "--",
-            *arguments,
-        ],
-        cwd=working,
-        env=environment,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            [
+                str(ENV.trusted_interpreter()),
+                "-I",
+                "-S",
+                "-B",
+                str(Path(__file__).resolve()),
+                "_pip",
+                "--candidate",
+                str(candidate),
+                "--",
+                *arguments,
+            ],
+            cwd=working,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=PIP_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        # Child output is deliberately omitted: it may echo index URLs with credentials.
+        raise ValueError(
+            f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound; "
+            "the environment may be partly changed. Inspect the target and re-run plan "
+            "before retrying."
+        ) from None
     if result.returncode:
         # pip may include index credentials in verbose diagnostics. Retain only
         # URL-redacted output in the error that the approval workflow displays.
@@ -331,6 +347,36 @@ def exact_change(value: str) -> tuple[str, str]:
     return name, version
 
 
+def _download(url: str, target: Path, read_timeout: float, deadline: float) -> None:
+    """Stream url into a new target file, failing if it stalls or runs past deadline.
+
+    read1 returns after one socket read, so the deadline is checked between network
+    reads; read(n) would loop inside http.client until n bytes arrive, so a slow
+    drip would never reach the check.
+    """
+    started = time.monotonic()
+    message = (
+        f"Wheel download stalled: exceeded the {deadline:g}s download deadline "
+        f"or the {read_timeout:g}s read timeout; retry plan when the network is stable"
+    )
+    with urllib.request.urlopen(url, timeout=read_timeout) as response:
+        stream = target.open("xb")
+        try:
+            with stream:
+                while block := response.read1(1024 * 1024):
+                    stream.write(block)
+                    if time.monotonic() - started > deadline:
+                        raise ValueError(message)
+        except TimeoutError:
+            stream.close()
+            target.unlink(missing_ok=True)
+            raise ValueError(message) from None
+        except BaseException:
+            stream.close()
+            target.unlink(missing_ok=True)
+            raise
+
+
 def cache_wheel(item: dict, directory: Path) -> dict:
     download = item["download_info"]
     url = download["url"]
@@ -344,11 +390,9 @@ def cache_wheel(item: dict, directory: Path) -> dict:
     target = directory / filename
     if target.exists():
         raise ValueError("Ambiguous resolved wheel filenames")
-    with urllib.request.urlopen(url) as response, target.open("xb") as stream:
-        # Pip already fetched/hashed these artifacts during resolution. Recheck the
-        # bytes cached for apply; never trust a URL to remain the same after yes.
-        while block := response.read(1024 * 1024):
-            stream.write(block)
+    # Pip already fetched/hashed these artifacts during resolution. Recheck the
+    # bytes cached for apply; never trust a URL to remain the same after yes.
+    _download(url, target, DOWNLOAD_READ_TIMEOUT_SECONDS, DOWNLOAD_DEADLINE_SECONDS)
     if ENV.file_digest(target) != expected:
         raise ValueError("Resolved wheel changed before it could be cached")
     return {
