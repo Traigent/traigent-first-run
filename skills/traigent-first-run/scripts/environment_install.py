@@ -22,7 +22,7 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
-import time
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -32,7 +32,9 @@ from pathlib import Path
 # Bounds on network and installer time so a stalled mirror fails loudly instead of
 # hanging the guided run with no message.
 DOWNLOAD_READ_TIMEOUT_SECONDS = 30  # max silence on the socket before one read fails
-DOWNLOAD_DEADLINE_SECONDS = 600  # max total wall time for one wheel download
+DOWNLOAD_DEADLINE_SECONDS = (
+    600  # max total wall time for one wheel download, connect through last byte
+)
 PIP_TIMEOUT_SECONDS = 900  # max wall time for one isolated pip child
 
 SPEC = importlib.util.spec_from_file_location(
@@ -179,8 +181,14 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
                 validate_uninstall_path(scripts / (name + suffix), prefix)
 
 
-def isolated_pip(candidate: Path, arguments: list[str], working: Path) -> None:
-    """Run this adapter in a fresh trusted child, never the candidate executable."""
+def isolated_pip(
+    candidate: Path, arguments: list[str], working: Path, *, changes_environment: bool
+) -> None:
+    """Run this adapter in a fresh trusted child, never the candidate executable.
+
+    Callers set changes_environment: False for the plan's --dry-run, which installs
+    nothing, and True for apply, whose install may stop partway.
+    """
     environment = {
         key: value
         for key, value in os.environ.items()
@@ -213,12 +221,18 @@ def isolated_pip(candidate: Path, arguments: list[str], working: Path) -> None:
     else:
         timed_out = False
     if timed_out:
+        if changes_environment:
+            outcome = (
+                "the environment may be partly changed; inspect the target and re-run "
+                "plan before retrying."
+            )
+        else:
+            outcome = "nothing was installed or changed; retry plan when the network is stable."
         # Raised outside the except block so no __context__ holds TimeoutExpired.output,
         # which can carry index URLs with credentials. Child output is omitted here.
         raise ValueError(
             f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound; "
-            "the environment may be partly changed. Inspect the target and re-run plan "
-            "before retrying."
+            + outcome
         )
     if result.returncode:
         # pip may include index credentials in verbose diagnostics. Retain only
@@ -354,44 +368,60 @@ def exact_change(value: str) -> tuple[str, str]:
 
 
 def _download(url: str, target: Path, read_timeout: float, deadline: float) -> None:
-    """Stream url into a new target file, failing if it stalls or runs past deadline.
+    """Stream url into a new target file within deadline seconds of total wall time.
 
-    read1 returns after one socket read, so the deadline is checked between network
-    reads; read(n) would loop inside http.client until n bytes arrive, so a slow
-    drip would never reach the check.
+    The deadline covers the whole operation: name lookup, connect, redirects,
+    headers and body. getaddrinfo ignores socket timeouts and a server can drip
+    headers forever, so the transfer runs in a daemon thread that the caller joins
+    with the deadline. read_timeout bounds each socket read inside that thread.
+
+    On timeout the worker is abandoned and the partial file removed. A worker
+    stuck inside a call that ignores timeouts (such as DNS) is left running on
+    purpose: it is a daemon, it writes nothing once abandoned, and the caller
+    reports the stall and the script exits.
     """
-    started = time.monotonic()
     message = (
         f"Wheel download stalled: exceeded the {deadline:g}s download deadline "
         f"or the {read_timeout:g}s read timeout; retry plan when the network is stable"
     )
-    # Connect and header-phase stalls surface here, before any file exists.
-    try:
-        response = urllib.request.urlopen(url, timeout=read_timeout)
-    except TimeoutError:
-        raise ValueError(message) from None
-    except urllib.error.URLError as error:
-        if not isinstance(error.reason, TimeoutError):
-            raise
-        raise ValueError(message) from None
-    with response:
-        # Opened outside the cleanup block: a FileExistsError must not unlink a file
-        # this call did not create.
-        stream = target.open("xb")
+    # Opened before the worker starts: a FileExistsError must not unlink a file this
+    # call did not create.
+    stream = target.open("xb")
+    abandoned = threading.Event()
+    failures: list[BaseException] = []
+
+    def transfer() -> None:
         try:
-            with stream:
+            with urllib.request.urlopen(url, timeout=read_timeout) as response:
+                # read1 returns after one socket read, so an abandoned transfer stops
+                # at the next block instead of draining the whole body.
                 while block := response.read1(1024 * 1024):
+                    if abandoned.is_set():
+                        return
                     stream.write(block)
-                    if time.monotonic() - started > deadline:
-                        raise ValueError(message)
-        except TimeoutError:
-            stream.close()
-            target.unlink(missing_ok=True)
-            raise ValueError(message) from None
-        except BaseException:
-            stream.close()
-            target.unlink(missing_ok=True)
-            raise
+        except BaseException as error:
+            failures.append(error)
+
+    worker = threading.Thread(target=transfer, name="wheel-download", daemon=True)
+    worker.start()
+    worker.join(deadline)
+    if worker.is_alive():
+        abandoned.set()
+        stream.close()
+        target.unlink(missing_ok=True)
+        raise ValueError(message)
+    stream.close()
+    if not failures:
+        return
+    target.unlink(missing_ok=True)
+    error = failures[0]
+    timed_out = isinstance(error, TimeoutError) or (
+        isinstance(error, urllib.error.URLError)
+        and isinstance(error.reason, TimeoutError)
+    )
+    if timed_out:
+        raise ValueError(message) from None
+    raise error
 
 
 def cache_wheel(item: dict, directory: Path) -> dict:
@@ -472,7 +502,7 @@ def plan(options) -> dict:
             arguments.extend(
                 f"{name}=={version}" for name, version in sorted(wanted.items())
             )
-            isolated_pip(candidate, arguments, working)
+            isolated_pip(candidate, arguments, working, changes_environment=False)
             report = json.loads(report_path.read_text(encoding="utf-8"))
         card = ENV.approval_card(report, before["installed"])
         for item in report["install"]:
@@ -544,6 +574,7 @@ def apply(options) -> dict:
                     *[item["path"] for item in document["artifacts"]],
                 ],
                 Path(temporary),
+                changes_environment=True,
             )
     after = snapshot(candidate)
     expected = dict(before["installed"])

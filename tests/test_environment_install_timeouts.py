@@ -89,6 +89,30 @@ class SlowDripHandler(BaseHTTPRequestHandler):
         pass
 
 
+class HeaderDripHandler(BaseHTTPRequestHandler):
+    """Sends a status line, then one header byte every 0.2 s, never ending headers."""
+
+    protocol_version = "HTTP/1.1"
+
+    def handle_one_request(self):
+        self.raw_requestline = self.rfile.readline(65537)
+        self.wfile.write(b"HTTP/1.1 200 OK\r\n")
+        self.wfile.flush()
+        try:
+            self.wfile.write(b"X-Drip: ")
+            for _ in range(100):
+                if self.server.release.is_set():
+                    return
+                self.wfile.write(b"a")
+                self.wfile.flush()
+                time.sleep(0.2)
+        except OSError:
+            return
+
+    def log_message(self, *args):
+        pass
+
+
 class DownloadDeadlineTests(ServerFixture):
     def test_stalled_body_is_bounded_and_partial_file_removed(self):
         module = load_module()
@@ -113,6 +137,42 @@ class DownloadDeadlineTests(ServerFixture):
                 module._download(url, target, read_timeout=1, deadline=1.5)
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 4, "slow drip was not bounded by the deadline")
+            self.assertIn("stalled", str(raised.exception))
+            self.assertFalse(target.exists())
+
+    def test_header_drip_is_bounded_by_overall_deadline(self):
+        module = load_module()
+        url = self.start_server(HeaderDripHandler)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            started = time.monotonic()
+            with self.assertRaises(ValueError) as raised:
+                module._download(url, target, read_timeout=1, deadline=1.5)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 4, "header drip ran past the overall deadline")
+            self.assertIn("stalled", str(raised.exception))
+            self.assertFalse(target.exists())
+
+    def test_slow_name_lookup_is_bounded_by_overall_deadline(self):
+        module = load_module()
+
+        def slow_lookup(*args, **kwargs):
+            time.sleep(5)
+            raise OSError("lookup finished after the test ended")
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with mock.patch("socket.getaddrinfo", side_effect=slow_lookup):
+                started = time.monotonic()
+                with self.assertRaises(ValueError) as raised:
+                    module._download(
+                        "http://dns-stall.invalid/x.whl",
+                        target,
+                        read_timeout=1,
+                        deadline=1,
+                    )
+                elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 3, "DNS lookup ran past the overall deadline")
             self.assertIn("stalled", str(raised.exception))
             self.assertFalse(target.exists())
 
@@ -148,7 +208,10 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError) as raised:
                 module.isolated_pip(
-                    Path("/tmp/candidate"), ["install", "x"], Path("/tmp")
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    Path("/tmp"),
+                    changes_environment=True,
                 )
         self.assertEqual(run.call_args.kwargs.get("timeout"), 0.1)
         message = str(raised.exception)
@@ -159,6 +222,42 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertIsNone(
             raised.exception.__context__, "secret-bearing exception must not be chained"
         )
+
+    def _pip_timeout_message(self, changes_environment: bool) -> str:
+        module = load_module()
+        expired = subprocess.TimeoutExpired(
+            cmd=["pip"], timeout=0.1, output=b"https://user:secret@host/x"
+        )
+        with (
+            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
+            mock.patch.object(module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "--dry-run", "x"],
+                    Path("/tmp"),
+                    changes_environment=changes_environment,
+                )
+        message = str(raised.exception)
+        self.assertNotIn("secret", message)
+        self.assertNotIn("https://", message)
+        return message
+
+    def test_plan_timeout_reports_that_nothing_changed(self):
+        message = self._pip_timeout_message(changes_environment=False)
+        self.assertIn("nothing was installed or changed", message)
+        self.assertIn("retry plan when the network is stable", message)
+        self.assertNotIn("partly changed", message)
+
+    def test_apply_timeout_reports_possible_partial_change(self):
+        message = self._pip_timeout_message(changes_environment=True)
+        self.assertIn("may be partly changed", message)
+        self.assertIn("inspect the target and re-run plan before retrying", message)
+        self.assertNotIn("nothing was installed", message)
 
 
 if __name__ == "__main__":
