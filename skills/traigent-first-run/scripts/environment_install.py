@@ -422,9 +422,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     reports the stall and the script exits.
     """
     deadline_message = (
-        "Wheel download stalled: the plan download deadline "
-        f"({PLAN_DOWNLOAD_DEADLINE_SECONDS}s for all wheels) ran out; "
-        "nothing was installed or changed."
+        "Wheel download did not finish: the plan download deadline "
+        f"({PLAN_DOWNLOAD_DEADLINE_SECONDS}s for all wheels) ran out, so the network "
+        "is too slow or stalled; nothing was installed or changed."
     )
     read_message = (
         "Wheel download stalled: the server sent nothing for "
@@ -488,9 +488,10 @@ def cache_wheel(item: dict, directory: Path, download_deadline: float) -> dict:
     remaining = download_deadline - time.monotonic()
     if remaining <= 0:
         raise ValueError(
-            "Wheel download stalled: the plan download deadline "
+            "Wheel download did not finish: the plan download deadline "
             f"({PLAN_DOWNLOAD_DEADLINE_SECONDS}s for all wheels) ran out before every "
-            "wheel was downloaded; nothing was installed or changed."
+            "wheel was downloaded, so the network is too slow or stalled; nothing was "
+            "installed or changed."
         )
     # Pip already fetched/hashed these artifacts during resolution. Recheck the
     # bytes cached for apply; never trust a URL to remain the same after yes.

@@ -110,6 +110,29 @@ class SlowDripHandler(BaseHTTPRequestHandler):
         pass
 
 
+class SlowButLiveHandler(BaseHTTPRequestHandler):
+    """Sends 1 KiB every 0.1 s for a 1,000,000-byte body: never silent for long,
+    so only the overall plan deadline can end the transfer."""
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", "1000000")
+        self.end_headers()
+        try:
+            for _ in range(100):
+                if self.server.release.is_set():
+                    return
+                self.wfile.write(b"x" * 1024)
+                self.wfile.flush()
+                time.sleep(0.1)
+        except OSError:
+            return
+
+    def log_message(self, *args):
+        pass
+
+
 class HeaderDripHandler(BaseHTTPRequestHandler):
     """Sends a status line, then one header byte every 0.2 s, never ending headers."""
 
@@ -167,6 +190,20 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertIn("ran out", str(raised.exception))
             self.assertNotIn("the server sent nothing", str(raised.exception))
             self.assertFalse(target.exists())
+
+    def test_live_slow_transfer_reports_deadline_not_stall(self):
+        module = load_module()
+        url = self.start_server(SlowButLiveHandler)
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with self.assertRaises(ValueError) as raised:
+                module._download(url, target, read_timeout=5, deadline=1.0)
+            message = str(raised.exception)
+            self.assertIn("did not finish", message)
+            self.assertIn("too slow or stalled", message)
+            self.assertNotIn("Wheel download stalled", message)
+            self.assertNotIn("sent nothing", message)
+            self.assertFalse(target.exists(), "partial wheel must be removed")
 
     def test_header_drip_is_bounded_by_overall_deadline(self):
         module = load_module()
@@ -608,7 +645,9 @@ class PlanDownloadBudgetTests(unittest.TestCase):
             self.addCleanup(patch.stop)
         with self.assertRaises(ValueError) as raised:
             module.plan(options)
-        self.assertIn("Wheel download stalled", str(raised.exception))
+        self.assertIn("did not finish", str(raised.exception))
+        self.assertIn("too slow or stalled", str(raised.exception))
+        self.assertNotIn("Wheel download stalled", str(raised.exception))
         self.assertIn("nothing was installed or changed", str(raised.exception))
         self.assertNotIn("retry", str(raised.exception))
         self.assertEqual(list(root.glob("*-wheels-*")), [])
