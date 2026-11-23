@@ -1246,6 +1246,18 @@ class PlanApplyHarnessTests(unittest.TestCase):
         # The other run's plan is not this call's file: it must be left untouched.
         self.assertEqual(self.plan_path.read_text(encoding="utf-8"), "concurrent")
 
+    def test_interrupt_right_after_cache_creation_leaves_no_wheels_directory(self):
+        # plan() reads time.monotonic() for the download deadline immediately after
+        # mkdtemp(). A signal landing there must still clean up the cache directory.
+        self._start(lambda *args: self.fail("no wheel is cached"), [BEFORE, BEFORE])
+        with mock.patch.object(
+            self.module.time, "monotonic", side_effect=KeyboardInterrupt
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.module.plan(self.options)
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+        self.assertFalse(self.plan_path.exists())
+
     def test_plan_write_failure_removes_partial_plan_and_wheels(self):
         def writing_cache(item, directory, download_deadline):
             artifact = directory / "pkg-1.0-py3-none-any.whl"

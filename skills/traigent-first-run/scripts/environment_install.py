@@ -835,14 +835,15 @@ def plan(options) -> dict:
             raise ValueError(
                 "Environment changed during resolution; create a fresh plan"
             )
-    # Everything from the cache onward runs inside the cleanup try below, so a signal
-    # at any later point removes the cache and any plan file this call wrote.
-    cache = Path(
-        tempfile.mkdtemp(prefix=plan_path.stem + "-wheels-", dir=plan_path.parent)
-    )
-    download_deadline = time.monotonic() + PLAN_DOWNLOAD_DEADLINE_SECONDS
+    # Everything from the cache's creation onward runs inside the cleanup try below, so
+    # a signal at any later point removes the cache and any plan file this call wrote.
+    cache = None
     created_plan = False
     try:
+        cache = Path(
+            tempfile.mkdtemp(prefix=plan_path.stem + "-wheels-", dir=plan_path.parent)
+        )
+        download_deadline = time.monotonic() + PLAN_DOWNLOAD_DEADLINE_SECONDS
         artifacts = [
             cache_wheel(item, cache, download_deadline) for item in report["install"]
         ]
@@ -879,10 +880,11 @@ def plan(options) -> dict:
                 plan_path.unlink(missing_ok=True)
             except OSError:
                 left_behind.append(str(plan_path))
-        try:
-            shutil.rmtree(cache)
-        except OSError:
-            left_behind.append(str(cache))
+        if cache is not None:
+            try:
+                shutil.rmtree(cache)
+            except OSError:
+                left_behind.append(str(cache))
         if left_behind and isinstance(error, Exception):
             raise ValueError(
                 f"{str(error).rstrip('.')}. Could not remove: "
