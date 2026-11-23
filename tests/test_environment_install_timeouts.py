@@ -451,6 +451,75 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("secret", redacted)
         self.assertEqual(redacted.count("<artifact-location>"), 2)
 
+    SECRET_FORMS = (
+        "alice%3AS3CRET%40host/x",
+        "https%3A%2F%2Falice%3AS3CRET%40h%2Fx",
+        "ghp_S3CRET@github.com",
+        ":S3CRET@host",
+        "user:S3CRET@",
+        "password=S3CRET",
+        "token=S3CRET",
+        "secret=S3CRET",
+        "api_key=S3CRET",
+        "password= S3CRET",
+        "Authorization: Basic S3CRET",
+        "Authorization: Bearer S3CRET",
+        "Proxy-Authorization: Basic S3CRET",
+        "Basic S3CRET",
+        "Bearer S3CRET",
+        "ghp_S3CRETabcdef12",
+        "x=sk-S3CRETabcdef12",
+        "gho_S3CRETabcdef12",
+        "github_pat_S3CRETabcdef12",
+        "glpat-S3CRETabcdef12",
+        "xoxb-S3CRETabcdef12",
+        "xoxp-S3CRETabcdef12",
+    )
+
+    def test_encoded_token_only_key_value_header_and_prefixed_forms_are_redacted(self):
+        module = load_module()
+        for form in self.SECRET_FORMS:
+            with self.subTest(form=form):
+                redacted = module._redacted_pip_output(f"Collecting x from {form}\n")
+                self.assertNotIn("S3CRET", redacted)
+                self.assertIn("<artifact-location>", redacted)
+
+    def test_whitespace_split_userinfo_is_redacted_through_the_host_token(self):
+        module = load_module()
+        art = "<artifact-location>"
+        expected = {
+            "user:S3C RET@host/x": f"Collecting {art} {art}\n",
+            "user:a b c@host": f"Collecting {art} {art} {art}\n",
+        }
+        for form, want in expected.items():
+            with self.subTest(form=form):
+                self.assertEqual(
+                    module._redacted_pip_output(f"Collecting {form}\n"), want
+                )
+
+    def test_lines_pip_prints_for_normal_work_are_unchanged(self):
+        module = load_module()
+        lines = (
+            "Collecting pkg==1.0\n",
+            "ERROR: Could not find a version that satisfies the requirement pkg==1.0\n",
+            "Downloading pkg-1.0-py3-none-any.whl (1.2 MB)\n",
+            "Requirement already satisfied: pkg in ./lib (1.0)\n",
+            "pkg @ \n",
+            "name @ \n",
+            "task-runner-12345678 disk-abcdefgh12\n",
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                self.assertEqual(module._redacted_pip_output(line), line)
+
+    def test_redaction_keeps_line_endings_and_other_lines_exactly(self):
+        module = load_module()
+        text = "Collecting pkg==1.0\r\npassword=S3CRET\nDownloading pkg-1.0.whl\n"
+        self.assertEqual(
+            module._redacted_pip_output(text),
+            "Collecting pkg==1.0\r\n<artifact-location>\nDownloading pkg-1.0.whl\n",
+        )
+
     def assertRedactsQuickly(self, text):
         # Run in a child process so a catastrophic regex fails this test
         # instead of hanging the whole suite.
@@ -487,6 +556,18 @@ class RedactionTests(unittest.TestCase):
         redacted = self.assertRedactsQuickly(":" * 50000 + " https://user:secret@h/x")
         self.assertNotIn("secret", redacted)
         self.assertIn("<artifact-location>", redacted)
+
+    def test_five_megabyte_mixed_credential_line_is_linear(self):
+        text = (
+            ("a%3A" * 300000)
+            + ("password= " * 200000)
+            + ("Bearer " * 200000)
+            + ("ghp_" * 300000)
+        )
+        self.assertGreaterEqual(len(text), 5_000_000)
+        redacted = self.assertRedactsQuickly(text)
+        self.assertNotIn("a%3A", redacted)
+        self.assertNotIn("ghp_", redacted)
 
 
 class ReadOnlyBlocksResponse:
