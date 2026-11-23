@@ -217,6 +217,25 @@ _KEY_START = r"(?:(?<![A-Za-z0-9])|(?<=[a-z0-9])(?=[A-Z]))"
 _KEY_WITH_VALUE = re.compile(_KEY_START + _KEY_NAMES + r"[\"']*(?:=(?!=)|:)(?=.)")
 # A key whose separator ends the token, so its value is the next token (`my-token= x`).
 _KEY_ASSIGN_END = re.compile(_KEY_START + _KEY_NAMES + r"[\"']*(?:=(?!=)|:)\Z")
+
+
+def _carries_value(decoded: str) -> bool:
+    """Whether a decoded token holds a key's value, so the whole token is a secret.
+
+    That is a key with a non-empty value after its separator (`password=S3CRET`), or a
+    key that ends the token after an earlier separator (`user:S3CRET:password:`), whose
+    earlier text is the value. A lone key ending in a separator (`my-token=`) does not.
+    """
+    if "=" not in decoded and ":" not in decoded:
+        return False
+    if _KEY_WITH_VALUE.search(decoded) is not None:
+        return True
+    if not decoded.endswith(("=", ":")):
+        return False
+    ending = _KEY_ASSIGN_END.search(decoded)
+    return ending is not None and any(c in "=:" for c in decoded[: ending.start()])
+
+
 _SEPARATOR_TOKEN = re.compile(r"[\"'=:]+\Z")
 _TOKEN_PREFIX = re.compile(
     r"(?<![A-Za-z0-9])(?:"
@@ -281,8 +300,11 @@ def _redact_line(line: str) -> str:
       the next token only when that token is separator-only (`=`, `:`, quotes). The
       separator is kept and the token after it is redacted (`password = S3CRET`).
       Otherwise the next token is left alone (`Saving credentials to keyring`);
-    - a key token that carries its value in the same token (`password=S3CRET`,
-      `"token":"S3CRET"`) is replaced whole.
+    - a token that carries a key's value (`password=S3CRET`, `"token":"S3CRET"`,
+      `user:S3CRET:password:`) is tested before the bare-key rules and replaced whole;
+      if it also ends in a separator, the next token is redacted too
+      (`password=S3CRET,token= NEXTS3CRET`). Only a token that does not carry a value
+      falls through to the bare-key rules above.
     Whitespace-split userinfo: a token with a `:` at index >= 1 that is not its last
     character and has no `@` marks a pending start. When a later token is redacted
     for its `@`, every token from the pending start through it is redacted too.
@@ -319,25 +341,24 @@ def _redact_line(line: str) -> str:
                 redact_next = True
                 if not redact:
                     continue
-        # A bare key name carries no secret, so it is kept and only its value goes.
-        # `_KEY_ASSIGN_END` can only match a token that ends in "=" or ":"; the check
-        # skips its search for the other tokens, which are nearly all of a pip line.
-        bare_key = _KEY_TAIL.match(decoded) is not None
-        if not bare_key and decoded.endswith(("=", ":")):
-            bare_key = _KEY_ASSIGN_END.search(decoded) is not None
-        if bare_key:
-            if decoded.rstrip("\"'").endswith(("=", ":")) or (
-                decoded.lstrip("\"'{[(").startswith("-")
-            ):
+        # A token that carries a key's value is tested first and replaced whole. If
+        # it also ends in a separator, its trailing key's value is the next token.
+        key = _carries_value(decoded)
+        if key:
+            if decoded.rstrip("\"'").endswith(("=", ":")):
                 redact_next = True
-            else:
-                separator_pending = True
-            key = False
         else:
-            # A key with its value in the same token is replaced whole.
-            key = ("=" in decoded or ":" in decoded) and (
-                _KEY_WITH_VALUE.search(decoded) is not None
-            )
+            # A bare key name carries no secret, so it is kept and only its value goes.
+            bare_key = _KEY_TAIL.match(decoded) is not None
+            if not bare_key and decoded.endswith(("=", ":")):
+                bare_key = _KEY_ASSIGN_END.search(decoded) is not None
+            if bare_key:
+                if decoded.rstrip("\"'").endswith(("=", ":")) or (
+                    decoded.lstrip("\"'{[(").startswith("-")
+                ):
+                    redact_next = True
+                else:
+                    separator_pending = True
         has_userinfo = "@" in decoded and len(decoded) > 1
         if (
             redact

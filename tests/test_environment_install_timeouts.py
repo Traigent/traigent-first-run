@@ -831,6 +831,31 @@ class RedactionTests(unittest.TestCase):
                 header = line.split(":", 1)[0] + ":"
                 self.assertIn(header, redacted)
 
+    def test_key_token_carrying_value_is_redacted_even_when_another_key_ends_it(self):
+        # A token with a key's value in it is replaced whole, even when another key
+        # name ends the token with a separator; that trailing key is not a bare key.
+        module = load_module()
+        forms = (
+            "password=S3CRET,token=",
+            "?token=S3CRET&password=",
+            "apikey=S3CRET;auth:",
+            "user:S3CRET:password:",
+            "token%3DS3CRET%26password%3D",
+        )
+        for form in forms:
+            with self.subTest(form=form):
+                redacted = module._redacted_pip_output(form)
+                self.assertNotIn("S3C", redacted)
+                self.assertNotIn("RET", redacted)
+                self.assertIn("<artifact-location>", redacted)
+
+    def test_value_after_trailing_key_of_a_carrying_token_is_redacted(self):
+        module = load_module()
+        redacted = module._redacted_pip_output("password=S3CRET,token= NEXTS3CRET\n")
+        self.assertNotIn("S3C", redacted)
+        self.assertNotIn("RET", redacted)
+        self.assertEqual(redacted, "<artifact-location> <artifact-location>\n")
+
     def test_lines_pip_prints_for_normal_work_are_unchanged(self):
         module = load_module()
         lines = (
