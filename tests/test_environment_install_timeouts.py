@@ -8,8 +8,11 @@ a stalled name lookup cannot be interrupted.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.util
+import json
+import os
 import subprocess
 import tempfile
 import threading
@@ -226,13 +229,20 @@ class CacheWheelTests(unittest.TestCase):
                 side_effect=AssertionError("unbounded"),
             ),
         ):
-            cached = module.cache_wheel(item, Path(directory))
-            download.assert_called_once_with(
-                url,
-                Path(directory) / "pkg-1.0-py3-none-any.whl",
-                module.DOWNLOAD_READ_TIMEOUT_SECONDS,
-                module.DOWNLOAD_DEADLINE_SECONDS,
+            deadline = time.monotonic() + 100
+            cached = module.cache_wheel(item, Path(directory), deadline)
+            download.assert_called_once()
+            args = download.call_args.args
+            self.assertEqual(
+                args[:3],
+                (
+                    url,
+                    Path(directory) / "pkg-1.0-py3-none-any.whl",
+                    module.DOWNLOAD_READ_TIMEOUT_SECONDS,
+                ),
             )
+            self.assertLessEqual(args[3], 100)
+            self.assertGreater(args[3], 90)
         self.assertEqual(cached["name"], "pkg")
         self.assertEqual(cached["version"], "1.0")
 
@@ -295,7 +305,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
     def test_plan_timeout_reports_that_nothing_changed(self):
         message = self._pip_timeout_message(changes_environment=False)
         self.assertIn("nothing was installed or changed", message)
+        self.assertIn("The network or dependency resolution stalled", message)
         self.assertIn("retry plan when the network is stable", message)
+        self.assertIn("narrow the requirements if it stalls again", message)
         self.assertNotIn("partly changed", message)
 
     def test_apply_timeout_reports_possible_partial_change_without_inviting_retry(self):
@@ -306,6 +318,248 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("nothing was installed", message)
         self.assertNotIn("retry", message)
         self.assertNotIn("re-run", message)
+
+
+class ReadOnlyBlocksResponse:
+    """Fake response that implements only read1, so any call to read() fails loudly."""
+
+    def __init__(self, blocks):
+        self._blocks = list(blocks)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read1(self, size=-1):
+        return self._blocks.pop(0)
+
+
+class DownloadReadCallTests(unittest.TestCase):
+    def test_body_is_streamed_with_read1_so_an_abandoned_worker_stops_early(self):
+        module = load_module()
+        response = ReadOnlyBlocksResponse([b"wheel-", b"bytes", b""])
+        url = "https://files.example.invalid/pkg-1.0-py3-none-any.whl"
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with mock.patch.object(
+                module.urllib.request, "urlopen", return_value=response
+            ):
+                module._download(url, target, 5, 5)
+            self.assertEqual(target.read_bytes(), b"wheel-bytes")
+
+
+@unittest.skipUnless(os.name == "posix", "the fake interpreter is a POSIX shell script")
+class RealStalledChildTests(unittest.TestCase):
+    def test_real_stalled_child_is_killed_and_its_output_is_not_leaked(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as directory:
+            fake_interpreter = Path(directory) / "fake-python"
+            fake_interpreter.write_text(
+                "#!/bin/sh\n"
+                "echo 'https://user:secret@example.invalid/simple'\n"
+                "exec sleep 30\n",
+                encoding="utf-8",
+            )
+            fake_interpreter.chmod(0o755)
+            with (
+                mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 1),
+                mock.patch.object(
+                    module.ENV, "trusted_interpreter", return_value=fake_interpreter
+                ),
+            ):
+                started = time.monotonic()
+                with self.assertRaises(ValueError) as raised:
+                    module.isolated_pip(
+                        Path(directory),
+                        ["install", "x"],
+                        Path(directory),
+                        changes_environment=False,
+                    )
+                elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 10, "stalled child was not killed at the bound")
+        self.assertIn("Installer stalled", str(raised.exception))
+        self.assertNotIn("secret", str(raised.exception))
+        self.assertIsNone(
+            raised.exception.__context__, "secret-bearing exception must not be chained"
+        )
+
+
+WHEEL_ITEM = {
+    "download_info": {
+        "url": "https://files.example.invalid/pkg-1.0-py3-none-any.whl",
+        "archive_info": {"hashes": {"sha256": "0" * 64}},
+    },
+    "metadata": {"name": "pkg", "version": "1.0"},
+}
+BEFORE = {"installed": {}, "identity": "id"}
+AFTER = {"installed": {"pkg": "1.0"}, "identity": "id"}
+
+
+class SlowFirstReadResponse:
+    """Fake response that stalls once before its first block, then answers at once."""
+
+    def __init__(self, delay, blocks):
+        self._delay = delay
+        self._blocks = list(blocks)
+        self._first = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read1(self, size=-1):
+        if self._first:
+            self._first = False
+            time.sleep(self._delay)
+        return self._blocks.pop(0)
+
+
+class PlanDownloadBudgetTests(unittest.TestCase):
+    def test_plan_shares_one_download_budget_across_wheels(self):
+        module = load_module()
+        payload = b"wheel"
+        digest = hashlib.sha256(payload).hexdigest()
+        items = [
+            {
+                "download_info": {
+                    "url": f"https://files.example.invalid/{name}-1.0-py3-none-any.whl",
+                    "archive_info": {"hashes": {"sha256": digest}},
+                },
+                "metadata": {"name": name, "version": "1.0"},
+            }
+            for name in ("alpha", "beta")
+        ]
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        candidate = root / "env"
+        candidate.mkdir()
+        requirements = root / "requirements.txt"
+        requirements.write_text("alpha==1.0\nbeta==1.0\n", encoding="utf-8")
+        plan_path = root / "approval.json"
+        options = argparse.Namespace(
+            candidate=candidate,
+            requirements=requirements,
+            plan=plan_path,
+            change=[],
+            no_index=False,
+            find_links=None,
+        )
+        before = {"installed": {}, "identity": "id"}
+
+        def fake_pip(candidate_arg, arguments, working, *, changes_environment):
+            report = Path(arguments[arguments.index("--report") + 1])
+            report.write_text(json.dumps({"install": items}), encoding="utf-8")
+
+        def fake_urlopen(url, timeout):
+            # Each wheel takes 0.6 s, which fits a 1.0 s budget only once.
+            return SlowFirstReadResponse(0.6, [payload, b""])
+
+        patches = (
+            mock.patch.object(module, "PLAN_DOWNLOAD_DEADLINE_SECONDS", 1.0),
+            mock.patch.object(module, "snapshot", return_value=before),
+            mock.patch.object(
+                module.ENV, "read_pins", return_value={"alpha": "1.0", "beta": "1.0"}
+            ),
+            mock.patch.object(
+                module.ENV, "approval_card", return_value={"new": [], "changes": []}
+            ),
+            mock.patch.object(module, "isolated_pip", side_effect=fake_pip),
+            mock.patch.object(
+                module.urllib.request, "urlopen", side_effect=fake_urlopen
+            ),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        with self.assertRaises(ValueError) as raised:
+            module.plan(options)
+        self.assertIn("Wheel download stalled", str(raised.exception))
+        self.assertEqual(list(root.glob("*-wheels-*")), [])
+        self.assertFalse(plan_path.exists())
+
+
+class PlanApplyHarnessTests(unittest.TestCase):
+    def setUp(self):
+        self.module = load_module()
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.candidate = self.root / "env"
+        self.candidate.mkdir()
+        self.requirements = self.root / "requirements.txt"
+        self.requirements.write_text("pkg==1.0\n", encoding="utf-8")
+        self.plan_path = self.root / "approval.json"
+        self.options = argparse.Namespace(
+            candidate=self.candidate,
+            requirements=self.requirements,
+            plan=self.plan_path,
+            change=[],
+            no_index=False,
+            find_links=None,
+        )
+        self.pip_calls = []
+
+    def _fake_pip(self, candidate, arguments, working, *, changes_environment):
+        self.pip_calls.append(changes_environment)
+        if "--report" in arguments:
+            report = Path(arguments[arguments.index("--report") + 1])
+            report.write_text(json.dumps({"install": [WHEEL_ITEM]}), encoding="utf-8")
+
+    def _start(self, cache_wheel, snapshots):
+        module = self.module
+        for patch in (
+            mock.patch.object(module, "snapshot", side_effect=snapshots),
+            mock.patch.object(module.ENV, "read_pins", return_value={"pkg": "1.0"}),
+            mock.patch.object(
+                module.ENV,
+                "approval_card",
+                return_value={"new": [], "changes": []},
+            ),
+            mock.patch.object(module, "isolated_pip", side_effect=self._fake_pip),
+            mock.patch.object(module, "cache_wheel", side_effect=cache_wheel),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_failed_wheel_cache_leaves_no_wheels_directory_and_passes_error_through(
+        self,
+    ):
+        def failing_cache(item, directory, download_deadline):
+            (directory / "pkg-1.0-py3-none-any.whl").write_bytes(b"partial")
+            raise ValueError("Wheel download stalled: sentinel")
+
+        self._start(failing_cache, [BEFORE, BEFORE])
+        with self.assertRaises(ValueError) as raised:
+            self.module.plan(self.options)
+        self.assertEqual(str(raised.exception), "Wheel download stalled: sentinel")
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+        self.assertFalse(self.plan_path.exists())
+
+    def test_plan_and_apply_wire_changes_environment_false_and_true(self):
+        def writing_cache(item, directory, download_deadline):
+            artifact = directory / "pkg-1.0-py3-none-any.whl"
+            artifact.write_bytes(b"wheel")
+            return {
+                "path": str(artifact),
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "name": "pkg",
+                "version": "1.0",
+            }
+
+        # plan takes two snapshots (before, after resolution); apply takes two.
+        self._start(writing_cache, [BEFORE, BEFORE, BEFORE, AFTER])
+        self.module.plan(self.options)
+        apply_options = argparse.Namespace(
+            plan=self.plan_path,
+            approved_plan_sha256=self.module.ENV.file_digest(self.plan_path),
+        )
+        self.module.apply(apply_options)
+        self.assertEqual(self.pip_calls, [False, True])
 
 
 if __name__ == "__main__":

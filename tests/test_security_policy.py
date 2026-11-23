@@ -34,6 +34,16 @@ class SecurityPolicyTests(unittest.TestCase):
             policy.index("\n## Reporting a vulnerability\n"),
         )
 
+    def test_scope_names_the_agent_instruction_files(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        scope = policy[
+            policy.index("\n## Scope\n") : policy.index(
+                "\n## Reporting a vulnerability\n"
+            )
+        ]
+        self.assertIn("AGENTS.md", scope)
+        self.assertIn("CLAUDE.md", scope)
+
 
 if __name__ == "__main__":
     unittest.main()

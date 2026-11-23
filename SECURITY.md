@@ -2,8 +2,8 @@
 
 ## Scope
 
-- **In scope:** the guide (`GUIDE.md`, `skills/traigent-first-run/`), including the bundled scripts that run on the user's machine.
-- **Out of scope:** `tests/` and `tools/`, which are repository maintenance only and play no part in a guided run.
+- **In scope:** the guide (`GUIDE.md`, `skills/traigent-first-run/`), including the bundled scripts that run on the user's machine; the root `AGENTS.md`, `CLAUDE.md` and `README.md` (assistant-facing and user-facing instructions read during a guided run); and `.github/workflows/` (CI that runs on pull requests).
+- **Out of scope:** `tests/` and `tools/`, which are repository maintenance only and play no part in a guided run; `deps/` (a dependency-scanner mirror of the bundled lock file); and `.env.example`.
 - **Out of scope for this repository, report elsewhere:** the Traigent Python SDK via <https://github.com/Traigent/Traigent/security/advisories/new>; the hosted Traigent service to [security@traigent.ai](mailto:security@traigent.ai).
 
 ## Reporting a vulnerability

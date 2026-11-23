@@ -18,24 +18,31 @@ import importlib.util
 import json
 import ntpath
 import os
+import shutil
 import subprocess
 import sys
 import sysconfig
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
 from pathlib import Path
 
-# Bounds on network and installer time so a stalled mirror fails loudly instead of
-# hanging the guided run with no message.
+# These are stall backstops, not sized to a coding assistant's tool-call time limit;
+# the per-read timeout is the bound that fires quickly. Fitting long installs to an
+# assistant's command limit belongs in the guide, not here.
 DOWNLOAD_READ_TIMEOUT_SECONDS = 30  # max silence on the socket before one read fails
-DOWNLOAD_DEADLINE_SECONDS = (
-    600  # max total wall time for one wheel download, connect through last byte
-)
-PIP_TIMEOUT_SECONDS = 900  # max wall time for one isolated pip child
+# Total wall time for all wheel downloads in one plan, shared across wheels, not per
+# wheel. One bundled-lock plan on 2026-11-23 fetched 75 wheels (100 MB) in a 43.7 s
+# plan; this budget fails links slower than roughly 1.4 Mbit/s.
+PLAN_DOWNLOAD_DEADLINE_SECONDS = 600
+# Max wall time for one isolated pip child. Apply measured 21 s for the bundled lock,
+# so 900 s leaves wide margin for slow disks or antivirus. A kill here can leave a
+# partial install, which the apply error says.
+PIP_TIMEOUT_SECONDS = 900
 
 SPEC = importlib.util.spec_from_file_location(
     "_first_run_environments", Path(__file__).with_name("find_environments.py")
@@ -231,7 +238,9 @@ def isolated_pip(
             )
         raise ValueError(
             f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound; "
-            "nothing was installed or changed; retry plan when the network is stable."
+            "nothing was installed or changed. The network or dependency resolution "
+            "stalled; retry plan when the network is stable, or narrow the requirements "
+            "if it stalls again."
         )
     if result.returncode:
         # pip may include index credentials in verbose diagnostics. Retain only
@@ -380,8 +389,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     reports the stall and the script exits.
     """
     message = (
-        f"Wheel download stalled: exceeded the {deadline:g}s download deadline "
-        f"or the {read_timeout:g}s read timeout; retry plan when the network is stable"
+        "Wheel download stalled: exceeded the plan download deadline "
+        f"({PLAN_DOWNLOAD_DEADLINE_SECONDS}s for all wheels) or the {read_timeout:g}s "
+        "read timeout; retry plan when the network is stable"
     )
     # Opened before the worker starts: a FileExistsError must not unlink a file this
     # call did not create.
@@ -423,7 +433,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     raise error
 
 
-def cache_wheel(item: dict, directory: Path) -> dict:
+def cache_wheel(item: dict, directory: Path, download_deadline: float) -> dict:
+    """Cache one wheel; download_deadline is an absolute time.monotonic() value
+    shared by every wheel in the plan."""
     download = item["download_info"]
     url = download["url"]
     parsed = urllib.parse.urlsplit(url)
@@ -436,9 +448,15 @@ def cache_wheel(item: dict, directory: Path) -> dict:
     target = directory / filename
     if target.exists():
         raise ValueError("Ambiguous resolved wheel filenames")
+    remaining = download_deadline - time.monotonic()
+    if remaining <= 0:
+        raise ValueError(
+            "Wheel download stalled: the plan download deadline was exhausted before "
+            "this wheel; retry plan when the network is stable"
+        )
     # Pip already fetched/hashed these artifacts during resolution. Recheck the
     # bytes cached for apply; never trust a URL to remain the same after yes.
-    _download(url, target, DOWNLOAD_READ_TIMEOUT_SECONDS, DOWNLOAD_DEADLINE_SECONDS)
+    _download(url, target, DOWNLOAD_READ_TIMEOUT_SECONDS, remaining)
     if ENV.file_digest(target) != expected:
         raise ValueError("Resolved wheel changed before it could be cached")
     return {
@@ -521,7 +539,16 @@ def plan(options) -> dict:
         cache = Path(
             tempfile.mkdtemp(prefix=plan_path.stem + "-wheels-", dir=plan_path.parent)
         )
-        artifacts = [cache_wheel(item, cache) for item in report["install"]]
+        download_deadline = time.monotonic() + PLAN_DOWNLOAD_DEADLINE_SECONDS
+        try:
+            artifacts = [
+                cache_wheel(item, cache, download_deadline)
+                for item in report["install"]
+            ]
+        except BaseException:
+            # A failed plan leaves no cache behind; each retry would otherwise add one.
+            shutil.rmtree(cache, ignore_errors=True)
+            raise
     document = {
         "schema": 1,
         "candidate": str(candidate),
