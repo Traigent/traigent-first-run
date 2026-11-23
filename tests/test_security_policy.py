@@ -44,6 +44,16 @@ class SecurityPolicyTests(unittest.TestCase):
         self.assertIn("AGENTS.md", scope)
         self.assertIn("CLAUDE.md", scope)
 
+    def test_scope_names_ci_and_reports_as_in_scope(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        scope = policy[
+            policy.index("\n## Scope\n") : policy.index(
+                "\n## Reporting a vulnerability\n"
+            )
+        ]
+        self.assertIn("`.github/workflows/`", scope)
+        self.assertIn("`reports/`", scope)
+
 
 if __name__ == "__main__":
     unittest.main()

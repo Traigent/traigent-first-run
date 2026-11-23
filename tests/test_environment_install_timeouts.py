@@ -133,6 +133,8 @@ class DownloadDeadlineTests(ServerFixture):
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 5, "per-read timeout did not bound the stall")
             self.assertIn("stalled", str(raised.exception))
+            self.assertIn("nothing was installed or changed", str(raised.exception))
+            self.assertNotIn("retry", str(raised.exception))
             self.assertFalse(target.exists(), "partial wheel must be removed")
 
     def test_slow_drip_hits_overall_deadline(self):
@@ -305,9 +307,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
     def test_plan_timeout_reports_that_nothing_changed(self):
         message = self._pip_timeout_message(changes_environment=False)
         self.assertIn("nothing was installed or changed", message)
-        self.assertIn("The network or dependency resolution stalled", message)
-        self.assertIn("retry plan when the network is stable", message)
-        self.assertIn("narrow the requirements if it stalls again", message)
+        self.assertIn("The network or dependency resolution stalled.", message)
+        self.assertNotIn("retry", message)
+        self.assertNotIn("narrow", message)
         self.assertNotIn("partly changed", message)
 
     def test_apply_timeout_reports_possible_partial_change_without_inviting_retry(self):
@@ -479,6 +481,8 @@ class PlanDownloadBudgetTests(unittest.TestCase):
         with self.assertRaises(ValueError) as raised:
             module.plan(options)
         self.assertIn("Wheel download stalled", str(raised.exception))
+        self.assertIn("nothing was installed or changed", str(raised.exception))
+        self.assertNotIn("retry", str(raised.exception))
         self.assertEqual(list(root.glob("*-wheels-*")), [])
         self.assertFalse(plan_path.exists())
 
@@ -539,6 +543,42 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertEqual(str(raised.exception), "Wheel download stalled: sentinel")
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
         self.assertFalse(self.plan_path.exists())
+
+    def test_plan_failure_after_caching_leaves_no_wheels_directory(self):
+        # plan() raises FileExistsError on plan_path.open("x") when a concurrent run
+        # wrote the plan after resolution. Wheels cached before that must not remain.
+        def cache_then_concurrent_plan(item, directory, download_deadline):
+            artifact = directory / "pkg-1.0-py3-none-any.whl"
+            artifact.write_bytes(b"wheel")
+            self.plan_path.write_text("concurrent", encoding="utf-8")
+            return {
+                "path": str(artifact),
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "name": "pkg",
+                "version": "1.0",
+            }
+
+        self._start(cache_then_concurrent_plan, [BEFORE, BEFORE])
+        with self.assertRaises(FileExistsError):
+            self.module.plan(self.options)
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    def test_cache_wheel_with_exhausted_deadline_says_nothing_changed(self):
+        module = load_module()
+        item = {
+            "download_info": {
+                "url": "https://files.example.invalid/pkg-1.0-py3-none-any.whl",
+                "archive_info": {"hashes": {"sha256": "a" * 64}},
+            },
+            "metadata": {"name": "pkg", "version": "1.0"},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError) as raised:
+                module.cache_wheel(item, Path(directory), time.monotonic() - 1)
+        message = str(raised.exception)
+        self.assertIn("plan download deadline", message)
+        self.assertIn("nothing was installed or changed", message)
+        self.assertNotIn("retry", message)
 
     def test_plan_and_apply_wire_changes_environment_false_and_true(self):
         def writing_cache(item, directory, download_deadline):
