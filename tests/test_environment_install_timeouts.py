@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -19,7 +20,9 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import unittest
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -248,9 +251,7 @@ class DownloadDeadlineTests(ServerFixture):
         connect_stall = urllib_error.URLError(TimeoutError("timed out"))
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "pkg-1.0-py3-none-any.whl"
-            with mock.patch.object(
-                module.urllib.request, "urlopen", side_effect=connect_stall
-            ):
+            with mock.patch.object(module, "_open_url", side_effect=connect_stall):
                 with self.assertRaises(ValueError) as raised:
                     module._download(
                         "http://127.0.0.1:9/x.whl", target, read_timeout=0.5, deadline=5
@@ -258,6 +259,205 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertIn("the server sent nothing for 0.5s", str(raised.exception))
             self.assertNotIn("ran out", str(raised.exception))
             self.assertFalse(target.exists())
+
+
+class EndlessBodyHandler(BaseHTTPRequestHandler):
+    """Sends 200 with no Content-Length and an endless body until the client leaves.
+
+    The server stops after 64 MiB regardless, so a regression that stops reading
+    late still writes a bounded amount of data before the test fails."""
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.end_headers()
+        sent = 0
+        try:
+            while sent < 64 * 1024 * 1024 and not self.server.release.is_set():
+                self.wfile.write(b"x" * 65536)
+                sent += 65536
+        except OSError:
+            return
+
+    def log_message(self, *args):
+        pass
+
+
+class DeclaredOversizeHandler(BaseHTTPRequestHandler):
+    """Declares a 3 MiB body and sends none: a cap check must fail before any read."""
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(3 * 1024 * 1024))
+        self.end_headers()
+        self.server.release.wait(10)
+
+    def log_message(self, *args):
+        pass
+
+
+class BlockingResponse:
+    """Fake response: one block, then blocks until released (or 5 s)."""
+
+    def __init__(self, release):
+        self._release = release
+        self._blocks = [b"partial"]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read1(self, size=-1):
+        if self._blocks:
+            return self._blocks.pop(0)
+        self._release.wait(5)
+        return b""
+
+
+class DownloadHardeningTests(ServerFixture):
+    def test_unbounded_body_is_capped_and_partial_file_removed(self):
+        module = load_module()
+        url = self.start_server(EndlessBodyHandler)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(module, "MAX_WHEEL_BYTES", 2 * 1024 * 1024),
+        ):
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            started = time.monotonic()
+            with self.assertRaises(ValueError) as raised:
+                module._download(url, target, read_timeout=5, deadline=5)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 3, "the size cap did not stop the transfer")
+            self.assertIn("exceeded the 2 MB size limit", str(raised.exception))
+            self.assertIn("nothing was installed or changed", str(raised.exception))
+            self.assertFalse(target.exists(), "partial wheel must be removed")
+
+    def test_declared_length_over_cap_fails_before_reading(self):
+        module = load_module()
+        url = self.start_server(DeclaredOversizeHandler)
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(module, "MAX_WHEEL_BYTES", 2 * 1024 * 1024),
+        ):
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            started = time.monotonic()
+            with self.assertRaises(ValueError) as raised:
+                module._download(url, target, read_timeout=0.5, deadline=5)
+            elapsed = time.monotonic() - started
+            self.assertLess(elapsed, 3, "declared length was not checked up front")
+            self.assertIn("exceeded the 2 MB size limit", str(raised.exception))
+            self.assertNotIn("sent nothing", str(raised.exception))
+            self.assertFalse(target.exists())
+
+
+class DownloadRefusalAndInterruptTests(unittest.TestCase):
+    def test_http_client_invalid_url_error_text_is_redacted_and_not_chained(self):
+        module = load_module()
+        error = http.client.InvalidURL("nonnumeric port: 'https://alice:S3CRET@h/x'")
+        self.assert_download_error_is_safe(module, error)
+
+    def test_url_error_text_is_redacted_and_not_chained(self):
+        module = load_module()
+        error = urllib_error.URLError("https://alice:S3CRET@h/x unreachable")
+        self.assert_download_error_is_safe(module, error)
+
+    def test_http_error_is_redacted_and_not_chained(self):
+        module = load_module()
+        error = urllib_error.HTTPError(
+            "https://alice:S3CRET@h/x.whl", 500, "Server Error", None, None
+        )
+        self.assert_download_error_is_safe(module, error)
+
+    def assert_download_error_is_safe(self, module, error):
+        url = "https://alice:S3CRET@h/x.whl"
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with mock.patch.object(module, "_open_url", side_effect=error):
+                with self.assertRaises(ValueError) as raised:
+                    module._download(url, target, read_timeout=5, deadline=5)
+            err = raised.exception
+            self.assertNotIn("S3CRET", str(err))
+            self.assertNotIn("S3CRET", "".join(traceback.format_exception(err)))
+            self.assertIsNone(err.__cause__)
+            self.assertIsNone(err.__context__)
+            self.assertIn("Wheel download failed", str(err))
+            self.assertIn("nothing was installed or changed", str(err))
+            self.assertFalse(target.exists(), "partial wheel must be removed")
+
+    def test_https_to_http_redirect_is_refused(self):
+        module = load_module()
+        handler = module._NoDowngradeRedirectHandler()
+        request = urllib.request.Request("https://h/x.whl")
+        with self.assertRaises(module._HttpsDowngradeRefused):
+            handler.redirect_request(request, None, 302, "Found", {}, "http://h/x.whl")
+
+    def test_https_to_https_redirect_is_followed(self):
+        module = load_module()
+        handler = module._NoDowngradeRedirectHandler()
+        request = urllib.request.Request("https://h/x.whl")
+        redirected = handler.redirect_request(
+            request, None, 302, "Found", {}, "https://h2/x.whl"
+        )
+        self.assertIsInstance(redirected, urllib.request.Request)
+        self.assertEqual(redirected.full_url, "https://h2/x.whl")
+
+    def test_downgrade_refusal_from_transfer_maps_to_value_error(self):
+        module = load_module()
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with mock.patch.object(
+                module, "_open_url", side_effect=module._HttpsDowngradeRefused()
+            ):
+                with self.assertRaises(ValueError) as raised:
+                    module._download(
+                        "https://h/x.whl", target, read_timeout=5, deadline=5
+                    )
+            self.assertEqual(
+                str(raised.exception),
+                "Wheel download refused a redirect from HTTPS to a non-HTTPS URL; "
+                "nothing was installed or changed.",
+            )
+            self.assertIsNone(raised.exception.__context__)
+            self.assertFalse(target.exists())
+
+    def test_interrupt_during_download_closes_stream_and_removes_partial_file(self):
+        module = load_module()
+        release = threading.Event()
+        self.addCleanup(release.set)
+        opened = []
+        real_open = Path.open
+
+        def recording_open(path, *args, **kwargs):
+            handle = real_open(path, *args, **kwargs)
+            opened.append(handle)
+            return handle
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with (
+                mock.patch.object(Path, "open", recording_open),
+                mock.patch.object(
+                    module,
+                    "_open_url",
+                    return_value=BlockingResponse(release),
+                ),
+                mock.patch.object(
+                    module.threading.Thread, "join", side_effect=KeyboardInterrupt
+                ),
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    module._download(
+                        "https://files.example.invalid/x.whl",
+                        target,
+                        read_timeout=5,
+                        deadline=5,
+                    )
+            self.assertEqual(len(opened), 1)
+            self.assertTrue(opened[0].closed, "stream must be closed on interrupt")
+            self.assertFalse(target.exists(), "partial wheel must be removed")
 
 
 class CacheWheelTests(unittest.TestCase):
@@ -284,8 +484,8 @@ class CacheWheelTests(unittest.TestCase):
                 module, "_download", side_effect=fake_download
             ) as download,
             mock.patch.object(
-                module.urllib.request,
-                "urlopen",
+                module,
+                "_open_url",
                 side_effect=AssertionError("unbounded"),
             ),
         ):
@@ -593,9 +793,7 @@ class DownloadReadCallTests(unittest.TestCase):
         url = "https://files.example.invalid/pkg-1.0-py3-none-any.whl"
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory) / "pkg-1.0-py3-none-any.whl"
-            with mock.patch.object(
-                module.urllib.request, "urlopen", return_value=response
-            ):
+            with mock.patch.object(module, "_open_url", return_value=response):
                 module._download(url, target, 5, 5)
             self.assertEqual(target.read_bytes(), b"wheel-bytes")
 
@@ -706,7 +904,7 @@ class PlanDownloadBudgetTests(unittest.TestCase):
             report = Path(arguments[arguments.index("--report") + 1])
             report.write_text(json.dumps({"install": items}), encoding="utf-8")
 
-        def fake_urlopen(url, timeout):
+        def fake_open_url(url, timeout):
             # Each wheel takes 0.6 s, which fits a 1.0 s budget only once.
             return SlowFirstReadResponse(0.6, [payload, b""])
 
@@ -720,9 +918,7 @@ class PlanDownloadBudgetTests(unittest.TestCase):
                 module.ENV, "approval_card", return_value={"new": [], "changes": []}
             ),
             mock.patch.object(module, "isolated_pip", side_effect=fake_pip),
-            mock.patch.object(
-                module.urllib.request, "urlopen", side_effect=fake_urlopen
-            ),
+            mock.patch.object(module, "_open_url", side_effect=fake_open_url),
         )
         for patch in patches:
             patch.start()

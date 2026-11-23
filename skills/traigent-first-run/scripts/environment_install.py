@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import contextlib
 import csv
 import email.parser
 import importlib.util
@@ -44,6 +45,9 @@ PLAN_DOWNLOAD_DEADLINE_SECONDS = 600
 # apply, leaving margin for slow disks or antivirus. A kill here can leave a partial
 # install, which the apply error says.
 PIP_TIMEOUT_SECONDS = 900
+# Largest accepted wheel body: locked wheels are tens of MB; 1 GiB leaves room for a
+# large --change preview.
+MAX_WHEEL_BYTES = 1024 * 1024 * 1024
 
 SPEC = importlib.util.spec_from_file_location(
     "_first_run_environments", Path(__file__).with_name("find_environments.py")
@@ -213,10 +217,10 @@ def _redact_line(line: str) -> str:
     - it contains `://` (any URL, with or without credentials);
     - it contains `@` and is longer than one character (a lone `@`, pip's
       `name @ url` separator, is kept), so `user:secret@host` and `ghp_x@host` match;
-    - it starts with a well-known token prefix (`ghp_`, `gho_`, `ghu_`, `ghs_`,
+    - it contains a well-known token prefix (`ghp_`, `gho_`, `ghu_`, `ghs_`,
       `ghr_`, `github_pat_`, `glpat-`, `sk-`, `xoxb-`, `xoxp-`) followed by 8 or more of
-      `[A-Za-z0-9_-]`; the prefix must begin the token or follow a non-alphanumeric
-      character, so `task-runner-12345678` is kept;
+      `[A-Za-z0-9_-]`, at its start or after a non-alphanumeric character, so
+      `task-runner-12345678` is kept and `x=sk-...` is redacted;
     - it holds a credential key (`password`, `passwd`, `pwd`, `secret`, `token`,
       `api_key`, `apikey`, `api-key`, `access_token`, `auth`) followed by `=` or `:`,
       not preceded by a letter or digit.
@@ -471,6 +475,33 @@ def exact_change(value: str) -> tuple[str, str]:
     return name, version
 
 
+class _HttpsDowngradeRefused(Exception):
+    """Raised inside the transfer when https redirects to a non-https URL."""
+
+
+class _WheelTooLarge(Exception):
+    """Raised inside the transfer when a wheel body exceeds MAX_WHEEL_BYTES."""
+
+
+class _NoDowngradeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follows redirects except an https-to-non-https one, which is refused."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if (
+            urllib.parse.urlsplit(req.full_url).scheme == "https"
+            and urllib.parse.urlsplit(newurl).scheme != "https"
+        ):
+            raise _HttpsDowngradeRefused()
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_NoDowngradeRedirectHandler)
+
+
+def _open_url(url: str, timeout: float):
+    return _OPENER.open(url, timeout=timeout)
+
+
 def _download(url: str, target: Path, read_timeout: float, deadline: float) -> None:
     """Stream url into a new target file within deadline seconds of total wall time.
 
@@ -479,10 +510,13 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     headers forever, so the transfer runs in a daemon thread that the caller joins
     with the deadline. read_timeout bounds each socket read inside that thread.
 
-    On timeout the worker is abandoned and the partial file removed. A worker
-    stuck inside a call that ignores timeouts (such as DNS) is left running on
-    purpose: it is a daemon, it writes nothing once abandoned, and the caller
-    reports the stall and the script exits.
+    The body is capped at MAX_WHEEL_BYTES whatever Content-Length says, and an
+    https URL may not redirect to a non-https one. Each failure raises a ValueError
+    with redacted text and no chained exception, and removes the partial file. On
+    timeout the worker is abandoned. A worker stuck inside a call that ignores
+    timeouts (such as DNS) is left running on purpose: it is a daemon, it writes
+    nothing once abandoned, and the caller reports the stall and the script exits.
+    An interrupt closes the stream and removes the partial file before re-raising.
     """
     deadline_message = (
         "Wheel download did not finish: the plan download deadline "
@@ -493,6 +527,14 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         "Wheel download stalled: the server sent nothing for "
         f"{read_timeout:g}s; nothing was installed or changed."
     )
+    size_message = (
+        f"Wheel download exceeded the {MAX_WHEEL_BYTES // (1024 * 1024)} MB size limit; "
+        "nothing was installed or changed."
+    )
+    redirect_message = (
+        "Wheel download refused a redirect from HTTPS to a non-HTTPS URL; "
+        "nothing was installed or changed."
+    )
     # Opened before the worker starts: a FileExistsError must not unlink a file this
     # call did not create.
     stream = target.open("xb")
@@ -501,10 +543,20 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
 
     def transfer() -> None:
         try:
-            with urllib.request.urlopen(url, timeout=read_timeout) as response:
+            with _open_url(url, read_timeout) as response:
+                headers = getattr(response, "headers", None)
+                declared = (
+                    headers.get("Content-Length") if headers is not None else None
+                )
+                if declared is not None and int(declared) > MAX_WHEEL_BYTES:
+                    raise _WheelTooLarge()
+                received = 0
                 # read1 returns after one socket read, so an abandoned transfer stops
                 # at the next block instead of draining the whole body.
                 while block := response.read1(1024 * 1024):
+                    received += len(block)
+                    if received > MAX_WHEEL_BYTES:
+                        raise _WheelTooLarge()
                     if abandoned.is_set():
                         return
                     stream.write(block)
@@ -513,7 +565,17 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
 
     worker = threading.Thread(target=transfer, name="wheel-download", daemon=True)
     worker.start()
-    worker.join(deadline)
+    try:
+        worker.join(deadline)
+    except BaseException:
+        # Interrupted: release the file so a caller's cleanup can remove it (Windows
+        # refuses to remove open files). Cleanup errors must not mask the interrupt.
+        abandoned.set()
+        with contextlib.suppress(OSError):
+            stream.close()
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+        raise
     if worker.is_alive():
         abandoned.set()
         stream.close()
@@ -524,13 +586,21 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         return
     target.unlink(missing_ok=True)
     error = failures[0]
+    if isinstance(error, _WheelTooLarge):
+        raise ValueError(size_message) from None
+    if isinstance(error, _HttpsDowngradeRefused):
+        raise ValueError(redirect_message) from None
     timed_out = isinstance(error, TimeoutError) or (
         isinstance(error, urllib.error.URLError)
         and isinstance(error.reason, TimeoutError)
     )
     if timed_out:
         raise ValueError(read_message) from None
-    raise error
+    raise ValueError(
+        "Wheel download failed: "
+        + _redacted_pip_output(f"{type(error).__name__}: {error}")
+        + "; nothing was installed or changed."
+    ) from None
 
 
 def cache_wheel(item: dict, directory: Path, download_deadline: float) -> dict:
