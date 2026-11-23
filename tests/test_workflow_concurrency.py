@@ -2,9 +2,12 @@
 
 Without a concurrency group, every superseded push to a pull request keeps its
 runs alive and consumes runners. The group is keyed per pull request, so a newer
-push cancels the older run. Trunk pushes are keyed by run id, so each one gets a
-group of its own and is never cancelled or replaced: GitHub replaces a pending
-run in a shared group even when `cancel-in-progress` is false.
+push cancels the older run. Trunk pushes get a group of their own, keyed by run
+id, so no other trunk push and no unmodified pull request run can replace or
+cancel them: GitHub replaces a pending run in a shared group even when
+`cancel-in-progress` is false. A pull request that edits this workflow runs its
+own copy and could name a trunk run's group to cancel it; that costs a re-run of
+the trunk run and exposes nothing.
 """
 
 import importlib.util
