@@ -1,5 +1,11 @@
 # Security Policy
 
+## Scope
+
+- **In scope:** the guide (`GUIDE.md`, `skills/traigent-first-run/`), including the bundled scripts that run on the user's machine.
+- **Out of scope:** `tests/` and `tools/`, which are repository maintenance only and play no part in a guided run.
+- **Also report here, but out of scope for this repository:** the Traigent SDK and service themselves. They are covered by their own policies.
+
 ## Reporting a vulnerability
 
 Please report security issues privately rather than in a public issue or pull request.

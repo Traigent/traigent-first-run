@@ -124,9 +124,11 @@ class DownloadDeadlineTests(ServerFixture):
             target = Path(directory) / "pkg-1.0-py3-none-any.whl"
             started = time.monotonic()
             with self.assertRaises(ValueError) as raised:
-                module._download(url, target, read_timeout=0.5, deadline=5)
+                # The deadline is far above the read timeout, so only the per-read
+                # socket timeout can end this stall within the elapsed bound.
+                module._download(url, target, read_timeout=0.5, deadline=30)
             elapsed = time.monotonic() - started
-            self.assertLess(elapsed, 8, "stalled download was not bounded")
+            self.assertLess(elapsed, 5, "per-read timeout did not bound the stall")
             self.assertIn("stalled", str(raised.exception))
             self.assertFalse(target.exists(), "partial wheel must be removed")
 

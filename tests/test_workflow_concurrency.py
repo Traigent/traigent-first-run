@@ -7,15 +7,21 @@ group of its own and is never cancelled or replaced: GitHub replaces a pending
 run in a shared group even when `cancel-in-progress` is false.
 """
 
+import importlib.util
 import unittest
 from pathlib import Path
 
-import yaml
+# PyYAML is not a declared dependency, so skip (rather than error at import)
+# on a bare interpreter; the pinned stack provides it.
+HAS_YAML = importlib.util.find_spec("yaml") is not None
+if HAS_YAML:
+    import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "validate.yml"
 
 
+@unittest.skipIf(not HAS_YAML, "PyYAML not installed (pinned stack)")
 class TestValidateWorkflowConcurrency(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

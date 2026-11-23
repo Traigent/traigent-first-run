@@ -26,6 +26,14 @@ class SecurityPolicyTests(unittest.TestCase):
         policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
         self.assertIn("security@traigent.ai", policy)
 
+    def test_it_states_scope_before_reporting_instructions(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn("\n## Scope\n", policy)
+        self.assertLess(
+            policy.index("\n## Scope\n"),
+            policy.index("\n## Reporting a vulnerability\n"),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
