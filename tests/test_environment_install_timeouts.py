@@ -697,6 +697,46 @@ class RedactionTests(unittest.TestCase):
                     module._redacted_pip_output(f"Collecting {form}\n"), want
                 )
 
+    SECURITY_PASS_FORMS = (
+        # key-value with spaces around the separator
+        "password = S3CRET",
+        "token : S3CRET",
+        # quoted and JSON keys
+        '{"password": "S3CRET"}',
+        '"token":"S3CRET"',
+        "'secret': 'S3CRET'",
+        # keys outside the list, and camelCase
+        "private_key=S3CRET",
+        "apiToken=S3CRET",
+        "client_secret=S3CRET",
+        "credentials=S3CRET",
+        # option form, with a space or with "="
+        "--password S3CRET",
+        "--token=S3CRET",
+        # double percent-encoding
+        "password%253DS3CRET",
+        "alice%253AS3CRET%2540host",
+        # token prefixes: PyPI API tokens and AWS access key ids
+        "pypi-AgEIcHlwaS5vcmcS3CRETabc",
+        "AKIAS3CRETABCDEFGHIJ",
+        "ASIAS3CRETABCDEFGHIJ",
+        # userinfo split by a separator that str.splitlines would break on
+        "user:S3C\x0bRET@host",
+        "user:S3C\x0cRET@host",
+        "user:S3C\x1cRET@host",
+        "user:S3C\x85RET@host",
+        "user:S3C RET@host",
+    )
+
+    def test_security_pass_forms_are_redacted_and_no_secret_survives(self):
+        module = load_module()
+        for form in self.SECURITY_PASS_FORMS:
+            with self.subTest(form=form):
+                redacted = module._redacted_pip_output(f"Collecting x from {form}\n")
+                self.assertNotIn("S3C", redacted)
+                self.assertNotIn("RET", redacted)
+                self.assertIn("<artifact-location>", redacted)
+
     def test_authorization_header_redacts_every_remaining_token_on_its_line(self):
         # Digest and Negotiate are not in the Basic/Bearer scheme list, so only
         # the header-name rule (redact_rest) can hide their credential tokens.
@@ -723,6 +763,9 @@ class RedactionTests(unittest.TestCase):
             "pkg @ \n",
             "name @ \n",
             "task-runner-12345678 disk-abcdefgh12\n",
+            "Collecting pypi-attestations==0.0.21\n",
+            "Collecting pypi-simple\n",
+            "Collecting tokenizers==0.21.0\n",
         )
         for line in lines:
             with self.subTest(line=line):
@@ -784,6 +827,21 @@ class RedactionTests(unittest.TestCase):
         redacted = self.assertRedactsQuickly(text)
         self.assertNotIn("a%3A", redacted)
         self.assertNotIn("ghp_", redacted)
+
+    def test_five_megabyte_line_mixing_spaced_option_encoded_separator_and_aws_is_linear(
+        self,
+    ):
+        text = (
+            ('"password" = LEAK ' * 80000)
+            + ("password%253DLEAK " * 80000)
+            + ("--token LEAK " * 120000)
+            + ("user:LEAK\x0bX@host " * 40000)
+            + ("AKIAABCDEFGHIJKLMNOP " * 20000)
+        )
+        self.assertGreaterEqual(len(text), 5_000_000)
+        redacted = self.assertRedactsQuickly(text)
+        self.assertNotIn("LEAK", redacted)
+        self.assertNotIn("AKIAABCDEFGHIJKLMNOP", redacted)
 
 
 class ReadOnlyBlocksResponse:

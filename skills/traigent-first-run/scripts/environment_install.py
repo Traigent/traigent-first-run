@@ -195,47 +195,74 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
 
 _ARTIFACT_LOCATION = "<artifact-location>"
 _TOKEN_SPLIT = re.compile(r"(\s+)")  # odd indexes are whitespace, even are tokens
-_CREDENTIAL_KEY_PATTERN = (
-    r"(?<![A-Za-z0-9])"
-    r"(?:password|passwd|pwd|secret|token|api_key|apikey|api-key|access_token|auth)"
-    r"[=:]"
+_KEY_NAMES = (
+    r"(?:password|passwd|pwd|secret|token|apikey|api_key|api-key|private_key"
+    r"|privatekey|access_key|accesskey|credentials?|auth)"
 )
-_CREDENTIAL_KEY = re.compile(_CREDENTIAL_KEY_PATTERN, re.IGNORECASE)
-_EMPTY_CREDENTIAL_KEY = re.compile(_CREDENTIAL_KEY_PATTERN + r"\Z", re.IGNORECASE)
+# A key name at the end of a token, followed only by separators or quotes.
+_KEY_TAIL = re.compile(_KEY_NAMES + r"[\"'=:,]*\Z")
+# A key name followed by optional quotes, then "=" or ":" and a non-empty value.
+_KEY_WITH_VALUE = re.compile(_KEY_NAMES + r"[\"']*[=:].")
+_SEPARATOR_TOKEN = re.compile(r"[\"'=:]+\Z")
 _TOKEN_PREFIX = re.compile(
-    r"(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_|glpat-|sk-|xox[bp]-)[A-Za-z0-9_-]{8,}"
+    r"(?<![A-Za-z0-9])(?:"
+    r"(?:gh[pousr]_|github_pat_|glpat-|sk-|xox[bp]-)[A-Za-z0-9_-]{8,}"
+    r"|pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]+"
+    r"|(?:AKIA|ASIA)[A-Z0-9]{16}"
+    r")"
 )
 _HEADER_NAMES = frozenset({"authorization:", "proxy-authorization:"})
 _AUTH_SCHEMES = frozenset({"basic", "bearer"})
+_MAX_DECODE_PASSES = 3
+
+
+def _decode(token: str) -> str:
+    """Percent-decode a token until it stops changing, at most `_MAX_DECODE_PASSES` times."""
+    decoded = token
+    for _ in range(_MAX_DECODE_PASSES):
+        again = urllib.parse.unquote(decoded)
+        if again == decoded:
+            break
+        decoded = again
+    return decoded
 
 
 def _redact_line(line: str) -> str:
     """Redact credentials from one line of pip output, keeping whitespace and line ends.
 
-    The line is split into tokens and whitespace. Each token is tested after percent
-    decoding (`urllib.parse.unquote`). A token is replaced by `_ARTIFACT_LOCATION` when:
+    The line is split into tokens and whitespace; whitespace includes every character
+    `str.isspace` accepts, such as a vertical tab or a form feed. Each token is tested
+    after percent decoding (repeated until it stops changing, at most 3 passes). A token
+    is replaced by `_ARTIFACT_LOCATION` when:
     - it contains `://` (any URL, with or without credentials);
     - it contains `@` and is longer than one character (a lone `@`, pip's
       `name @ url` separator, is kept), so `user:secret@host` and `ghp_x@host` match;
     - it contains a well-known token prefix (`ghp_`, `gho_`, `ghu_`, `ghs_`,
       `ghr_`, `github_pat_`, `glpat-`, `sk-`, `xoxb-`, `xoxp-`) followed by 8 or more of
-      `[A-Za-z0-9_-]`, at its start or after a non-alphanumeric character, so
-      `task-runner-12345678` is kept and `x=sk-...` is redacted;
-    - it holds a credential key (`password`, `passwd`, `pwd`, `secret`, `token`,
-      `api_key`, `apikey`, `api-key`, `access_token`, `auth`) followed by `=` or `:`,
-      not preceded by a letter or digit.
+      `[A-Za-z0-9_-]`, or a PyPI API token (`pypi-AgEIcHlwaS5vcmc` followed by more of
+      `[A-Za-z0-9_-]`), or an AWS access key id (`AKIA` or `ASIA` followed by exactly
+      16 of `[A-Z0-9]`), at its start or after a non-alphanumeric character, so
+      `task-runner-12345678`, `pypi-attestations` and `pypi-simple` are kept;
+    - it is a key token: after decoding and lowercasing, it ends with a credential key
+      name (`password`, `passwd`, `pwd`, `secret`, `token`, `apikey`, `api_key`,
+      `api-key`, `private_key`, `privatekey`, `access_key`, `accesskey`, `credential`,
+      `credentials`, `auth`) followed only by any of `"'=:,`, or it contains a key name
+      followed by an optional run of `"'` and then `=` or `:` with a non-empty value.
+      Leading `-"'{[(` never changes the result, so it is not stripped first.
+    Key values: a key token that carries its value is redacted itself. A key token with
+    no value also redacts the next token; when that next token is only separator
+    characters (`=`, `:`, quotes), it is redacted too and the token after it is redacted.
     Whitespace-split userinfo: a token with a `:` at index >= 1 that is not its last
     character and has no `@` marks a pending start. When a later token is redacted
     for its `@`, every token from the pending start through it is redacted too.
-    Split values: a credential key with an empty value (the token ends in `=`/`:`)
-    redacts the next token; a token equal to `Authorization:` or `Proxy-Authorization:`
-    redacts every remaining token on the line; a token equal to `Basic` or `Bearer`
-    redacts the next token.
+    A token equal to `Authorization:` or `Proxy-Authorization:` redacts every remaining
+    token on the line; a token equal to `Basic` or `Bearer` redacts the next token.
     All state resets at each line. Every regex is linear: no nested quantifiers and
     no regex scans across the whole line, so a 5 MB line is processed in linear time.
     """
     parts = _TOKEN_SPLIT.split(line)
     redact_next = False
+    separator_may_follow = False
     redact_rest = False
     pending: int | None = None
     for index in range(0, len(parts), 2):
@@ -245,23 +272,27 @@ def _redact_line(line: str) -> str:
         if redact_rest:
             parts[index] = _ARTIFACT_LOCATION
             continue
-        decoded = urllib.parse.unquote(token)
-        lowered = decoded.lower()
         redact = redact_next
-        redact_next = False
+        carry = separator_may_follow and redact and _SEPARATOR_TOKEN.match(token)
+        redact_next = bool(carry)
+        separator_may_follow = False
+        decoded = _decode(token)
+        lowered = decoded.lower()
         if lowered in _HEADER_NAMES:
             redact_rest = True
         elif lowered in _AUTH_SCHEMES:
             redact_next = True
-        key = _CREDENTIAL_KEY.search(decoded)
-        if key is not None and _EMPTY_CREDENTIAL_KEY.search(decoded) is not None:
+        key = _KEY_TAIL.search(lowered) is not None
+        if key:
             redact_next = True
+            separator_may_follow = True
+        key = key or _KEY_WITH_VALUE.search(lowered) is not None
         has_userinfo = "@" in decoded and len(decoded) > 1
         if (
             redact
             or has_userinfo
             or "://" in decoded
-            or key is not None
+            or key
             or _TOKEN_PREFIX.search(decoded) is not None
         ):
             parts[index] = _ARTIFACT_LOCATION
@@ -287,7 +318,8 @@ def _redacted_pip_output(*parts: bytes | str | None) -> str:
         )
         for part in parts
     )
-    return "".join(_redact_line(line) for line in text.splitlines(keepends=True))
+    # Only "\n" ends a line here; other separators are whitespace inside a line.
+    return "\n".join(_redact_line(line) for line in text.split("\n"))
 
 
 def isolated_pip(
