@@ -257,7 +257,7 @@ class CacheWheelTests(unittest.TestCase):
 
 
 class IsolatedPipTimeoutTests(unittest.TestCase):
-    def test_pip_timeout_is_bounded_and_leaks_no_child_output(self):
+    def test_pip_timeout_is_bounded_and_child_output_is_redacted(self):
         module = load_module()
         secret_output = b"https://user:secret@host/x"
         expired = subprocess.TimeoutExpired(
@@ -280,6 +280,7 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs.get("timeout"), 0.1)
         message = str(raised.exception)
         self.assertIn("0.1", message)
+        self.assertIn("<artifact-location>", message)
         self.assertNotIn("secret", message)
         self.assertNotIn("https://", message)
         self.assertIsNone(raised.exception.__cause__)
@@ -356,6 +357,47 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("re-run", message)
 
 
+class RedactionTests(unittest.TestCase):
+    CREDENTIAL_FORMS = (
+        "HTTPS://user:secret@h/x",
+        "git+ssh://user:secret@h/x",
+        "ftp://user:secret@h/x",
+        "user:secret@host/x",
+        "https://user:secret@h/x",
+        "file:///tmp/x.whl",
+    )
+
+    def test_every_credential_form_is_replaced_and_no_secret_survives(self):
+        module = load_module()
+        for form in self.CREDENTIAL_FORMS:
+            with self.subTest(form=form):
+                redacted = module._redacted_pip_output(f"Collecting x from {form}\n")
+                self.assertNotIn("secret", redacted)
+                self.assertIn("<artifact-location>", redacted)
+
+    def test_bare_url_token_is_replaced_whole(self):
+        module = load_module()
+        for form in self.CREDENTIAL_FORMS:
+            with self.subTest(form=form):
+                self.assertEqual(
+                    module._redacted_pip_output(form),
+                    "<artifact-location>",
+                )
+
+    def test_plain_pip_line_is_kept_unchanged(self):
+        module = load_module()
+        line = "Collecting pkg==1.0\n"
+        self.assertEqual(module._redacted_pip_output(line), line)
+
+    def test_bytes_and_none_parts_are_decoded_and_redacted(self):
+        module = load_module()
+        redacted = module._redacted_pip_output(
+            b"HTTPS://user:secret@h/x\n", None, "git+ssh://user:secret@h/y"
+        )
+        self.assertNotIn("secret", redacted)
+        self.assertEqual(redacted.count("<artifact-location>"), 2)
+
+
 class ReadOnlyBlocksResponse:
     """Fake response that implements only read1, so any call to read() fails loudly."""
 
@@ -388,7 +430,7 @@ class DownloadReadCallTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix", "the fake interpreter is a POSIX shell script")
 class RealStalledChildTests(unittest.TestCase):
-    def test_real_stalled_child_is_killed_and_its_output_is_not_leaked(self):
+    def test_real_stalled_child_is_killed_and_child_output_is_redacted(self):
         module = load_module()
         with tempfile.TemporaryDirectory() as directory:
             fake_interpreter = Path(directory) / "fake-python"
@@ -623,6 +665,45 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertFalse(self.plan_path.exists(), "partial plan must be removed")
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
 
+    def test_plan_cleanup_failures_still_remove_cache_and_name_the_plan(self):
+        def writing_cache(item, directory, download_deadline):
+            artifact = directory / "pkg-1.0-py3-none-any.whl"
+            artifact.write_bytes(b"wheel")
+            return {
+                "path": str(artifact),
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "name": "pkg",
+                "version": "1.0",
+            }
+
+        self._start(writing_cache, [BEFORE, BEFORE])
+        real_unlink = Path.unlink
+        plan_path = self.plan_path
+
+        def unlink_fails_for_plan_only(path, *args, **kwargs):
+            if path == plan_path:
+                raise PermissionError("locked by another process")
+            return real_unlink(path, *args, **kwargs)
+
+        with (
+            mock.patch.object(
+                self.module.json,
+                "dump",
+                side_effect=OSError("No space left on device"),
+            ),
+            mock.patch.object(Path, "unlink", unlink_fails_for_plan_only),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                self.module.plan(self.options)
+        message = str(raised.exception)
+        self.assertIn("No space left on device", message)
+        self.assertIn(f"Could not remove: {plan_path}", message)
+        self.assertIn("delete by hand", message)
+        self.assertNotIn("PermissionError", message)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertTrue(raised.exception.__suppress_context__)
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
     def test_cache_removal_failure_message_is_one_sentence(self):
         def failing_cache(item, directory, download_deadline):
             raise ValueError(
@@ -649,8 +730,9 @@ class PlanApplyHarnessTests(unittest.TestCase):
                 real_rmtree(leftover)
         message = str(raised.exception)
         self.assertNotIn(".;", message)
-        self.assertIn("nothing was installed or changed. The wheel cache", message)
-        self.assertIn("could not be removed", message)
+        self.assertIn("nothing was installed or changed. Could not remove:", message)
+        self.assertIn("-wheels-", message)
+        self.assertIn("delete by hand", message)
         # `from None` hides the chained OSError from the traceback.
         self.assertTrue(raised.exception.__suppress_context__)
         self.assertIsNone(raised.exception.__cause__)

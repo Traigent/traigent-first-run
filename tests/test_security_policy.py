@@ -54,6 +54,18 @@ class SecurityPolicyTests(unittest.TestCase):
         self.assertIn("`.github/workflows/`", scope)
         self.assertIn("`reports/`", scope)
 
+    def test_env_example_is_out_of_scope_only_as_placeholder_values(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        scope = policy[
+            policy.index("\n## Scope\n") : policy.index(
+                "\n## Reporting a vulnerability\n"
+            )
+        ]
+        mentions = [line for line in scope.splitlines() if ".env.example" in line]
+        self.assertTrue(mentions, "Scope should address .env.example")
+        for line in mentions:
+            self.assertIn("placeholder", line)
+
 
 if __name__ == "__main__":
     unittest.main()

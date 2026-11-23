@@ -189,8 +189,14 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
                 validate_uninstall_path(scripts / (name + suffix), prefix)
 
 
+# Any scheme (https, git+ssh, ftp, file, ...) in any letter case, up to whitespace.
+_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
+# Scheme-less userinfo such as user:secret@host, which pip also prints.
+_USERINFO_TOKEN = re.compile(r"\S+:\S+@\S+")
+
+
 def _redacted_pip_output(*parts: bytes | str | None) -> str:
-    """Join pip output, decoding bytes, and hide URLs that may carry credentials."""
+    """Join pip output, decoding bytes, and hide anything that may carry credentials."""
     text = "".join(
         (
             part.decode("utf-8", errors="replace")
@@ -199,7 +205,8 @@ def _redacted_pip_output(*parts: bytes | str | None) -> str:
         )
         for part in parts
     )
-    return re.sub(r"(?:https?|file)://\S+", "<artifact-location>", text)
+    text = _URL_TOKEN.sub("<artifact-location>", text)
+    return _USERINFO_TOKEN.sub("<artifact-location>", text)
 
 
 def isolated_pip(
@@ -583,17 +590,23 @@ def plan(options) -> dict:
             # Any failure after the cache exists must leave no cache behind, since each
             # retry would add one. A plan file this call created is removed too: a
             # partial write would otherwise make every retry fail with "Plan already
-            # exists".
+            # exists". Each removal is attempted even if the other fails, so one
+            # locked path never leaves the other behind or hides the original error.
+            left_behind = []
             if created_plan:
-                plan_path.unlink(missing_ok=True)
+                try:
+                    plan_path.unlink(missing_ok=True)
+                except OSError:
+                    left_behind.append(str(plan_path))
             try:
                 shutil.rmtree(cache)
             except OSError:
-                if isinstance(error, Exception):
-                    raise ValueError(
-                        f"{str(error).rstrip('.')}. The wheel cache {cache} could not "
-                        "be removed; delete it by hand."
-                    ) from None
+                left_behind.append(str(cache))
+            if left_behind and isinstance(error, Exception):
+                raise ValueError(
+                    f"{str(error).rstrip('.')}. Could not remove: "
+                    f"{', '.join(left_behind)}; delete by hand."
+                ) from None
             raise
     return {"plan": str(plan_path), "plan_sha256": ENV.file_digest(plan_path), **card}
 

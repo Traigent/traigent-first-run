@@ -6,8 +6,8 @@ push cancels the older run. Trunk pushes get a group of their own, keyed by run
 id, so no other trunk push and no unmodified pull request run can replace or
 cancel them: GitHub replaces a pending run in a shared group even when
 `cancel-in-progress` is false. A pull request that edits this workflow runs its
-own copy and could name a trunk run's group to cancel it; that costs a re-run of
-the trunk run and exposes nothing.
+own copy and could name another run's group, another pull request's or a trunk
+run's, to cancel it; that costs a re-run and exposes nothing.
 """
 
 import importlib.util
