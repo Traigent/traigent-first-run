@@ -201,10 +201,11 @@ _KEY_NAMES = (
     r"|privatekey|access_key|accesskey|credentials?|auth)"
 )
 # A bare key: the whole decoded token is the key, optionally after leading "-\"'{[("
-# and an underscore-joined or camelCase prefix, followed only by separators or quotes.
-# A hyphen-joined prefix is a package name (`google-auth`), not a key.
+# and a prefix of letters, digits and underscores that ends in "_" or a camelCase
+# boundary (`client_secret`, `AWS_SECRET_ACCESS_KEY`, `apiToken`), followed only by
+# separators or quotes. A hyphen-joined prefix is a package name (`google-auth`).
 _KEY_TAIL = re.compile(
-    r"[-\"'{\[(]*(?:[A-Za-z0-9]*_|[A-Za-z0-9]*[a-z0-9](?=[A-Z]))?"
+    r"[-\"'{\[(]*(?:[A-Za-z0-9_]*_|[A-Za-z0-9_]*[a-z0-9](?=[A-Z]))?"
     + _KEY_NAMES
     + r"[\"'=:,]*\Z"
 )
@@ -260,8 +261,9 @@ def _redact_line(line: str) -> str:
       camelCase is seen). Key names: `password`, `passwd`, `pwd`, `secret`, `token`,
       `apikey`, `api_key`, `api-key`, `private_key`, `privatekey`, `access_key`,
       `accesskey`, `credential(s)`, `auth`.
-      - Bare key: the whole token is the key, optionally after leading `-"'{[(` and
-        after an underscore-joined or camelCase prefix (`client_secret`, `apiToken`),
+      - Bare key: the whole token is the key name, optionally after leading `-"'{[(`
+        and a prefix of letters, digits and underscores that ends in `_` or at a
+        camelCase boundary (`client_secret`, `AWS_SECRET_ACCESS_KEY`, `apiToken`),
         followed only by any of `"'=:,`. A hyphen-joined prefix is a package name, so
         `tiktoken`, `google-auth` and `pkg-token` are not keys.
       - Key with value: the key name starts the token, follows a non-alphanumeric
@@ -269,22 +271,29 @@ def _redact_line(line: str) -> str:
         then `=` or `:`, then a non-empty value. `=` followed by `=` is a pip version
         pin (`tiktoken==0.8.0`), not a separator, so it is not a value.
       - Key ending in a separator: the same key start, then an optional run of `"'`
-        and `=` or `:` ending the token (`my-token=`, `user:password:`). Its value is
-        the next token, which is redacted as for a bare key.
-    Key values: a key token that carries its value is redacted itself. A key token with
-    no value also redacts the next token; when that next token is only separator
-    characters (`=`, `:`, quotes), it is redacted too and the token after it is redacted.
+        and `=` or `:` ending the token (`my-token=`, `user:password:`).
+    A key name is not a secret, so a bare key token is kept unchanged and only its
+    value is redacted:
+    - a bare key that ends in `=` or `:` (after any quotes), or starts with `-`
+      (option form), redacts the next token (`my-token= S3CRET`, `--password S3CRET`,
+      `"password": "S3CRET"`);
+    - any other bare key (a plain word such as `password` or `Credentials`) redacts
+      the next token only when that token is separator-only (`=`, `:`, quotes). The
+      separator is kept and the token after it is redacted (`password = S3CRET`).
+      Otherwise the next token is left alone (`Saving credentials to keyring`);
+    - a key token that carries its value in the same token (`password=S3CRET`,
+      `"token":"S3CRET"`) is replaced whole.
     Whitespace-split userinfo: a token with a `:` at index >= 1 that is not its last
     character and has no `@` marks a pending start. When a later token is redacted
     for its `@`, every token from the pending start through it is redacted too.
     A token equal to `Authorization:` or `Proxy-Authorization:` redacts every remaining
     token on the line; a token equal to `Basic` or `Bearer` redacts the next token.
     All state resets at each line. Every regex is linear: no nested quantifiers and
-    no regex scans across the whole line, so a 5 MB line is processed in linear time.
+    no regex scans across the whole line, so a long line is processed in linear time.
     """
     parts = _TOKEN_SPLIT.split(line)
     redact_next = False
-    separator_may_follow = False
+    separator_pending = False
     redact_rest = False
     pending: int | None = None
     for index in range(0, len(parts), 2):
@@ -295,28 +304,40 @@ def _redact_line(line: str) -> str:
             parts[index] = _ARTIFACT_LOCATION
             continue
         redact = redact_next
-        carry = separator_may_follow and redact and _SEPARATOR_TOKEN.match(token)
-        redact_next = bool(carry)
-        separator_may_follow = False
+        redact_next = False
         decoded = _decode(token)
         lowered = decoded.lower()
         if lowered in _HEADER_NAMES:
             redact_rest = True
         elif lowered in _AUTH_SCHEMES:
             redact_next = True
-        key = _KEY_TAIL.match(decoded) is not None
+        if separator_pending:
+            separator_pending = False
+            # `password = S3CRET`: the separator after a bare key word is kept and the
+            # value after it is redacted. A redacted separator is still replaced.
+            if _SEPARATOR_TOKEN.match(token):
+                redact_next = True
+                if not redact:
+                    continue
+        # A bare key name carries no secret, so it is kept and only its value goes.
         # `_KEY_ASSIGN_END` can only match a token that ends in "=" or ":"; the check
         # skips its search for the other tokens, which are nearly all of a pip line.
-        if key or (
-            decoded.endswith(("=", ":")) and _KEY_ASSIGN_END.search(decoded) is not None
-        ):
-            key = True
-            redact_next = True
-            separator_may_follow = True
-        key = key or (
-            ("=" in decoded or ":" in decoded)
-            and _KEY_WITH_VALUE.search(decoded) is not None
-        )
+        bare_key = _KEY_TAIL.match(decoded) is not None
+        if not bare_key and decoded.endswith(("=", ":")):
+            bare_key = _KEY_ASSIGN_END.search(decoded) is not None
+        if bare_key:
+            if decoded.rstrip("\"'").endswith(("=", ":")) or (
+                decoded.lstrip("\"'{[(").startswith("-")
+            ):
+                redact_next = True
+            else:
+                separator_pending = True
+            key = False
+        else:
+            # A key with its value in the same token is replaced whole.
+            key = ("=" in decoded or ":" in decoded) and (
+                _KEY_WITH_VALUE.search(decoded) is not None
+            )
         has_userinfo = "@" in decoded and len(decoded) > 1
         if (
             redact
@@ -892,6 +913,9 @@ def _run_plan_handling_termination(options) -> dict:
     so plan()'s BaseException cleanup never runs and partial wheels stay behind.
     Raising SystemExit(128 + signum) unwinds exactly like Ctrl-C and keeps the
     conventional exit status. Handlers can only be set from the main thread.
+
+    A signal whose disposition is already SIG_IGN is left alone: `nohup` starts the
+    process with SIGHUP ignored, and that choice must survive the plan.
     """
     if threading.current_thread() is not threading.main_thread():
         return plan(options)
@@ -903,6 +927,8 @@ def _run_plan_handling_termination(options) -> dict:
     previous = {}
     try:
         for signum in filter(None, signums):
+            if signal.getsignal(signum) is signal.SIG_IGN:
+                continue
             previous[signum] = signal.signal(signum, terminate)
         return plan(options)
     finally:

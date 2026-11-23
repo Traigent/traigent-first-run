@@ -9,9 +9,11 @@ a stalled name lookup cannot be interrupted.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import http.client
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -774,6 +776,45 @@ class RedactionTests(unittest.TestCase):
                 self.assertNotIn("RET", redacted)
                 self.assertIn("<artifact-location>", redacted)
 
+    def test_underscore_joined_key_prefixes_of_any_length_are_redacted(self):
+        module = load_module()
+        cases = {
+            "MY_DB_PASSWORD = S3CRET": "MY_DB_PASSWORD = <artifact-location>",
+            "AWS_SECRET_ACCESS_KEY = S3CRET": (
+                "AWS_SECRET_ACCESS_KEY = <artifact-location>"
+            ),
+            "GITHUB_API_TOKEN = S3CRET": "GITHUB_API_TOKEN = <artifact-location>",
+            "my_dbPassword = S3CRET": "my_dbPassword = <artifact-location>",
+        }
+        for line, want in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(module._redacted_pip_output(line + "\n"), want + "\n")
+
+    def test_hyphen_joined_prefixes_are_package_names_not_keys(self):
+        module = load_module()
+        for line in ("google-auth S3CRET", "pkg-token S3CRET", "tiktoken S3CRET"):
+            with self.subTest(line=line):
+                self.assertEqual(module._redacted_pip_output(line), line)
+
+    def test_key_name_alone_keeps_the_key_and_redacts_only_the_value(self):
+        module = load_module()
+        cases = {
+            "401 Error, Credentials not correct for https://h/simple/": (
+                "401 Error, Credentials not correct for <artifact-location>"
+            ),
+            "Saving credentials to keyring": "Saving credentials to keyring",
+            "password = S3CRET": "password = <artifact-location>",
+            "token : S3CRET": "token : <artifact-location>",
+            "--password S3CRET": "--password <artifact-location>",
+            '{"password": "S3CRET"}': '{"password": <artifact-location>',
+            '"token":"S3CRET"': "<artifact-location>",
+            "apiToken=S3CRET": "<artifact-location>",
+            "my-token= S3CRET": "my-token= <artifact-location>",
+        }
+        for line, want in cases.items():
+            with self.subTest(line=line):
+                self.assertEqual(module._redacted_pip_output(line + "\n"), want + "\n")
+
     def test_authorization_header_redacts_every_remaining_token_on_its_line(self):
         # Digest and Negotiate are not in the Basic/Bearer scheme list, so only
         # the header-name rule (redact_rest) can hide their credential tokens.
@@ -861,29 +902,33 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("secret", redacted)
         self.assertIn("<artifact-location>", redacted)
 
-    def test_five_megabyte_mixed_credential_line_is_linear(self):
+    def test_one_megabyte_mixed_credential_line_is_linear(self):
+        # About 1 MB: quadratic work at this size is already ~10^12 steps, so a
+        # linear-vs-quadratic check needs no more, and 1.0 s stays a wide margin.
         text = (
-            ("a%3A" * 300000)
-            + ("password= " * 200000)
-            + ("Bearer " * 200000)
-            + ("ghp_" * 300000)
+            ("a%3A" * 60000)
+            + ("password= " * 40000)
+            + ("Bearer " * 40000)
+            + ("ghp_" * 60000)
         )
-        self.assertGreaterEqual(len(text), 5_000_000)
+        self.assertGreaterEqual(len(text), 1_000_000)
         redacted = self.assertRedactsQuickly(text)
-        self.assertNotIn("a%3A", redacted)
+        # The glued `a%3Apassword=` is a bare key name, which is kept; each value
+        # after a `password=` key is redacted, so no `password=` run survives.
+        self.assertNotIn("password= password=", redacted)
         self.assertNotIn("ghp_", redacted)
 
-    def test_five_megabyte_line_mixing_spaced_option_encoded_separator_and_aws_is_linear(
+    def test_one_megabyte_line_mixing_spaced_option_encoded_separator_and_aws_is_linear(
         self,
     ):
         text = (
-            ('"password" = LEAK ' * 80000)
-            + ("password%253DLEAK " * 80000)
-            + ("--token LEAK " * 120000)
-            + ("user:LEAK\x0bX@host " * 40000)
-            + ("AKIAABCDEFGHIJKLMNOP " * 20000)
+            ('"password" = LEAK ' * 16000)
+            + ("password%253DLEAK " * 16000)
+            + ("--token LEAK " * 24000)
+            + ("user:LEAK\x0bX@host " * 8000)
+            + ("AKIAABCDEFGHIJKLMNOP " * 4000)
         )
-        self.assertGreaterEqual(len(text), 5_000_000)
+        self.assertGreaterEqual(len(text), 1_000_000)
         redacted = self.assertRedactsQuickly(text)
         self.assertNotIn("LEAK", redacted)
         self.assertNotIn("AKIAABCDEFGHIJKLMNOP", redacted)
@@ -1361,6 +1406,28 @@ class PlanSignalExitTests(unittest.TestCase):
     @unittest.skipUnless(hasattr(signal, "SIGHUP"), "SIGHUP is POSIX-only")
     def test_sighup_during_plan_exits_129_and_restores_handler(self):
         self.assertEqual(self._exit_code_after_signal(signal.SIGHUP), 129)
+
+    @unittest.skipUnless(hasattr(signal, "SIGHUP"), "SIGHUP is POSIX-only")
+    def test_inherited_ignored_sighup_is_kept_so_nohup_plan_survives(self):
+        # `nohup` starts the process with SIGHUP ignored; plan must not turn that
+        # into a handler that aborts it.
+        module = load_module()
+        previous = signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        self.addCleanup(signal.signal, signal.SIGHUP, previous)
+
+        def plan_sends_hangup(options):
+            os.kill(os.getpid(), signal.SIGHUP)
+            return {"status": "already-satisfied"}
+
+        argv = ["plan", "--candidate", "c", "--requirements", "r", "--plan", "p"]
+        with (
+            mock.patch.object(module, "require_isolation"),
+            mock.patch.object(module, "plan", side_effect=plan_sends_hangup),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            code = module.main(argv)
+        self.assertEqual(code, 0)
+        self.assertIs(signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
 
 
 if __name__ == "__main__":
