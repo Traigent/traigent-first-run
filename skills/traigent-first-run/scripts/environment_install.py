@@ -381,17 +381,27 @@ def _redact_line(line: str) -> str:
 
 
 def _redacted_pip_output(*parts: bytes | str | None) -> str:
-    """Join pip output, decoding bytes, and hide anything that may carry credentials."""
-    text = "".join(
-        (
+    """Decode and redact each stream separately, then join them line-wise.
+
+    Redacting the parts one at a time keeps a stream that ends mid-line from fusing
+    with the next stream's first token, which the key rules need a boundary to see.
+    A single "\\n" is added between two non-empty parts only when the earlier one does
+    not already end with one.
+    """
+    pieces: list[str] = []
+    for part in parts:
+        text = (
             part.decode("utf-8", errors="replace")
             if isinstance(part, bytes)
             else part or ""
         )
-        for part in parts
-    )
-    # Only "\n" ends a line here; other separators are whitespace inside a line.
-    return "\n".join(_redact_line(line) for line in text.split("\n"))
+        if not text:
+            continue
+        if pieces and not pieces[-1].endswith("\n"):
+            pieces.append("\n")
+        # Only "\n" ends a line here; other separators are whitespace inside a line.
+        pieces.append("\n".join(_redact_line(line) for line in text.split("\n")))
+    return "".join(pieces)
 
 
 def isolated_pip(
@@ -825,55 +835,61 @@ def plan(options) -> dict:
             raise ValueError(
                 "Environment changed during resolution; create a fresh plan"
             )
-        cache = Path(
-            tempfile.mkdtemp(prefix=plan_path.stem + "-wheels-", dir=plan_path.parent)
-        )
-        download_deadline = time.monotonic() + PLAN_DOWNLOAD_DEADLINE_SECONDS
-        created_plan = False
-        try:
-            artifacts = [
-                cache_wheel(item, cache, download_deadline)
-                for item in report["install"]
-            ]
-            document = {
-                "schema": 1,
-                "candidate": str(candidate),
-                "identity": before["identity"],
-                "requirements": str(options.requirements.resolve()),
-                "requirements_sha256": ENV.file_digest(options.requirements),
-                "new": card["new"],
-                "changes": card["changes"],
-                "artifacts": artifacts,
-            }
-            with plan_path.open("x", encoding="utf-8") as stream:
-                # Set only once open("x") has succeeded, so a FileExistsError from
-                # another run never leads to unlinking that run's plan.
-                created_plan = True
-                json.dump(document, stream, indent=2, sort_keys=True)
-                stream.write("\n")
-        except BaseException as error:
-            # Any failure after the cache exists must leave no cache behind, since each
-            # retry would add one. A plan file this call created is removed too: a
-            # partial write would otherwise make every retry fail with "Plan already
-            # exists". Each removal is attempted even if the other fails, so one
-            # locked path never leaves the other behind or hides the original error.
-            left_behind = []
-            if created_plan:
-                try:
-                    plan_path.unlink(missing_ok=True)
-                except OSError:
-                    left_behind.append(str(plan_path))
+    # Everything from the cache onward runs inside the cleanup try below, so a signal
+    # at any later point removes the cache and any plan file this call wrote.
+    cache = Path(
+        tempfile.mkdtemp(prefix=plan_path.stem + "-wheels-", dir=plan_path.parent)
+    )
+    download_deadline = time.monotonic() + PLAN_DOWNLOAD_DEADLINE_SECONDS
+    created_plan = False
+    try:
+        artifacts = [
+            cache_wheel(item, cache, download_deadline) for item in report["install"]
+        ]
+        document = {
+            "schema": 1,
+            "candidate": str(candidate),
+            "identity": before["identity"],
+            "requirements": str(options.requirements.resolve()),
+            "requirements_sha256": ENV.file_digest(options.requirements),
+            "new": card["new"],
+            "changes": card["changes"],
+            "artifacts": artifacts,
+        }
+        with plan_path.open("x", encoding="utf-8") as stream:
+            # Set only once open("x") has succeeded, so a FileExistsError from
+            # another run never leads to unlinking that run's plan.
+            created_plan = True
+            json.dump(document, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+        result = {
+            "plan": str(plan_path),
+            "plan_sha256": ENV.file_digest(plan_path),
+            **card,
+        }
+    except BaseException as error:
+        # Any failure after the cache exists must leave no cache behind, since each
+        # retry would add one. A plan file this call created is removed too: a
+        # partial write would otherwise make every retry fail with "Plan already
+        # exists". Each removal is attempted even if the other fails, so one
+        # locked path never leaves the other behind or hides the original error.
+        left_behind = []
+        if created_plan:
             try:
-                shutil.rmtree(cache)
+                plan_path.unlink(missing_ok=True)
             except OSError:
-                left_behind.append(str(cache))
-            if left_behind and isinstance(error, Exception):
-                raise ValueError(
-                    f"{str(error).rstrip('.')}. Could not remove: "
-                    f"{', '.join(left_behind)}; delete by hand."
-                ) from None
-            raise
-    return {"plan": str(plan_path), "plan_sha256": ENV.file_digest(plan_path), **card}
+                left_behind.append(str(plan_path))
+        try:
+            shutil.rmtree(cache)
+        except OSError:
+            left_behind.append(str(cache))
+        if left_behind and isinstance(error, Exception):
+            raise ValueError(
+                f"{str(error).rstrip('.')}. Could not remove: "
+                f"{', '.join(left_behind)}; delete by hand."
+            ) from None
+        raise
+    return result
 
 
 def apply(options) -> dict:

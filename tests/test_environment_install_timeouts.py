@@ -41,10 +41,10 @@ spec = importlib.util.spec_from_file_location("environment_install_under_test", 
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 text = sys.stdin.read()
-started = time.monotonic()
+started = time.process_time()
 redacted = module._redacted_pip_output(text)
-elapsed = time.monotonic() - started
-sys.stdout.write(json.dumps({"elapsed": elapsed, "redacted": redacted}))
+cpu_seconds = time.process_time() - started
+sys.stdout.write(json.dumps({"cpu_seconds": cpu_seconds, "redacted": redacted}))
 """
 
 
@@ -625,6 +625,35 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("u:p", message)
         self.assertIsNone(raised.exception.__context__)
 
+    def test_stalled_stdout_without_newline_does_not_fuse_with_stderr_secret(self):
+        # pip's stdout ends mid-line; the stderr token must stay a token boundary
+        # apart, or the key rule misses `password=` and the value leaks.
+        module = load_module()
+        expired = subprocess.TimeoutExpired(
+            cmd=["pip"],
+            timeout=0.1,
+            output=b"Collecting foo",
+            stderr=b"password=S3CRET",
+        )
+        with (
+            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
+            mock.patch.object(module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "--dry-run", "x"],
+                    Path("/tmp"),
+                    changes_environment=False,
+                )
+        message = str(raised.exception)
+        self.assertIn("Collecting foo\n<artifact-location>", message)
+        self.assertNotIn("S3CRET", message)
+        self.assertIsNone(raised.exception.__context__)
+
     def test_plan_timeout_reports_that_nothing_changed(self):
         message = self._pip_timeout_message(changes_environment=False)
         self.assertIn("nothing was installed or changed", message)
@@ -882,6 +911,21 @@ class RedactionTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(module._redacted_pip_output(line), line)
 
+    def test_parts_are_redacted_separately_so_streams_do_not_fuse(self):
+        module = load_module()
+        for parts in (
+            ("Collecting foo", "password=S3CRET\n"),
+            ("Collecting foo", "token= S3CRETX"),
+        ):
+            with self.subTest(parts=parts):
+                self.assertNotIn("S3CRET", module._redacted_pip_output(*parts))
+
+    def test_parts_join_with_one_newline_only_where_none_exists(self):
+        module = load_module()
+        self.assertEqual(module._redacted_pip_output("a\n", "b\n"), "a\nb\n")
+        self.assertEqual(module._redacted_pip_output("a", None, "b"), "a\nb")
+        self.assertEqual(module._redacted_pip_output("a", "", "b\n"), "a\nb\n")
+
     def test_redaction_keeps_line_endings_and_other_lines_exactly(self):
         module = load_module()
         text = "Collecting pkg==1.0\r\npassword=S3CRET\nDownloading pkg-1.0.whl\n"
@@ -909,8 +953,9 @@ class RedactionTests(unittest.TestCase):
             f"redaction child failed: {completed.stderr}",
         )
         result = json.loads(completed.stdout)
-        elapsed = result["elapsed"]
-        self.assertLess(elapsed, 1.0, f"redaction took {elapsed:.2f}s")
+        # CPU time, not wall time: load on the host must not fail a linear-time check.
+        cpu_seconds = result["cpu_seconds"]
+        self.assertLess(cpu_seconds, 1.0, f"redaction used {cpu_seconds:.2f}s of CPU")
         return result["redacted"]
 
     def test_long_colon_token_without_at_is_linear_and_unchanged(self):
@@ -1261,6 +1306,38 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertNotIn("PermissionError", message)
         self.assertIsNone(raised.exception.__cause__)
         self.assertTrue(raised.exception.__suppress_context__)
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    def test_interrupt_after_plan_written_removes_plan_and_cache(self):
+        # The plan digest is computed after the plan file is written; a signal there
+        # must still clean up the plan and the wheel cache.
+        real_digest = self.module.ENV.file_digest
+        plan_path = self.plan_path
+
+        def digest_interrupted_on_plan(path, *args, **kwargs):
+            if Path(path) == plan_path:
+                raise KeyboardInterrupt
+            return real_digest(path, *args, **kwargs)
+
+        def cache_one_wheel(item, directory, download_deadline):
+            artifact = directory / "pkg-1.0-py3-none-any.whl"
+            artifact.write_bytes(b"wheel")
+            return {
+                "path": str(artifact),
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "name": "pkg",
+                "version": "1.0",
+            }
+
+        self._start(cache_one_wheel, [BEFORE, BEFORE])
+        with (
+            mock.patch.object(
+                self.module.ENV, "file_digest", side_effect=digest_interrupted_on_plan
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            self.module.plan(self.options)
+        self.assertFalse(self.plan_path.exists())
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
 
     def test_cache_removal_failure_message_is_one_sentence(self):
