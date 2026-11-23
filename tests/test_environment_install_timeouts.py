@@ -697,6 +697,22 @@ class RedactionTests(unittest.TestCase):
                     module._redacted_pip_output(f"Collecting {form}\n"), want
                 )
 
+    def test_authorization_header_redacts_every_remaining_token_on_its_line(self):
+        # Digest and Negotiate are not in the Basic/Bearer scheme list, so only
+        # the header-name rule (redact_rest) can hide their credential tokens.
+        module = load_module()
+        lines = (
+            'Authorization: Digest username="alice", response="S3CRET"\n',
+            "Proxy-Authorization: Negotiate S3CRETPART1 S3CRETPART2\n",
+        )
+        for line in lines:
+            with self.subTest(line=line):
+                redacted = module._redacted_pip_output(line)
+                self.assertNotIn("S3CRET", redacted)
+                self.assertNotIn("alice", redacted)
+                header = line.split(":", 1)[0] + ":"
+                self.assertIn(header, redacted)
+
     def test_lines_pip_prints_for_normal_work_are_unchanged(self):
         module = load_module()
         lines = (
