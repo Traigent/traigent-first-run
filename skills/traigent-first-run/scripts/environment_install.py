@@ -18,6 +18,7 @@ import importlib.util
 import json
 import ntpath
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -188,6 +189,19 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
                 validate_uninstall_path(scripts / (name + suffix), prefix)
 
 
+def _redacted_pip_output(*parts: bytes | str | None) -> str:
+    """Join pip output, decoding bytes, and hide URLs that may carry credentials."""
+    text = "".join(
+        (
+            part.decode("utf-8", errors="replace")
+            if isinstance(part, bytes)
+            else part or ""
+        )
+        for part in parts
+    )
+    return re.sub(r"(?:https?|file)://\S+", "<artifact-location>", text)
+
+
 def isolated_pip(
     candidate: Path, arguments: list[str], working: Path, *, changes_environment: bool
 ) -> None:
@@ -202,6 +216,7 @@ def isolated_pip(
         if not key.startswith(("PYTHON", "PIP_", "LD_", "DYLD_"))
     }
     environment["PIP_CONFIG_FILE"] = os.devnull
+    stalled_output = None
     try:
         result = subprocess.run(
             [
@@ -223,34 +238,32 @@ def isolated_pip(
             check=False,
             timeout=PIP_TIMEOUT_SECONDS,
         )
-    except subprocess.TimeoutExpired:
-        timed_out = True
-    else:
-        timed_out = False
-    if timed_out:
-        # Raised outside the except block so no __context__ holds TimeoutExpired.output,
-        # which can carry index URLs with credentials. Child output is omitted here.
+    except subprocess.TimeoutExpired as expired:
+        # Only the redacted text is kept. The raise sits outside this block so no
+        # __context__ holds TimeoutExpired, whose output can carry index credentials.
+        stalled_output = _redacted_pip_output(expired.stdout, expired.stderr)
+    if stalled_output is not None:
+        # Partial pip output is the diagnostic the guide asks to quote.
+        detail = (
+            f"\npip output before it was stopped:\n{stalled_output}"
+            if stalled_output
+            else ""
+        )
         if changes_environment:
             raise ValueError(
                 f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound "
                 "during apply; the environment may be partly changed. Stop and inspect "
-                "it before any further change."
+                "it before any further change." + detail
             )
         raise ValueError(
             f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound; "
             "nothing was installed or changed. The network or dependency resolution "
-            "stalled."
+            "stalled." + detail
         )
     if result.returncode:
         # pip may include index credentials in verbose diagnostics. Retain only
         # URL-redacted output in the error that the approval workflow displays.
-        import re
-
-        output = re.sub(
-            r"(?:https?|file)://\S+",
-            "<artifact-location>",
-            result.stdout + result.stderr,
-        )
+        output = _redacted_pip_output(result.stdout, result.stderr)
         raise ValueError(
             "Isolated pip failed; inspect the target before retrying:\n" + output
         )
@@ -387,10 +400,14 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     purpose: it is a daemon, it writes nothing once abandoned, and the caller
     reports the stall and the script exits.
     """
-    message = (
-        "Wheel download stalled: exceeded the plan download deadline "
-        f"({PLAN_DOWNLOAD_DEADLINE_SECONDS}s for all wheels) or the {read_timeout:g}s "
-        "read timeout; nothing was installed or changed."
+    deadline_message = (
+        "Wheel download stalled: the plan download deadline "
+        f"({PLAN_DOWNLOAD_DEADLINE_SECONDS}s for all wheels) ran out; "
+        "nothing was installed or changed."
+    )
+    read_message = (
+        "Wheel download stalled: the server sent nothing for "
+        f"{read_timeout:g}s; nothing was installed or changed."
     )
     # Opened before the worker starts: a FileExistsError must not unlink a file this
     # call did not create.
@@ -417,7 +434,7 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         abandoned.set()
         stream.close()
         target.unlink(missing_ok=True)
-        raise ValueError(message)
+        raise ValueError(deadline_message)
     stream.close()
     if not failures:
         return
@@ -428,7 +445,7 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         and isinstance(error.reason, TimeoutError)
     )
     if timed_out:
-        raise ValueError(message) from None
+        raise ValueError(read_message) from None
     raise error
 
 
@@ -540,6 +557,7 @@ def plan(options) -> dict:
             tempfile.mkdtemp(prefix=plan_path.stem + "-wheels-", dir=plan_path.parent)
         )
         download_deadline = time.monotonic() + PLAN_DOWNLOAD_DEADLINE_SECONDS
+        created_plan = False
         try:
             artifacts = [
                 cache_wheel(item, cache, download_deadline)
@@ -556,17 +574,25 @@ def plan(options) -> dict:
                 "artifacts": artifacts,
             }
             with plan_path.open("x", encoding="utf-8") as stream:
+                # Set only once open("x") has succeeded, so a FileExistsError from
+                # another run never leads to unlinking that run's plan.
+                created_plan = True
                 json.dump(document, stream, indent=2, sort_keys=True)
                 stream.write("\n")
         except BaseException as error:
-            # Any failure after the cache exists leaves no cache behind: the plan was
-            # not written, so the wheels are unreferenced, and each retry would add one.
+            # Any failure after the cache exists must leave no cache behind, since each
+            # retry would add one. A plan file this call created is removed too: a
+            # partial write would otherwise make every retry fail with "Plan already
+            # exists".
+            if created_plan:
+                plan_path.unlink(missing_ok=True)
             try:
                 shutil.rmtree(cache)
             except OSError:
                 if isinstance(error, Exception):
                     raise ValueError(
-                        f"{error}; the wheel cache {cache} could not be removed"
+                        f"{str(error).rstrip('.')}. The wheel cache {cache} could not "
+                        "be removed; delete it by hand."
                     ) from None
             raise
     return {"plan": str(plan_path), "plan_sha256": ENV.file_digest(plan_path), **card}

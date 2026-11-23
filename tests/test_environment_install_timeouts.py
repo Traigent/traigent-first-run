@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -132,7 +133,8 @@ class DownloadDeadlineTests(ServerFixture):
                 module._download(url, target, read_timeout=0.5, deadline=30)
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 5, "per-read timeout did not bound the stall")
-            self.assertIn("stalled", str(raised.exception))
+            self.assertIn("the server sent nothing for 0.5s", str(raised.exception))
+            self.assertNotIn("ran out", str(raised.exception))
             self.assertIn("nothing was installed or changed", str(raised.exception))
             self.assertNotIn("retry", str(raised.exception))
             self.assertFalse(target.exists(), "partial wheel must be removed")
@@ -147,7 +149,9 @@ class DownloadDeadlineTests(ServerFixture):
                 module._download(url, target, read_timeout=1, deadline=1.5)
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 4, "slow drip was not bounded by the deadline")
-            self.assertIn("stalled", str(raised.exception))
+            self.assertIn("the plan download deadline", str(raised.exception))
+            self.assertIn("ran out", str(raised.exception))
+            self.assertNotIn("the server sent nothing", str(raised.exception))
             self.assertFalse(target.exists())
 
     def test_header_drip_is_bounded_by_overall_deadline(self):
@@ -160,7 +164,8 @@ class DownloadDeadlineTests(ServerFixture):
                 module._download(url, target, read_timeout=1, deadline=1.5)
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 4, "header drip ran past the overall deadline")
-            self.assertIn("stalled", str(raised.exception))
+            self.assertIn("ran out", str(raised.exception))
+            self.assertNotIn("the server sent nothing", str(raised.exception))
             self.assertFalse(target.exists())
 
     def test_slow_name_lookup_is_bounded_by_overall_deadline(self):
@@ -183,7 +188,8 @@ class DownloadDeadlineTests(ServerFixture):
                     )
                 elapsed = time.monotonic() - started
             self.assertLess(elapsed, 3, "DNS lookup ran past the overall deadline")
-            self.assertIn("stalled", str(raised.exception))
+            self.assertIn("ran out", str(raised.exception))
+            self.assertNotIn("the server sent nothing", str(raised.exception))
             self.assertFalse(target.exists())
 
     def test_connect_timeout_maps_to_stalled_message_without_partial_file(self):
@@ -198,7 +204,8 @@ class DownloadDeadlineTests(ServerFixture):
                     module._download(
                         "http://127.0.0.1:9/x.whl", target, read_timeout=0.5, deadline=5
                     )
-            self.assertIn("stalled", str(raised.exception))
+            self.assertIn("the server sent nothing for 0.5s", str(raised.exception))
+            self.assertNotIn("ran out", str(raised.exception))
             self.assertFalse(target.exists())
 
 
@@ -304,6 +311,33 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("https://", message)
         return message
 
+    def test_pip_timeout_bytes_output_is_decoded_and_redacted(self):
+        module = load_module()
+        expired = subprocess.TimeoutExpired(
+            cmd=["pip"],
+            timeout=0.1,
+            output=b"Collecting x from https://u:p@h/x\n",
+            stderr=b"",
+        )
+        with (
+            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
+            mock.patch.object(module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "--dry-run", "x"],
+                    Path("/tmp"),
+                    changes_environment=False,
+                )
+        message = str(raised.exception)
+        self.assertIn("Collecting x from <artifact-location>", message)
+        self.assertNotIn("u:p", message)
+        self.assertIsNone(raised.exception.__context__)
+
     def test_plan_timeout_reports_that_nothing_changed(self):
         message = self._pip_timeout_message(changes_environment=False)
         self.assertIn("nothing was installed or changed", message)
@@ -383,6 +417,7 @@ class RealStalledChildTests(unittest.TestCase):
         self.assertLess(elapsed, 10, "stalled child was not killed at the bound")
         self.assertIn("Installer stalled", str(raised.exception))
         self.assertNotIn("secret", str(raised.exception))
+        self.assertIn("<artifact-location>", str(raised.exception))
         self.assertIsNone(
             raised.exception.__context__, "secret-bearing exception must not be chained"
         )
@@ -562,6 +597,63 @@ class PlanApplyHarnessTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.module.plan(self.options)
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+        # The other run's plan is not this call's file: it must be left untouched.
+        self.assertEqual(self.plan_path.read_text(encoding="utf-8"), "concurrent")
+
+    def test_plan_write_failure_removes_partial_plan_and_wheels(self):
+        def writing_cache(item, directory, download_deadline):
+            artifact = directory / "pkg-1.0-py3-none-any.whl"
+            artifact.write_bytes(b"wheel")
+            return {
+                "path": str(artifact),
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "name": "pkg",
+                "version": "1.0",
+            }
+
+        self._start(writing_cache, [BEFORE, BEFORE])
+        with mock.patch.object(
+            self.module.json,
+            "dump",
+            side_effect=OSError("No space left on device"),
+        ):
+            with self.assertRaises(OSError) as raised:
+                self.module.plan(self.options)
+        self.assertIn("No space left on device", str(raised.exception))
+        self.assertFalse(self.plan_path.exists(), "partial plan must be removed")
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    def test_cache_removal_failure_message_is_one_sentence(self):
+        def failing_cache(item, directory, download_deadline):
+            raise ValueError(
+                "Wheel download stalled: sentinel; nothing was installed or changed."
+            )
+
+        real_rmtree = shutil.rmtree
+
+        def rmtree_fails_for_wheel_cache(path, *args, **kwargs):
+            # shutil is shared with tempfile's own cleanup; fail only the cache removal.
+            if "-wheels-" in str(path):
+                raise OSError("busy")
+            return real_rmtree(path, *args, **kwargs)
+
+        self._start(failing_cache, [BEFORE, BEFORE])
+        try:
+            with mock.patch.object(
+                self.module.shutil, "rmtree", side_effect=rmtree_fails_for_wheel_cache
+            ):
+                with self.assertRaises(ValueError) as raised:
+                    self.module.plan(self.options)
+        finally:
+            for leftover in self.root.glob("*-wheels-*"):
+                real_rmtree(leftover)
+        message = str(raised.exception)
+        self.assertNotIn(".;", message)
+        self.assertIn("nothing was installed or changed. The wheel cache", message)
+        self.assertIn("could not be removed", message)
+        # `from None` hides the chained OSError from the traceback.
+        self.assertTrue(raised.exception.__suppress_context__)
+        self.assertIsNone(raised.exception.__cause__)
 
     def test_cache_wheel_with_exhausted_deadline_says_nothing_changed(self):
         module = load_module()
