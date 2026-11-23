@@ -693,6 +693,10 @@ class RedactionTests(unittest.TestCase):
         "password=S3CRET",
         "token=S3CRET",
         "secret=S3CRET",
+        # a key that ends its token with a separator; the value is the next token
+        "foo:password= S3CRET",
+        "my-token= S3CRET",
+        "user:password: S3CRET",
         "api_key=S3CRET",
         "password= S3CRET",
         "Authorization: Basic S3CRET",
@@ -799,6 +803,14 @@ class RedactionTests(unittest.TestCase):
             "Collecting pypi-attestations==0.0.21\n",
             "Collecting pypi-simple\n",
             "Collecting tokenizers==0.21.0\n",
+            # Package names that end in a key name are not credentials.
+            "Collecting tiktoken==0.8.0\n",
+            "No matching distribution found for tiktoken==0.8.0\n",
+            "Requirement already satisfied: tiktoken in ./lib (0.8.0)\n",
+            "The user requested tiktoken==0.8.0\n",
+            "Collecting google-auth==2.36.0\n",
+            "Requirement already satisfied: google-auth in ./lib (2.36.0)\n",
+            "Collecting pkg-token==1.0\n",
         )
         for line in lines:
             with self.subTest(line=line):

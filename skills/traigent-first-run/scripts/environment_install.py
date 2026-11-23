@@ -197,13 +197,25 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
 _ARTIFACT_LOCATION = "<artifact-location>"
 _TOKEN_SPLIT = re.compile(r"(\s+)")  # odd indexes are whitespace, even are tokens
 _KEY_NAMES = (
-    r"(?:password|passwd|pwd|secret|token|apikey|api_key|api-key|private_key"
+    r"(?i:password|passwd|pwd|secret|token|apikey|api_key|api-key|private_key"
     r"|privatekey|access_key|accesskey|credentials?|auth)"
 )
-# A key name at the end of a token, followed only by separators or quotes.
-_KEY_TAIL = re.compile(_KEY_NAMES + r"[\"'=:,]*\Z")
-# A key name followed by optional quotes, then "=" or ":" and a non-empty value.
-_KEY_WITH_VALUE = re.compile(_KEY_NAMES + r"[\"']*[=:].")
+# A bare key: the whole decoded token is the key, optionally after leading "-\"'{[("
+# and an underscore-joined or camelCase prefix, followed only by separators or quotes.
+# A hyphen-joined prefix is a package name (`google-auth`), not a key.
+_KEY_TAIL = re.compile(
+    r"[-\"'{\[(]*(?:[A-Za-z0-9]*_|[A-Za-z0-9]*[a-z0-9](?=[A-Z]))?"
+    + _KEY_NAMES
+    + r"[\"'=:,]*\Z"
+)
+# A key starts the token, follows a non-alphanumeric character, or starts at a camelCase
+# boundary. The separator is "=" not followed by "=" (a pip version pin such as
+# `tiktoken==0.8.0` is not a separator) or ":".
+_KEY_START = r"(?:(?<![A-Za-z0-9])|(?<=[a-z0-9])(?=[A-Z]))"
+# A key with a value in the same token: a non-empty value follows the separator.
+_KEY_WITH_VALUE = re.compile(_KEY_START + _KEY_NAMES + r"[\"']*(?:=(?!=)|:)(?=.)")
+# A key whose separator ends the token, so its value is the next token (`my-token= x`).
+_KEY_ASSIGN_END = re.compile(_KEY_START + _KEY_NAMES + r"[\"']*(?:=(?!=)|:)\Z")
 _SEPARATOR_TOKEN = re.compile(r"[\"'=:]+\Z")
 _TOKEN_PREFIX = re.compile(
     r"(?<![A-Za-z0-9])(?:"
@@ -244,12 +256,21 @@ def _redact_line(line: str) -> str:
       `[A-Za-z0-9_-]`), or an AWS access key id (`AKIA` or `ASIA` followed by exactly
       16 of `[A-Z0-9]`), at its start or after a non-alphanumeric character, so
       `task-runner-12345678`, `pypi-attestations` and `pypi-simple` are kept;
-    - it is a key token: after decoding and lowercasing, it ends with a credential key
-      name (`password`, `passwd`, `pwd`, `secret`, `token`, `apikey`, `api_key`,
-      `api-key`, `private_key`, `privatekey`, `access_key`, `accesskey`, `credential`,
-      `credentials`, `auth`) followed only by any of `"'=:,`, or it contains a key name
-      followed by an optional run of `"'` and then `=` or `:` with a non-empty value.
-      Leading `-"'{[(` never changes the result, so it is not stripped first.
+    - it is a key token, matched case-insensitively against the decoded token (so
+      camelCase is seen). Key names: `password`, `passwd`, `pwd`, `secret`, `token`,
+      `apikey`, `api_key`, `api-key`, `private_key`, `privatekey`, `access_key`,
+      `accesskey`, `credential(s)`, `auth`.
+      - Bare key: the whole token is the key, optionally after leading `-"'{[(` and
+        after an underscore-joined or camelCase prefix (`client_secret`, `apiToken`),
+        followed only by any of `"'=:,`. A hyphen-joined prefix is a package name, so
+        `tiktoken`, `google-auth` and `pkg-token` are not keys.
+      - Key with value: the key name starts the token, follows a non-alphanumeric
+        character, or starts at a camelCase boundary; then an optional run of `"'`,
+        then `=` or `:`, then a non-empty value. `=` followed by `=` is a pip version
+        pin (`tiktoken==0.8.0`), not a separator, so it is not a value.
+      - Key ending in a separator: the same key start, then an optional run of `"'`
+        and `=` or `:` ending the token (`my-token=`, `user:password:`). Its value is
+        the next token, which is redacted as for a bare key.
     Key values: a key token that carries its value is redacted itself. A key token with
     no value also redacts the next token; when that next token is only separator
     characters (`=`, `:`, quotes), it is redacted too and the token after it is redacted.
@@ -283,11 +304,19 @@ def _redact_line(line: str) -> str:
             redact_rest = True
         elif lowered in _AUTH_SCHEMES:
             redact_next = True
-        key = _KEY_TAIL.search(lowered) is not None
-        if key:
+        key = _KEY_TAIL.match(decoded) is not None
+        # `_KEY_ASSIGN_END` can only match a token that ends in "=" or ":"; the check
+        # skips its search for the other tokens, which are nearly all of a pip line.
+        if key or (
+            decoded.endswith(("=", ":")) and _KEY_ASSIGN_END.search(decoded) is not None
+        ):
+            key = True
             redact_next = True
             separator_may_follow = True
-        key = key or _KEY_WITH_VALUE.search(lowered) is not None
+        key = key or (
+            ("=" in decoded or ":" in decoded)
+            and _KEY_WITH_VALUE.search(decoded) is not None
+        )
         has_userinfo = "@" in decoded and len(decoded) > 1
         if (
             redact
