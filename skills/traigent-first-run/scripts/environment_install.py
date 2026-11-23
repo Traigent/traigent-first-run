@@ -189,10 +189,25 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
                 validate_uninstall_path(scripts / (name + suffix), prefix)
 
 
-# Any scheme (https, git+ssh, ftp, file, ...) in any letter case, up to whitespace.
-_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
-# Scheme-less userinfo such as user:secret@host, which pip also prints.
-_USERINFO_TOKEN = re.compile(r"\S+:\S+@\S+")
+_ARTIFACT_LOCATION = "<artifact-location>"
+
+
+def _redact_token(match: re.Match[str]) -> str:
+    """Decide one whitespace-free token; return it unchanged unless it may carry credentials.
+
+    Pip output is untrusted in length, so this is per token and linear: no regex is
+    allowed to backtrack across a long run of colons or letters. A token is replaced
+    when it holds a URL (any scheme, `://`) or a scheme-less `user:secret@host` form:
+    a colon at index >= 1, then at least one character, then an `@` that is not the
+    final character.
+    """
+    token = match.group(0)
+    if "://" in token:
+        return _ARTIFACT_LOCATION
+    at = token.rfind("@", 0, len(token) - 1)
+    if at >= 3 and token.find(":", 1, at - 1) != -1:
+        return _ARTIFACT_LOCATION
+    return token
 
 
 def _redacted_pip_output(*parts: bytes | str | None) -> str:
@@ -205,8 +220,7 @@ def _redacted_pip_output(*parts: bytes | str | None) -> str:
         )
         for part in parts
     )
-    text = _URL_TOKEN.sub("<artifact-location>", text)
-    return _USERINFO_TOKEN.sub("<artifact-location>", text)
+    return re.sub(r"\S+", _redact_token, text)
 
 
 def isolated_pip(

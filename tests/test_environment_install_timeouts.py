@@ -397,6 +397,28 @@ class RedactionTests(unittest.TestCase):
         self.assertNotIn("secret", redacted)
         self.assertEqual(redacted.count("<artifact-location>"), 2)
 
+    def assertRedactsQuickly(self, text):
+        module = load_module()
+        started = time.monotonic()
+        redacted = module._redacted_pip_output(text)
+        elapsed = time.monotonic() - started
+        self.assertLess(elapsed, 1.0, f"redaction took {elapsed:.2f}s")
+        return redacted
+
+    def test_long_colon_token_without_at_is_linear_and_unchanged(self):
+        for text in (":" * 4000, "a:" * 2000):
+            with self.subTest(prefix=text[:2]):
+                self.assertEqual(self.assertRedactsQuickly(text), text)
+
+    def test_long_letter_run_without_scheme_separator_is_linear_and_unchanged(self):
+        text = "a" * 100000
+        self.assertEqual(self.assertRedactsQuickly(text), text)
+
+    def test_colon_dense_line_before_credential_url_is_fast_and_redacted(self):
+        redacted = self.assertRedactsQuickly(":" * 50000 + " https://user:secret@h/x")
+        self.assertNotIn("secret", redacted)
+        self.assertIn("<artifact-location>", redacted)
+
 
 class ReadOnlyBlocksResponse:
     """Fake response that implements only read1, so any call to read() fails loudly."""
