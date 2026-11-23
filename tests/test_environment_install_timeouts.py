@@ -416,6 +416,8 @@ class RedactionTests(unittest.TestCase):
         "user:secret@host/x",
         "https://user:secret@h/x",
         "file:///tmp/x.whl",
+        "a:secret@host/x",
+        "x(https://user:secret@h/y)",
     )
 
     def test_every_credential_form_is_replaced_and_no_secret_survives(self):

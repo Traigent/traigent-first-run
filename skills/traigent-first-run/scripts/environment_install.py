@@ -37,12 +37,12 @@ from pathlib import Path
 # assistant's command limit belongs in the guide, not here.
 DOWNLOAD_READ_TIMEOUT_SECONDS = 30  # max silence on the socket before one read fails
 # Total wall time for all wheel downloads in one plan, shared across wheels, not per
-# wheel. One bundled-lock plan on 2026-11-23 fetched 75 wheels (100 MB) in a 43.7 s
-# plan; this budget fails links slower than roughly 1.4 Mbit/s.
+# wheel. The bundled lock pins 75 wheels; at 600 s this budget fails links too slow
+# to move about 100 MB in that time (100 MB * 8 / 600 s, about 1.3 Mbit/s).
 PLAN_DOWNLOAD_DEADLINE_SECONDS = 600
-# Max wall time for one isolated pip child. Apply measured 21 s for the bundled lock,
-# so 900 s leaves wide margin for slow disks or antivirus. A kill here can leave a
-# partial install, which the apply error says.
+# Max wall time for one isolated pip child: a backstop far above a normal plan or
+# apply, leaving margin for slow disks or antivirus. A kill here can leave a partial
+# install, which the apply error says.
 PIP_TIMEOUT_SECONDS = 900
 
 SPEC = importlib.util.spec_from_file_location(
