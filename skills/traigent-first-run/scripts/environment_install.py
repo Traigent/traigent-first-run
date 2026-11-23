@@ -21,6 +21,7 @@ import ntpath
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import sysconfig
@@ -534,6 +535,19 @@ def _open_url(url: str, timeout: float):
     return _OPENER.open(url, timeout=timeout)
 
 
+def _declared_length(value: str | None) -> int | None:
+    """Return Content-Length as an int, or None when absent or not a plain decimal.
+
+    Proxies can send values such as "11, 11". The header is advisory here: the
+    streamed byte count enforces MAX_WHEEL_BYTES regardless, so a malformed value is
+    ignored instead of failing a valid download. Its text is never echoed.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    return int(text) if text.isascii() and text.isdigit() else None
+
+
 def _download(url: str, target: Path, read_timeout: float, deadline: float) -> None:
     """Stream url into a new target file within deadline seconds of total wall time.
 
@@ -577,10 +591,10 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         try:
             with _open_url(url, read_timeout) as response:
                 headers = getattr(response, "headers", None)
-                declared = (
+                declared = _declared_length(
                     headers.get("Content-Length") if headers is not None else None
                 )
-                if declared is not None and int(declared) > MAX_WHEEL_BYTES:
+                if declared is not None and declared > MAX_WHEEL_BYTES:
                     raise _WheelTooLarge()
                 received = 0
                 # read1 returns after one socket read, so an abandoned transfer stops
@@ -842,6 +856,31 @@ def apply(options) -> dict:
     }
 
 
+def _run_plan_handling_termination(options) -> dict:
+    """Run plan() so SIGTERM/SIGHUP unwind through its cleanup of the wheel cache.
+
+    Without a Python handler the default action ends the process with no exception,
+    so plan()'s BaseException cleanup never runs and partial wheels stay behind.
+    Raising SystemExit(128 + signum) unwinds exactly like Ctrl-C and keeps the
+    conventional exit status. Handlers can only be set from the main thread.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return plan(options)
+
+    def terminate(signum, frame):
+        raise SystemExit(128 + signum)
+
+    signums = [signal.SIGTERM, getattr(signal, "SIGHUP", None)]
+    previous = {}
+    try:
+        for signum in filter(None, signums):
+            previous[signum] = signal.signal(signum, terminate)
+        return plan(options)
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -867,7 +906,10 @@ def main(argv=None) -> int:
                 options.candidate,
                 arguments[1:] if arguments[:1] == ["--"] else arguments,
             )
-        result = plan(options) if options.command == "plan" else apply(options)
+        if options.command == "plan":
+            result = _run_plan_handling_termination(options)
+        else:
+            result = apply(options)
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return 1

@@ -15,6 +15,7 @@ import importlib.util
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -297,6 +298,27 @@ class DeclaredOversizeHandler(BaseHTTPRequestHandler):
         pass
 
 
+class MalformedLengthHandler(BaseHTTPRequestHandler):
+    """Sends a correct 11-byte body under a Content-Length that is not a number."""
+
+    declared_length = "11, 11"
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", self.declared_length)
+        self.end_headers()
+        self.wfile.write(b"wheel-bytes")
+        self.wfile.flush()
+
+    def log_message(self, *args):
+        pass
+
+
+class NonNumericLengthHandler(MalformedLengthHandler):
+    declared_length = "abc"
+
+
 class BlockingResponse:
     """Fake response: one block, then blocks until released (or 5 s)."""
 
@@ -351,6 +373,17 @@ class DownloadHardeningTests(ServerFixture):
             self.assertIn("exceeded the 2 MB size limit", str(raised.exception))
             self.assertNotIn("sent nothing", str(raised.exception))
             self.assertFalse(target.exists())
+
+    def test_malformed_content_length_is_ignored_and_valid_body_downloads(self):
+        # Proxies can send "11, 11"; the header is advisory, the body is what counts.
+        for handler in (MalformedLengthHandler, NonNumericLengthHandler):
+            with self.subTest(handler=handler.__name__):
+                module = load_module()
+                url = self.start_server(handler)
+                with tempfile.TemporaryDirectory() as directory:
+                    target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+                    module._download(url, target, read_timeout=5, deadline=5)
+                    self.assertEqual(target.read_bytes(), b"wheel-bytes")
 
 
 class DownloadRefusalAndInterruptTests(unittest.TestCase):
@@ -1242,6 +1275,80 @@ class PlanApplyHarnessTests(unittest.TestCase):
         )
         self.module.apply(apply_options)
         self.assertEqual(self.pip_calls, [False, True])
+
+    def test_sigterm_during_plan_cleans_wheel_cache_and_exits_143(self):
+        # Runs main() end to end: the signal must become SystemExit(143) so the
+        # BaseException cleanup in plan() removes the partial cache.
+        def sigterm_after_partial_wheel(item, directory, download_deadline):
+            (directory / "pkg-1.0-py3-none-any.whl").write_bytes(b"partial")
+            os.kill(os.getpid(), signal.SIGTERM)
+            time.sleep(5)
+
+        # Recording handler stands in for the default action, which would end the
+        # runner on the pre-fix code.
+        previous = signal.signal(signal.SIGTERM, lambda number, frame: None)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        self._start(sigterm_after_partial_wheel, [BEFORE, BEFORE])
+        argv = [
+            "plan",
+            "--candidate",
+            str(self.candidate),
+            "--requirements",
+            str(self.requirements),
+            "--plan",
+            str(self.plan_path),
+        ]
+        started = time.monotonic()
+        with (
+            mock.patch.object(self.module, "require_isolation"),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            self.module.main(argv)
+        self.assertLess(time.monotonic() - started, 3, "SIGTERM did not interrupt plan")
+        self.assertEqual(raised.exception.code, 143)
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+        self.assertFalse(self.plan_path.exists())
+
+
+@unittest.skipUnless(hasattr(os, "kill"), "POSIX signals are required")
+class PlanSignalExitTests(unittest.TestCase):
+    """main() turns SIGTERM/SIGHUP during plan into SystemExit(128 + signum)."""
+
+    def _exit_code_after_signal(self, signum):
+        module = load_module()
+        sentinel_calls = []
+
+        def sentinel(number, frame):
+            # Records instead of killing the runner: on the pre-fix code no handler
+            # is installed, so this is what would otherwise receive the signal.
+            sentinel_calls.append(number)
+
+        def plan_sends_signal(options):
+            os.kill(os.getpid(), signum)
+            time.sleep(5)
+            return {}
+
+        previous = signal.signal(signum, sentinel)
+        self.addCleanup(signal.signal, signum, previous)
+        before = signal.getsignal(signum)
+        argv = ["plan", "--candidate", "c", "--requirements", "r", "--plan", "p"]
+        started = time.monotonic()
+        with (
+            mock.patch.object(module, "require_isolation"),
+            mock.patch.object(module, "plan", side_effect=plan_sends_signal),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            module.main(argv)
+        self.assertLess(time.monotonic() - started, 3, "signal did not interrupt plan")
+        self.assertEqual(signal.getsignal(signum), before)
+        return raised.exception.code
+
+    def test_sigterm_during_plan_exits_143_and_restores_handler(self):
+        self.assertEqual(self._exit_code_after_signal(signal.SIGTERM), 143)
+
+    @unittest.skipUnless(hasattr(signal, "SIGHUP"), "SIGHUP is POSIX-only")
+    def test_sighup_during_plan_exits_129_and_restores_handler(self):
+        self.assertEqual(self._exit_code_after_signal(signal.SIGHUP), 129)
 
 
 if __name__ == "__main__":
