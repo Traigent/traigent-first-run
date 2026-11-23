@@ -15,6 +15,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -26,6 +27,19 @@ from urllib import error as urllib_error
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills/traigent-first-run/scripts/environment_install.py"
+
+
+CHILD_CODE = """
+import importlib.util, json, sys, time
+spec = importlib.util.spec_from_file_location("environment_install_under_test", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+text = sys.stdin.read()
+started = time.monotonic()
+redacted = module._redacted_pip_output(text)
+elapsed = time.monotonic() - started
+sys.stdout.write(json.dumps({"elapsed": elapsed, "redacted": redacted}))
+"""
 
 
 def load_module():
@@ -398,12 +412,27 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(redacted.count("<artifact-location>"), 2)
 
     def assertRedactsQuickly(self, text):
-        module = load_module()
-        started = time.monotonic()
-        redacted = module._redacted_pip_output(text)
-        elapsed = time.monotonic() - started
+        # Run in a child process so a catastrophic regex fails this test
+        # instead of hanging the whole suite.
+        try:
+            completed = subprocess.run(
+                [sys.executable, "-I", "-c", CHILD_CODE, str(SCRIPT)],
+                input=text,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            self.fail("redaction did not finish within 10 s")
+        self.assertEqual(
+            completed.returncode,
+            0,
+            f"redaction child failed: {completed.stderr}",
+        )
+        result = json.loads(completed.stdout)
+        elapsed = result["elapsed"]
         self.assertLess(elapsed, 1.0, f"redaction took {elapsed:.2f}s")
-        return redacted
+        return result["redacted"]
 
     def test_long_colon_token_without_at_is_linear_and_unchanged(self):
         for text in (":" * 4000, "a:" * 2000):
