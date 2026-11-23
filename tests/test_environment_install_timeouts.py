@@ -830,6 +830,30 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertTrue(raised.exception.__suppress_context__)
         self.assertIsNone(raised.exception.__cause__)
 
+    def test_interrupt_during_plan_survives_failed_cache_removal(self):
+        def interrupted_cache(item, directory, download_deadline):
+            raise KeyboardInterrupt
+
+        real_rmtree = shutil.rmtree
+
+        def rmtree_fails_for_wheel_cache(path, *args, **kwargs):
+            # shutil is shared with tempfile's own cleanup; fail only the cache removal.
+            if "-wheels-" in str(path):
+                raise PermissionError("locked by another process")
+            return real_rmtree(path, *args, **kwargs)
+
+        self._start(interrupted_cache, [BEFORE, BEFORE])
+        try:
+            with mock.patch.object(
+                self.module.shutil, "rmtree", side_effect=rmtree_fails_for_wheel_cache
+            ):
+                # Ctrl-C must propagate as itself, not be rewrapped as a ValueError.
+                with self.assertRaises(KeyboardInterrupt):
+                    self.module.plan(self.options)
+        finally:
+            for leftover in self.root.glob("*-wheels-*"):
+                real_rmtree(leftover)
+
     def test_cache_wheel_with_exhausted_deadline_says_nothing_changed(self):
         module = load_module()
         item = {
