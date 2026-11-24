@@ -51,7 +51,9 @@ class SecurityPolicyTests(unittest.TestCase):
                 "\n## Reporting a vulnerability\n"
             )
         ]
-        self.assertIn("`.github/workflows/`", scope)
+        self.assertIn(
+            "the repository configuration in `.github/` (workflows, CODEOWNERS)", scope
+        )
         self.assertIn("`reports/`", scope)
 
     def test_it_states_the_acknowledgement_and_response_times(self) -> None:

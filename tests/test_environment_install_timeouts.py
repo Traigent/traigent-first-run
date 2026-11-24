@@ -200,7 +200,7 @@ class DownloadDeadlineTests(ServerFixture):
                 module._download(url, target, read_timeout=0.5, deadline=30)
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 5, "per-read timeout did not bound the stall")
-            self.assertIn("the server sent nothing for 0.5s", str(raised.exception))
+            self.assertIn("no response for 0.5s", str(raised.exception))
             self.assertNotIn("ran out", str(raised.exception))
             self.assertIn("nothing was installed or changed", str(raised.exception))
             self.assertNotIn("retry", str(raised.exception))
@@ -218,7 +218,7 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertLess(elapsed, 4, "slow drip was not bounded by the deadline")
             self.assertIn("the plan download deadline", str(raised.exception))
             self.assertIn("ran out", str(raised.exception))
-            self.assertNotIn("the server sent nothing", str(raised.exception))
+            self.assertNotIn("no response for", str(raised.exception))
             self.assertFalse(target.exists())
 
     def test_live_slow_transfer_reports_deadline_not_stall(self):
@@ -232,7 +232,7 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertIn("did not finish", message)
             self.assertIn("too slow or stalled", message)
             self.assertNotIn("Wheel download stalled", message)
-            self.assertNotIn("sent nothing", message)
+            self.assertNotIn("no response for", message)
             self.assertFalse(target.exists(), "partial wheel must be removed")
 
     def test_header_drip_is_bounded_by_overall_deadline(self):
@@ -246,7 +246,7 @@ class DownloadDeadlineTests(ServerFixture):
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 4, "header drip ran past the overall deadline")
             self.assertIn("ran out", str(raised.exception))
-            self.assertNotIn("the server sent nothing", str(raised.exception))
+            self.assertNotIn("no response for", str(raised.exception))
             self.assertFalse(target.exists())
 
     def test_slow_name_lookup_is_bounded_by_overall_deadline(self):
@@ -270,7 +270,7 @@ class DownloadDeadlineTests(ServerFixture):
                 elapsed = time.monotonic() - started
             self.assertLess(elapsed, 3, "DNS lookup ran past the overall deadline")
             self.assertIn("ran out", str(raised.exception))
-            self.assertNotIn("the server sent nothing", str(raised.exception))
+            self.assertNotIn("no response for", str(raised.exception))
             self.assertFalse(target.exists())
 
     def test_connect_timeout_maps_to_stalled_message_without_partial_file(self):
@@ -283,7 +283,7 @@ class DownloadDeadlineTests(ServerFixture):
                     module._download(
                         "http://127.0.0.1:9/x.whl", target, read_timeout=0.5, deadline=5
                     )
-            self.assertIn("the server sent nothing for 0.5s", str(raised.exception))
+            self.assertIn("no response for 0.5s", str(raised.exception))
             self.assertNotIn("ran out", str(raised.exception))
             self.assertIsNone(raised.exception.__cause__)
             self.assertTrue(raised.exception.__suppress_context__)
@@ -401,7 +401,7 @@ class DownloadHardeningTests(ServerFixture):
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 3, "declared length was not checked up front")
             self.assertIn("exceeded the 2 MiB size limit", str(raised.exception))
-            self.assertNotIn("sent nothing", str(raised.exception))
+            self.assertNotIn("no response for", str(raised.exception))
             self.assertIsNone(raised.exception.__cause__)
             self.assertTrue(raised.exception.__suppress_context__)
             self.assertFalse(target.exists())
@@ -2549,6 +2549,66 @@ class InterruptedApplyWarningTests(unittest.TestCase):
             snapshot_calls=[{"identity": "unchanged", "installed": {}}],
         )
         self.assertEqual(json.loads(stderr), {"error": self.APPLY_STOPPED})
+
+    def test_dead_stderr_during_apply_does_not_mask_the_interrupt(self):
+        # The warning is best effort: a dead stderr (EIO after a hung-up terminal,
+        # EPIPE after a closed pipe) must not replace the interrupt with an OSError.
+        class DeadStream:
+            def __init__(self, code):
+                self.code = code
+
+            def write(self, text):
+                raise OSError(self.code, os.strerror(self.code))
+
+            def flush(self):
+                raise OSError(self.code, os.strerror(self.code))
+
+        def interrupt_raiser(make):
+            def raise_it(*args, **kwargs):
+                raise make()
+
+            return raise_it
+
+        module = load_module()
+        root = isolate_temp_dir(self)
+        plan, digest = self._approved_plan(module, root)
+        interrupts = (
+            ("KeyboardInterrupt", KeyboardInterrupt, lambda: KeyboardInterrupt()),
+            ("SystemExit", SystemExit, lambda: SystemExit(143)),
+        )
+        for name, expected, make in interrupts:
+            for code in (errno.EIO, errno.EPIPE):
+                with self.subTest(interrupt=name, errno=errno.errorcode[code]):
+                    raised = None
+                    with (
+                        mock.patch.object(
+                            module,
+                            "snapshot",
+                            return_value={"identity": "unchanged", "installed": {}},
+                        ),
+                        mock.patch.object(
+                            module.subprocess, "run", side_effect=interrupt_raiser(make)
+                        ),
+                        mock.patch.object(
+                            module.ENV,
+                            "trusted_interpreter",
+                            return_value=Path("/usr/bin/python3"),
+                        ),
+                        mock.patch.object(sys, "stderr", DeadStream(code)),
+                    ):
+                        try:
+                            module.apply(
+                                argparse.Namespace(
+                                    plan=plan, approved_plan_sha256=digest
+                                )
+                            )
+                        except BaseException as error:
+                            raised = error
+                    self.assertIsInstance(
+                        raised,
+                        expected,
+                        f"dead stderr replaced the {name} with {type(raised).__name__}",
+                    )
 
     def test_interrupt_saving_pip_output_after_failed_apply_warns_and_propagates(self):
         # pip has started and may have changed the environment; the log save is after

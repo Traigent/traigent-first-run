@@ -241,7 +241,7 @@ def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
         failure = type(error).__name__
     finally:
         # One cleanup path for every exit: an OSError or an interrupt (Ctrl-C, or the
-        # SIGTERM handler's SystemExit) both leave no unredacted log behind. A removal
+        # SIGTERM handler's SystemExit) removes the directory, best effort; a removal
         # error is recorded, not raised, so the original exception still propagates.
         if not saved and directory is not None:
             try:
@@ -537,8 +537,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         "is too slow or stalled; nothing was installed or changed."
     )
     read_message = (
-        "Wheel download stalled: the server sent nothing for "
-        f"{read_timeout:g}s; nothing was installed or changed."
+        "Wheel download stalled: no response for "
+        f"{read_timeout:g}s (could not connect, or the server stopped sending); "
+        "nothing was installed or changed."
     )
     size_message = (
         f"Wheel download exceeded the {MAX_WHEEL_BYTES // (1024 * 1024)} MiB size limit; "
@@ -948,7 +949,9 @@ def apply(options) -> dict:
             )
     except (KeyboardInterrupt, SystemExit):
         if pip_started:
-            print(json.dumps({"error": APPLY_STOPPED_MESSAGE}), file=sys.stderr)
+            # Best effort, as in _download: a dead stderr must not replace the interrupt.
+            with contextlib.suppress(OSError):
+                print(json.dumps({"error": APPLY_STOPPED_MESSAGE}), file=sys.stderr)
         raise
     return {
         "status": "installed" if document["artifacts"] else "already-satisfied",
