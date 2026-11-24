@@ -35,10 +35,14 @@ class TestValidateWorkflowConcurrency(unittest.TestCase):
             "concurrency", self.doc, "validate.yml has no top-level concurrency"
         )
 
-    def test_group_keys_on_pull_request_number_or_run_id(self):
-        group = self.doc["concurrency"]["group"]
-        self.assertIn("github.event.pull_request.number", group)
-        self.assertIn("github.run_id", group)
+    def test_group_keys_on_pull_request_number_then_run_id(self):
+        # Order matters: github.run_id is always set, so with it first every run
+        # gets its own group and cancel-in-progress never cancels a superseded push.
+        self.assertEqual(
+            self.doc["concurrency"]["group"],
+            "${{ github.workflow }}-"
+            "${{ github.event.pull_request.number || github.run_id }}",
+        )
 
     def test_group_does_not_key_on_sha(self):
         # A sha-keyed trunk group is predictable from a pull request that edits

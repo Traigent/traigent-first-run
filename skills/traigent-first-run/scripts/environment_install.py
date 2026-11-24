@@ -768,7 +768,8 @@ def cache_wheel(item: dict, directory: Path, download_deadline: float) -> dict:
 def _is_same_file(path: Path, staged: Path) -> bool:
     """True when `path` is this call's plan: the hard link to `staged`, or, where
     hard links are refused, a byte-identical copy. Contents are unique per call,
-    because every artifact path embeds the call's random cache name. Any entry that
+    because the plan document names the call's random cache directory, even when
+    nothing is installed and no artifact path embeds it. Any entry that
     is not a regular file, or cannot be read, is treated as not this call's and is
     left alone without being reported. The compared bytes come from the very entry
     that was checked, read once through one descriptor and bounded by the staged size.
@@ -811,6 +812,9 @@ def _is_same_file(path: Path, staged: Path) -> bool:
         os.close(fd)
 
 
+PLAN_EXISTS_MESSAGE = "Plan already exists; choose a fresh plan path"
+
+
 def _publish_plan(staged: Path, plan_path: Path) -> None:
     """Expose the complete staged plan at plan_path without replacing another run's.
 
@@ -819,12 +823,14 @@ def _publish_plan(staged: Path, plan_path: Path) -> None:
     filesystem refuses hard links (FAT/exFAT, some network and sync folders), fall
     back to an exclusive copy. That fallback has one residual window: a signal between
     creating plan_path and recording that it was created can leave an empty file.
+    A lost race raises PLAN_EXISTS_MESSAGE, not the raw errno: the raw text names a
+    cache directory that cleanup has already removed.
     """
     try:
         os.link(staged, plan_path)
         return
     except FileExistsError:
-        raise
+        raise ValueError(PLAN_EXISTS_MESSAGE) from None
     except OSError:
         pass
     data = staged.read_bytes()
@@ -833,6 +839,8 @@ def _publish_plan(staged: Path, plan_path: Path) -> None:
         with plan_path.open("xb") as stream:
             created = True
             stream.write(data)
+    except FileExistsError:
+        raise ValueError(PLAN_EXISTS_MESSAGE) from None
     except BaseException:
         if created:
             plan_path.unlink(missing_ok=True)
@@ -857,7 +865,7 @@ def plan(options) -> dict:
     wanted.update(changes)
     plan_path = options.plan.absolute()
     if plan_path.exists():
-        raise ValueError("Plan already exists; choose a fresh plan path")
+        raise ValueError(PLAN_EXISTS_MESSAGE)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="first-run-resolve-") as temporary:
         working = Path(temporary)
@@ -928,6 +936,7 @@ def plan(options) -> dict:
         ]
         document = {
             "schema": 1,
+            "cache": str(cache),
             "candidate": str(candidate),
             "identity": before["identity"],
             "requirements": str(options.requirements.resolve()),

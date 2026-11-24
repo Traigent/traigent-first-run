@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import hashlib
 import http.client
 import importlib.util
@@ -1066,6 +1067,25 @@ class LateBytesResponse:
         return self._blocks.pop(0)
 
 
+class EndlessBlocksResponse:
+    """Fake response that yields one small block per read1 until released."""
+
+    def __init__(self, stop):
+        self._stop = stop
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read1(self, size=-1):
+        if self._stop.is_set():
+            return b""
+        time.sleep(0.001)
+        return b"x" * 1024
+
+
 class DownloadReadCallTests(unittest.TestCase):
     def test_body_is_streamed_block_by_block_with_read1(self):
         module = load_module()
@@ -1103,6 +1123,52 @@ class DownloadReadCallTests(unittest.TestCase):
             self.assertFalse(worker.is_alive(), "abandoned worker did not finish")
             self.assertFalse(target.exists(), "abandoned worker wrote the wheel")
             hook.assert_not_called()
+
+    def test_deadline_closes_the_stream_before_removing_the_target(self):
+        # An abandoned worker must not keep writing: the caller closes the stream
+        # first, then unlinks, so nothing can reach the removed file afterwards.
+        module = load_module()
+        stop = threading.Event()
+        self.addCleanup(stop.set)
+        url = "https://files.example.invalid/pkg-1.0-py3-none-any.whl"
+        opened = []
+        events = []
+        real_open = Path.open
+        real_unlink = Path.unlink
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+
+            def recording_open(path, *args, **kwargs):
+                handle = real_open(path, *args, **kwargs)
+                if Path(path) == target:
+                    opened.append(handle)
+                return handle
+
+            def recording_unlink(path, *args, **kwargs):
+                if Path(path) == target:
+                    events.append(("unlink", opened[0].closed))
+                return real_unlink(path, *args, **kwargs)
+
+            with (
+                mock.patch.object(Path, "open", recording_open),
+                mock.patch.object(Path, "unlink", recording_unlink),
+                mock.patch.object(
+                    module, "_open_url", return_value=EndlessBlocksResponse(stop)
+                ),
+            ):
+                with self.assertRaises(ValueError) as raised:
+                    module._download(url, target, 5, 0.2)
+            self.assertIn("deadline", str(raised.exception))
+            self.assertEqual(len(opened), 1)
+            self.assertEqual(
+                events,
+                [("unlink", True)],
+                "the stream must be closed before the target is unlinked",
+            )
+            self.assertTrue(opened[0].closed, "abandoned stream left open")
+            stop.set()
+            time.sleep(0.2)
+            self.assertFalse(target.exists(), "abandoned worker recreated the target")
 
 
 @unittest.skipUnless(os.name == "posix", "the fake interpreter is a POSIX shell script")
@@ -1151,6 +1217,7 @@ WHEEL_ITEM = {
 }
 BEFORE = {"installed": {}, "identity": "id"}
 AFTER = {"installed": {"pkg": "1.0"}, "identity": "id"}
+INSTALLED = {"installed": {"pkg": "1.0"}, "identity": "id"}
 
 
 class SlowFirstReadResponse:
@@ -1270,6 +1337,25 @@ def _bounded_against_hang_and_unbounded_read(seconds=10, address_space=2 << 30):
         signal.signal(signal.SIGALRM, previous_handler)
 
 
+class _DiskFullAfterTenBytes:
+    """Stream that accepts 10 bytes, then fails the way a full disk does."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self._stream.close()
+        return False
+
+    def write(self, data):
+        self._stream.write(data[:10])
+        self._stream.flush()
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+
 class PlanApplyHarnessTests(unittest.TestCase):
     def setUp(self):
         self.module = load_module()
@@ -1342,8 +1428,9 @@ class PlanApplyHarnessTests(unittest.TestCase):
             }
 
         self._start(cache_then_concurrent_plan, [BEFORE, BEFORE])
-        with self.assertRaises(FileExistsError):
+        with self.assertRaises(ValueError) as raised:
             self.module.plan(self.options)
+        self._assert_plan_already_exists(raised)
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
         # The other run's plan is not this call's file: it must be left untouched.
         self.assertEqual(self.plan_path.read_text(encoding="utf-8"), "concurrent")
@@ -1683,10 +1770,20 @@ class PlanApplyHarnessTests(unittest.TestCase):
 
         self._start(self._one_wheel, [BEFORE, BEFORE])
         with mock.patch.object(os, "link", side_effect=other_run_publishes_first):
-            with self.assertRaises(FileExistsError):
+            with self.assertRaises(ValueError) as raised:
                 self.module.plan(self.options)
+        self._assert_plan_already_exists(raised)
         self.assertEqual(plan_path.read_text(encoding="utf-8"), "other run")
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    def _assert_plan_already_exists(self, raised):
+        # The user sees the plan-path message, not the raw errno naming a cache
+        # directory that cleanup has already removed.
+        self.assertEqual(
+            str(raised.exception), "Plan already exists; choose a fresh plan path"
+        )
+        self.assertNotIn("-wheels-", str(raised.exception))
+        self.assertTrue(raised.exception.__suppress_context__)
 
     def _foreign_entry_appears_at_link(self, make_entry):
         # Another process creates an entry at plan_path just before this run's
@@ -1708,8 +1805,9 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self._start(self._one_wheel, [BEFORE, BEFORE])
         with self._foreign_entry_appears_at_link(make_entry):
             with _bounded_against_hang_and_unbounded_read():
-                with self.assertRaises(FileExistsError):
+                with self.assertRaises(ValueError) as raised:
                     self.module.plan(self.options)
+        self._assert_plan_already_exists(raised)
         after = os.lstat(self.plan_path)
         self.assertEqual(
             (after.st_ino, after.st_mode, after.st_size),
@@ -1774,6 +1872,71 @@ class PlanApplyHarnessTests(unittest.TestCase):
         )
         self.module.apply(apply_options)
         self.assertEqual(self.pip_calls, [False, True])
+
+    def test_nothing_to_install_plan_records_its_own_cache_directory(self):
+        # With no artifacts the document is otherwise identical across runs, so the
+        # cache name is what makes each plan this call's own.
+        self._start(self._one_wheel, [INSTALLED, INSTALLED])
+        self.module.plan(self.options)
+        (cache,) = self.root.glob("*-wheels-*")
+        document = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(document["cache"], str(cache))
+
+    def test_copy_fallback_keeps_another_runs_identical_plan_when_nothing_installs(
+        self,
+    ):
+        # Regression: with nothing to install, two runs wrote byte-identical plans, so
+        # the losing run treated the winner's copy as its own and unlinked it. Another
+        # run's plan is published here at plan_path with the same contents except its
+        # own cache name, just before this run's copy fallback.
+        self._start(self._one_wheel, [INSTALLED, INSTALLED])
+        other_plan = {}
+
+        def other_run_publishes_then_link_refused(source, destination, *args, **kwargs):
+            if Path(destination) == self.plan_path:
+                staged_bytes = Path(source).read_bytes()
+                other_cache = str(self.root / "other-wheels-cache")
+                other_plan["bytes"] = staged_bytes.replace(
+                    str(Path(source).parent).encode(), other_cache.encode()
+                )
+                self.plan_path.write_bytes(other_plan["bytes"])
+            raise PermissionError("Operation not permitted")
+
+        with mock.patch.object(
+            os, "link", side_effect=other_run_publishes_then_link_refused
+        ):
+            with self.assertRaises((ValueError, FileExistsError)):
+                self.module.plan(self.options)
+        self.assertEqual(
+            self.plan_path.read_bytes(),
+            other_plan["bytes"],
+            "the other run's plan was removed",
+        )
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    def test_partial_copy_is_removed_when_the_copy_fails_midway(self):
+        # Copy fallback: the write lands 10 bytes, then the disk is full. The plan
+        # must not be left at plan_path, and no cache may remain.
+        self._start(self._one_wheel, [BEFORE, BEFORE])
+        plan_path = self.plan_path
+        real_open = Path.open
+
+        def open_disk_full_on_plan(path, *args, **kwargs):
+            mode = args[0] if args else kwargs.get("mode", "r")
+            handle = real_open(path, *args, **kwargs)
+            if Path(path) == plan_path and mode == "xb":
+                return _DiskFullAfterTenBytes(handle)
+            return handle
+
+        with mock.patch.object(
+            os, "link", side_effect=PermissionError("Operation not permitted")
+        ):
+            with mock.patch.object(Path, "open", open_disk_full_on_plan):
+                with self.assertRaises(OSError) as raised:
+                    self.module.plan(self.options)
+        self.assertEqual(raised.exception.errno, errno.ENOSPC)
+        self.assertFalse(plan_path.exists(), "partial copy must be removed")
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
 
     def test_no_hard_link_interrupt_after_copy_removes_copy_and_cache(self):
         real_digest = self.module.ENV.file_digest
