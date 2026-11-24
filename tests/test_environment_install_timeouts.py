@@ -518,6 +518,15 @@ class DownloadRefusalAndInterruptTests(unittest.TestCase):
         with self.assertRaises(module._HttpsDowngradeRefused):
             handler.redirect_request(request, None, 302, "Found", {}, "http://h/x.whl")
 
+    def test_https_redirect_to_any_non_https_scheme_is_refused(self):
+        module = load_module()
+        handler = module._NoDowngradeRedirectHandler()
+        request = urllib.request.Request("https://h/x.whl")
+        for target in ("ftp://h/x.whl", "file:///tmp/x.whl"):
+            with self.subTest(target=target):
+                with self.assertRaises(module._HttpsDowngradeRefused):
+                    handler.redirect_request(request, None, 302, "Found", {}, target)
+
     def test_https_to_https_redirect_is_followed(self):
         module = load_module()
         handler = module._NoDowngradeRedirectHandler()
@@ -1110,6 +1119,41 @@ class RedactionTests(unittest.TestCase):
             module._redacted_pip_output("https%3A%2F%2Fh%2Fx\n"),
             "<artifact-location>\n",
         )
+
+    def test_triple_percent_encoded_key_value_is_redacted(self):
+        # `password%25253DS3CRET` needs three decode passes to reach `password=S3CRET`.
+        module = load_module()
+        redacted = module._redacted_pip_output(
+            "Collecting x from password%25253DS3CRET\n"
+        )
+        self.assertNotIn("S3CRET", redacted)
+        self.assertIn("<artifact-location>", redacted)
+
+    def test_aws_key_id_is_redacted_only_at_exactly_sixteen_characters(self):
+        module = load_module()
+        for prefix in ("AKIA", "ASIA"):
+            with self.subTest(prefix=prefix):
+                self.assertEqual(
+                    module._redacted_pip_output(prefix + "ABCDEFGHIJKLMNOP\n"),
+                    "<artifact-location>\n",
+                )
+                self.assertEqual(
+                    module._redacted_pip_output(prefix + "ABCDEFGHIJKLMNO\n"),
+                    prefix + "ABCDEFGHIJKLMNO\n",
+                )
+
+    def test_split_userinfo_after_a_redacted_first_piece_redacts_the_middle(self):
+        # The first piece is redacted (URL or key=value), yet a pending start must
+        # still be recorded so the whitespace-split middle token is redacted too.
+        module = load_module()
+        for line in (
+            "https://user:a MIDDLE S3CRET@host/simple\n",
+            "token=abc:def MIDDLE x@h\n",
+        ):
+            with self.subTest(line=line):
+                redacted = module._redacted_pip_output(line)
+                self.assertNotIn("MIDDLE", redacted)
+                self.assertNotIn("S3CRET", redacted)
 
     def test_whitespace_split_userinfo_redacts_every_pending_token(self):
         # The earliest pending start is kept, so `a:S3CRETA` is redacted as well.

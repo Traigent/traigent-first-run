@@ -309,7 +309,8 @@ def _redact_line(line: str) -> str:
       (`password=S3CRET,token= NEXTS3CRET`). Only a token that does not carry a value
       falls through to the bare-key rules above.
     Whitespace-split userinfo: a token with a `:` at index >= 1 that is not its last
-    character and has no `@` marks a pending start. When a later token is redacted
+    character and has no `@` marks a pending start, whether or not that token is itself
+    redacted. When a later token is redacted
     for its `@`, every token from the pending start through it is redacted too.
     A token equal to `Authorization:` or `Proxy-Authorization:` redacts every remaining
     token on the line; a token equal to `Basic` or `Bearer` redacts the next token.
@@ -376,7 +377,9 @@ def _redact_line(line: str) -> str:
                     if parts[earlier]:
                         parts[earlier] = _ARTIFACT_LOCATION
                 pending = None
-        elif pending is None and "@" not in decoded:
+        # The pending start is decided for every token, redacted or not: a redacted
+        # first piece such as `https://user:a` still starts a split userinfo.
+        if pending is None and "@" not in decoded:
             colon = decoded.find(":", 1, len(decoded) - 1)
             if colon != -1:
                 pending = index
