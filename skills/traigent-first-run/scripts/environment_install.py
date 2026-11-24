@@ -198,17 +198,21 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
                 validate_uninstall_path(scripts / (name + suffix), prefix)
 
 
-def _save_pip_output(stdout, stderr) -> str:
-    """Save pip's raw output where only this user can read it; return the path or why not.
+def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
+    """Save pip's raw output where only this user can read it.
 
-    Never printed or chained: pip output can carry index or proxy addresses. The
-    directory is a fresh mkdtemp in the temp dir Python's tempfile picks (TMPDIR/TEMP/TMP
-    if set, else the system default), never the plan's directory (0700/0600 on POSIX;
-    on Windows the per-user %TEMP% location applies), and the message tells the user to
-    delete it when done. Cleanup is best effort: a failed or interrupted save removes its
-    directory. Only when an OSError ended the save and that removal also failed does the
-    message name the leftover directory; after an interrupt the interrupt propagates and a
-    directory that could not be removed is not named.
+    Returns (message, directory): the message names the saved path or why the save
+    failed, and directory is the created Path, or None on every failure path and once
+    it has been removed. Never printed or chained: pip output can carry index or proxy
+    addresses. The directory is a fresh mkdtemp in the temp dir Python's tempfile picks
+    (TMPDIR/TEMP/TMP if set, else the system default), never the plan's directory
+    (0700/0600 on POSIX; on Windows the per-user %TEMP% location applies), and the
+    message tells the user to delete it when done. Cleanup is best effort: a failed or
+    interrupted save removes its directory, and when an interrupt arrives after a
+    successful save its caller removes that directory. Only when an OSError ended the
+    save and that removal also failed does the message name the leftover directory;
+    after an interrupt the interrupt propagates and a directory that could not be
+    removed is not named.
     """
     directory = None
     path = None
@@ -248,13 +252,17 @@ def _save_pip_output(stdout, stderr) -> str:
         if leftover:
             return (
                 f"pip's output could not be saved ({failure}); a partial copy may remain "
-                f"in {directory}: delete it"
+                f"in {directory}: delete it",
+                None,
             )
-        return f"pip's output could not be saved ({failure})"
+        return f"pip's output could not be saved ({failure})", None
     return (
-        f"pip's full output is saved, unredacted, in {path}. "
-        "Read it for the cause and quote only the lines that show it: it can contain "
-        "index or proxy addresses. Delete it when done."
+        (
+            f"pip's full output is saved, unredacted, in {path}. "
+            "Read it for the cause and quote only the lines that show it: it can contain "
+            "index or proxy addresses. Delete it when done."
+        ),
+        directory,
     )
 
 
@@ -273,7 +281,7 @@ def isolated_pip(
     }
     environment["PIP_CONFIG_FILE"] = os.devnull
     stalled = False
-    saved = ""
+    output = None
     started = time.monotonic()
     try:
         result = subprocess.run(
@@ -296,36 +304,53 @@ def isolated_pip(
             timeout=PIP_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as expired:
-        saved = _save_pip_output(expired.stdout, expired.stderr)
+        # Only copy the output here: the save runs after this handler, so no __context__
+        # of a later interrupt can hold TimeoutExpired and its raw bytes.
+        output = (expired.stdout, expired.stderr)
         stalled = True
     elapsed = round(time.monotonic() - started)
-    # The raises sit outside the except so no __context__ holds TimeoutExpired, whose
-    # output can carry index credentials.
-    if stalled:
-        if changes_environment:
-            raise ValueError(
-                f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound "
-                f"during apply (stopped after {elapsed}s); the environment may be partly "
-                "changed. Stop and inspect it before any further change. " + saved
-            )
-        raise ValueError(
-            f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound "
-            f"(stopped after {elapsed}s); nothing was installed or changed. The network "
-            "or dependency resolution stalled. " + saved
-        )
-    if result.returncode:
-        saved = _save_pip_output(result.stdout, result.stderr)
-        if changes_environment:
+    if not stalled and result.returncode == 0:
+        return
+    if output is None:
+        output = (result.stdout, result.stderr)
+    # No __context__ holds TimeoutExpired on any path, because nothing below runs inside
+    # an except handler. An interrupt after the save removes the log before it propagates.
+    directory = None
+    try:
+        saved, directory = _save_pip_output(*output)
+        output = None
+        if stalled:
+            if changes_environment:
+                message = (
+                    f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second "
+                    f"bound during apply (stopped after {elapsed}s); the environment may "
+                    "be partly changed. Stop and inspect it before any further change. "
+                    + saved
+                )
+            else:
+                message = (
+                    f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second "
+                    f"bound (stopped after {elapsed}s); nothing was installed or changed. "
+                    "The network or dependency resolution stalled. " + saved
+                )
+        elif changes_environment:
             # pip rolls back only the wheel that failed; earlier wheels may be installed.
-            raise ValueError(
+            message = (
                 f"Isolated pip failed with exit code {result.returncode} during apply "
                 f"after {elapsed}s; the environment may be partly changed. Stop and "
                 "inspect it before any further change. " + saved
             )
-        raise ValueError(
-            f"Isolated pip failed with exit code {result.returncode} after {elapsed}s; "
-            "nothing was installed or changed. " + saved
-        )
+        else:
+            message = (
+                f"Isolated pip failed with exit code {result.returncode} after {elapsed}s; "
+                "nothing was installed or changed. " + saved
+            )
+        raise ValueError(message)
+    except (KeyboardInterrupt, SystemExit):
+        if directory is not None:
+            with contextlib.suppress(OSError):
+                shutil.rmtree(directory)
+        raise
 
 
 def validate_wheel_paths(wheel: Path, prefix: Path, get_scheme) -> None:
@@ -559,10 +584,17 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
             target.unlink(missing_ok=True)
         raise
     if worker.is_alive():
-        stream.close()
+        # A failing close must not replace the deadline message or skip the removal.
+        with contextlib.suppress(OSError):
+            stream.close()
         target.unlink(missing_ok=True)
         raise ValueError(deadline_message)
-    stream.close()
+    try:
+        # The final flush can fail (full disk, EIO): report it as the labelled failure
+        # below, after the partial file is removed, not as a raw OSError.
+        stream.close()
+    except OSError as error:
+        failures.append(error)
     if not failures:
         return
     target.unlink(missing_ok=True)

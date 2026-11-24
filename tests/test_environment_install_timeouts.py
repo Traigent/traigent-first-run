@@ -1027,7 +1027,7 @@ class PipOutputFileTests(unittest.TestCase):
     @unittest.skipIf(os.name == "nt", "owner-only is a POSIX permission check")
     def test_output_file_and_directory_are_owner_only(self):
         module = load_module()
-        path = saved_output_path(module._save_pip_output(b"out", b"err"))
+        path = saved_output_path(module._save_pip_output(b"out", b"err")[0])
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
         self.assertEqual(path.parent.parent.resolve(), self.temp_root.resolve())
@@ -1071,7 +1071,7 @@ class PipOutputFileTests(unittest.TestCase):
             "fdopen",
             side_effect=lambda fd, mode: FailsOnSecondWrite(real_fdopen(fd, mode)),
         ):
-            message = module._save_pip_output(b"out", b"err")
+            message, _ = module._save_pip_output(b"out", b"err")
         self.assertIn("could not be saved (OSError)", message)
         self.assertNotIn("No space left", message)
         self.assertEqual(
@@ -1093,7 +1093,7 @@ class PipOutputFileTests(unittest.TestCase):
         with mock.patch.object(
             module.os, "open", side_effect=open_refuses_only_the_log
         ):
-            message = module._save_pip_output(b"out", b"err")
+            message, _ = module._save_pip_output(b"out", b"err")
         self.assertIn("could not be saved (PermissionError)", message)
         self.assertEqual(
             list(self.temp_root.glob("first-run-pip-*")),
@@ -1109,7 +1109,7 @@ class PipOutputFileTests(unittest.TestCase):
                 module.shutil, "rmtree", side_effect=OSError(errno.EBUSY, "busy")
             ),
         ):
-            message = module._save_pip_output(b"out", b"err")
+            message, _ = module._save_pip_output(b"out", b"err")
         directories = list(self.temp_root.glob("first-run-pip-*"))
         self.assertEqual(len(directories), 1)
         self.assertIn("could not be saved (PermissionError)", message)
@@ -2316,7 +2316,6 @@ class IsSameFileCheckedEntryTests(unittest.TestCase):
         self.staged.write_bytes(b"plan-bytes")
         self.plan = self.root / "plan.json"
 
-    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFOs are required")
     def test_entry_swapped_for_other_identical_file_before_open_is_not_this_plan(self):
         # Pins samestat(opened, entry): the swap has the same size and bytes but is a
         # different inode, so only the descriptor-to-entry identity check refuses it.
@@ -2336,6 +2335,7 @@ class IsSameFileCheckedEntryTests(unittest.TestCase):
             self.assertFalse(self.module._is_same_file(self.plan, self.staged))
         self.assertEqual(swapped, [True])
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFOs are required")
     def test_entry_swapped_for_fifo_after_lstat_is_not_read(self):
         # Regression: _is_same_file used to read the path after os.lstat, so a FIFO
         # swapped in between blocked the read forever. The guard turns a hang into a
@@ -2584,6 +2584,38 @@ class InterruptedApplyWarningTests(unittest.TestCase):
         )
         self.assertEqual(stderr, "")
 
+    def test_interrupt_in_guarded_snapshot_of_empty_plan_prints_no_warning(self):
+        # An empty plan never starts pip, so the post-install snapshot inside the
+        # guarded try is reached before pip_started could be set: an interrupt there
+        # changed nothing and must stay silent.
+        module = load_module()
+        root = isolate_temp_dir(self)
+        plan, _ = self._approved_plan(module, root)
+        document = json.loads(plan.read_text(encoding="utf-8"))
+        document["artifacts"] = []
+        plan.write_text(json.dumps(document), encoding="utf-8")
+        digest = module.ENV.file_digest(plan)
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(
+                module,
+                "snapshot",
+                side_effect=[
+                    {"identity": "unchanged", "installed": {}},
+                    KeyboardInterrupt(),
+                ],
+            ),
+            mock.patch.object(
+                module.subprocess,
+                "run",
+                side_effect=AssertionError("pip must not start"),
+            ),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            module.apply(argparse.Namespace(plan=plan, approved_plan_sha256=digest))
+        self.assertNotIn("partly changed", stderr.getvalue())
+
     def test_keyboard_interrupt_in_pip_during_plan_is_silent_and_propagates(self):
         module = load_module()
         isolate_temp_dir(self)
@@ -2749,6 +2781,177 @@ class InterruptedPipOutputSaveTests(unittest.TestCase):
                 module._save_pip_output(b"out", b"err")
         self.assertNotIsInstance(raised.exception.__context__, OSError)
         self.assertNotIn("busy", repr(raised.exception.__context__))
+
+
+class _FormatRaisesInterrupt:
+    """Stands in for a value the failure message formats, so an interrupt lands mid-message."""
+
+    def __init__(self, interrupt):
+        self._interrupt = interrupt
+
+    def __format__(self, spec):
+        raise self._interrupt()
+
+
+class StallPathInterruptTests(unittest.TestCase):
+    """An interrupt on the pip stall or failure path never chains pip output or keeps the log."""
+
+    MARKER = b"MARKER-r37-pip-bytes"
+
+    def test_interrupt_while_saving_stalled_output_chains_no_timeout(self):
+        module = load_module()
+        isolate_temp_dir(self)
+        expired = subprocess.TimeoutExpired(
+            cmd=["pip"], timeout=0.1, output=self.MARKER, stderr=self.MARKER
+        )
+        with (
+            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
+            mock.patch.object(module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                module, "_save_pip_output", side_effect=KeyboardInterrupt()
+            ),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            self.assertRaises(KeyboardInterrupt) as raised,
+        ):
+            module.isolated_pip(
+                Path("/tmp/candidate"),
+                ["install", "x"],
+                Path("/tmp"),
+                changes_environment=True,
+            )
+        error = raised.exception
+        while error is not None:
+            self.assertNotIsInstance(error, subprocess.TimeoutExpired)
+            for attribute in ("stdout", "stderr"):
+                value = getattr(error, attribute, None)
+                self.assertFalse(
+                    isinstance(value, bytes) and self.MARKER in value,
+                    f"{attribute} of {type(error).__name__} in the chain holds pip output",
+                )
+            error = error.__context__
+
+    def test_interrupt_after_stalled_save_removes_the_log(self):
+        module = load_module()
+        temp_root = isolate_temp_dir(self)
+        expired = subprocess.TimeoutExpired(
+            cmd=["pip"], timeout=0.1, output=self.MARKER
+        )
+        with (
+            mock.patch.object(
+                module,
+                "PIP_TIMEOUT_SECONDS",
+                _FormatRaisesInterrupt(KeyboardInterrupt),
+            ),
+            mock.patch.object(module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            module.isolated_pip(
+                Path("/tmp/candidate"),
+                ["install", "x"],
+                Path("/tmp"),
+                changes_environment=True,
+            )
+        self.assertEqual(
+            list(temp_root.glob("first-run-pip-*")),
+            [],
+            "an interrupt after the save must remove the saved log",
+        )
+
+    def test_interrupt_after_failed_save_removes_the_log(self):
+        module = load_module()
+        temp_root = isolate_temp_dir(self)
+        failed = subprocess.CompletedProcess(
+            args=["pip"],
+            returncode=_FormatRaisesInterrupt(KeyboardInterrupt),
+            stdout=self.MARKER,
+            stderr=self.MARKER,
+        )
+        with (
+            mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            module.isolated_pip(
+                Path("/tmp/candidate"),
+                ["install", "x"],
+                Path("/tmp"),
+                changes_environment=True,
+            )
+        self.assertEqual(
+            list(temp_root.glob("first-run-pip-*")),
+            [],
+            "an interrupt after the save must remove the saved log",
+        )
+
+
+class FlushFailsOnClose:
+    """Write stream whose final flush fails the way a full or failing disk does."""
+
+    def __init__(self, stream):
+        self._stream = stream
+
+    def write(self, data):
+        return self._stream.write(data)
+
+    def close(self):
+        self._stream.close()
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+
+class FinalFlushFailureTests(unittest.TestCase):
+    """A failing final flush is a labelled download failure, never a raw OSError."""
+
+    URL = "https://files.example.invalid/pkg-1.0-py3-none-any.whl"
+
+    def _failing_close(self, target):
+        real_open = Path.open
+
+        def open_with_failing_close(path, *args, **kwargs):
+            handle = real_open(path, *args, **kwargs)
+            return FlushFailsOnClose(handle) if Path(path) == target else handle
+
+        return mock.patch.object(Path, "open", open_with_failing_close)
+
+    def test_normal_path_flush_failure_is_a_labelled_download_failure(self):
+        module = load_module()
+        target = isolate_temp_dir(self) / "pkg-1.0-py3-none-any.whl"
+        response = ReadOnlyBlocksResponse([b"wheel-", b"bytes", b""])
+        with (
+            self._failing_close(target),
+            mock.patch.object(module, "_open_url", return_value=response),
+            self.assertRaises(ValueError) as raised,
+        ):
+            module._download(self.URL, target, 5, 5)
+        self.assertEqual(
+            str(raised.exception),
+            "Wheel download failed: OSError (ENOSPC); nothing was installed or changed.",
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertFalse(target.exists(), "partial wheel left behind")
+
+    def test_deadline_path_flush_failure_keeps_the_deadline_message(self):
+        module = load_module()
+        stop = threading.Event()
+        self.addCleanup(stop.set)
+        target = isolate_temp_dir(self) / "pkg-1.0-py3-none-any.whl"
+        with (
+            self._failing_close(target),
+            mock.patch.object(
+                module, "_open_url", return_value=EndlessBlocksResponse(stop)
+            ),
+            self.assertRaises(ValueError) as raised,
+        ):
+            module._download(self.URL, target, 5, 0.2)
+        self.assertIn("deadline", str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertFalse(target.exists(), "partial wheel left behind")
 
 
 class DownloadWorkerDaemonTests(unittest.TestCase):
