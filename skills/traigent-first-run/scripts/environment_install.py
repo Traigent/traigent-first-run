@@ -20,6 +20,7 @@ import json
 import ntpath
 import os
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -766,6 +767,46 @@ def cache_wheel(item: dict, directory: Path, download_deadline: float) -> dict:
     }
 
 
+def _is_same_file(path: Path, staged: Path) -> bool:
+    """True when `path` is this call's plan: the hard link to `staged`, or, where
+    hard links are refused, a byte-identical copy. Contents are unique per call,
+    because every artifact path embeds the call's random cache name."""
+    try:
+        return (
+            os.path.samefile(path, staged) or path.read_bytes() == staged.read_bytes()
+        )
+    except FileNotFoundError:
+        return False
+
+
+def _publish_plan(staged: Path, plan_path: Path) -> None:
+    """Expose the complete staged plan at plan_path without replacing another run's.
+
+    os.link is an atomic exclusive create of a finished file, so plan_path never holds
+    a partial plan, and FileExistsError leaves another run's plan untouched. Where the
+    filesystem refuses hard links (FAT/exFAT, some network and sync folders), fall
+    back to an exclusive copy. That fallback has one residual window: a signal between
+    creating plan_path and recording that it was created can leave an empty file.
+    """
+    try:
+        os.link(staged, plan_path)
+        return
+    except FileExistsError:
+        raise
+    except OSError:
+        pass
+    data = staged.read_bytes()
+    created = False
+    try:
+        with plan_path.open("xb") as stream:
+            created = True
+            stream.write(data)
+    except BaseException:
+        if created:
+            plan_path.unlink(missing_ok=True)
+        raise
+
+
 def plan(options) -> dict:
     candidate = options.candidate.resolve()
     before = snapshot(candidate)
@@ -835,14 +876,20 @@ def plan(options) -> dict:
             raise ValueError(
                 "Environment changed during resolution; create a fresh plan"
             )
-    # Everything from the cache's creation onward runs inside the cleanup try below, so
-    # a signal at any later point removes the cache and any plan file this call wrote.
-    cache = None
-    created_plan = False
+    # Ownership by construction: the cache's name is chosen here, before anything
+    # exists, and the plan is staged inside the cache and only then linked to
+    # plan_path. Cleanup can therefore always name what this call may have created,
+    # whatever raised the exception and wherever it landed. The only residuals are a
+    # 2**-128 name collision with a signal between os.mkdir raising and `cache = None`,
+    # and the copy fallback in _publish_plan.
+    cache = plan_path.parent / f"{plan_path.stem}-wheels-{secrets.token_hex(16)}"
+    staged = cache / ".plan.json"
     try:
-        cache = Path(
-            tempfile.mkdtemp(prefix=plan_path.stem + "-wheels-", dir=plan_path.parent)
-        )
+        try:
+            os.mkdir(cache, 0o700)
+        except OSError:
+            cache = None  # not ours: a name collision, or mkdir itself failed
+            raise
         download_deadline = time.monotonic() + PLAN_DOWNLOAD_DEADLINE_SECONDS
         artifacts = [
             cache_wheel(item, cache, download_deadline) for item in report["install"]
@@ -857,12 +904,10 @@ def plan(options) -> dict:
             "changes": card["changes"],
             "artifacts": artifacts,
         }
-        with plan_path.open("x", encoding="utf-8") as stream:
-            # Set only once open("x") has succeeded, so a FileExistsError from
-            # another run never leads to unlinking that run's plan.
-            created_plan = True
+        with staged.open("x", encoding="utf-8") as stream:
             json.dump(document, stream, indent=2, sort_keys=True)
             stream.write("\n")
+        _publish_plan(staged, plan_path)
         result = {
             "plan": str(plan_path),
             "plan_sha256": ENV.file_digest(plan_path),
@@ -870,19 +915,23 @@ def plan(options) -> dict:
         }
     except BaseException as error:
         # Any failure after the cache exists must leave no cache behind, since each
-        # retry would add one. A plan file this call created is removed too: a
-        # partial write would otherwise make every retry fail with "Plan already
-        # exists". Each removal is attempted even if the other fails, so one
-        # locked path never leaves the other behind or hides the original error.
+        # retry would add one. A plan file is removed only when it is this call's
+        # (_is_same_file), so another run's plan is never unlinked; a partial plan
+        # cannot appear at plan_path, because it is published only once complete. The
+        # plan is checked before the cache is removed, because the staged link lives in
+        # the cache. Each removal is attempted even if the other fails, so one locked
+        # path never leaves the other behind or hides the original error.
         left_behind = []
-        if created_plan:
-            try:
-                plan_path.unlink(missing_ok=True)
-            except OSError:
-                left_behind.append(str(plan_path))
         if cache is not None:
             try:
+                if _is_same_file(plan_path, staged):
+                    plan_path.unlink(missing_ok=True)
+            except OSError:
+                left_behind.append(str(plan_path))
+            try:
                 shutil.rmtree(cache)
+            except FileNotFoundError:
+                pass  # interrupted before os.mkdir created the cache
             except OSError:
                 left_behind.append(str(cache))
         if left_behind and isinstance(error, Exception):

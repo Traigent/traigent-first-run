@@ -1294,6 +1294,7 @@ class PlanApplyHarnessTests(unittest.TestCase):
 
         self._start(writing_cache, [BEFORE, BEFORE])
         real_unlink = Path.unlink
+        real_digest = self.module.ENV.file_digest
         plan_path = self.plan_path
 
         def unlink_fails_for_plan_only(path, *args, **kwargs):
@@ -1301,11 +1302,18 @@ class PlanApplyHarnessTests(unittest.TestCase):
                 raise PermissionError("locked by another process")
             return real_unlink(path, *args, **kwargs)
 
+        def digest_fails_after_publish(path, *args, **kwargs):
+            # The plan is published (linked) before its digest is read, so this
+            # failure leaves a complete plan for cleanup to remove or name.
+            if Path(path) == plan_path:
+                raise OSError("No space left on device")
+            return real_digest(path, *args, **kwargs)
+
         with (
             mock.patch.object(
-                self.module.json,
-                "dump",
-                side_effect=OSError("No space left on device"),
+                self.module.ENV,
+                "file_digest",
+                side_effect=digest_fails_after_publish,
             ),
             mock.patch.object(Path, "unlink", unlink_fails_for_plan_only),
         ):
@@ -1479,6 +1487,133 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 143)
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
         self.assertFalse(self.plan_path.exists())
+
+    # Ownership by construction (r22): each resource is named or staged before it
+    # exists, so an interrupt at any point finds only what this call owns.
+
+    def _one_wheel(self, item, directory, download_deadline):
+        artifact = directory / "pkg-1.0-py3-none-any.whl"
+        artifact.write_bytes(b"wheel")
+        return {
+            "path": str(artifact),
+            "sha256": hashlib.sha256(b"wheel").hexdigest(),
+            "name": "pkg",
+            "version": "1.0",
+        }
+
+    def test_interrupt_right_after_wheel_cache_mkdir_leaves_nothing(self):
+        # os is one module object, so this also reaches tempfile.mkdtemp's mkdir. The
+        # real mkdir runs first, then the signal lands before any ownership is recorded.
+        real_mkdir = os.mkdir
+
+        def mkdir_then_interrupt(path, *args, **kwargs):
+            real_mkdir(path, *args, **kwargs)
+            if "-wheels-" in os.fspath(path):
+                raise KeyboardInterrupt
+
+        self._start(self._one_wheel, [BEFORE, BEFORE])
+        with mock.patch.object(os, "mkdir", side_effect=mkdir_then_interrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.module.plan(self.options)
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+        self.assertFalse(self.plan_path.exists())
+
+    def _interrupt_at_plan_publish(self, exception_factory):
+        # Hooks both the old create (open "x" on plan_path) and the new publish (link),
+        # so the window is hit on either implementation. The retry is what a stranded
+        # empty plan.json used to block with "Plan already exists".
+        real_open, real_link = Path.open, os.link
+        plan_path = self.plan_path
+
+        def open_then_interrupt(path, mode="r", *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            if "x" in mode and Path(path) == plan_path:
+                stream.close()
+                raise exception_factory()
+            return stream
+
+        def link_then_interrupt(source, destination, *args, **kwargs):
+            real_link(source, destination, *args, **kwargs)
+            if Path(destination) == plan_path:
+                raise exception_factory()
+
+        self._start(self._one_wheel, [BEFORE, BEFORE, BEFORE, BEFORE])
+        with mock.patch.object(Path, "open", open_then_interrupt):
+            with mock.patch.object(os, "link", link_then_interrupt):
+                with self.assertRaises(BaseException):
+                    self.module.plan(self.options)
+        self.assertFalse(plan_path.exists(), "plan file left behind")
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+        self.module.plan(self.options)
+        self.assertTrue(plan_path.exists())
+
+    def test_keyboard_interrupt_right_after_plan_is_published_retry_works(self):
+        self._interrupt_at_plan_publish(KeyboardInterrupt)
+
+    def test_sigterm_exit_right_after_plan_is_published_retry_works(self):
+        self._interrupt_at_plan_publish(lambda: SystemExit(143))
+
+    def test_wheel_cache_name_collision_leaves_the_existing_directory_alone(self):
+        taken = self.root / ("approval-wheels-" + "ab" * 16)
+        taken.mkdir()
+        sentinel = taken / "sentinel.txt"
+        sentinel.write_text("not ours", encoding="utf-8")
+        self._start(self._one_wheel, [BEFORE, BEFORE])
+        with mock.patch("secrets.token_hex", return_value="ab" * 16):
+            with self.assertRaises(FileExistsError):
+                self.module.plan(self.options)
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "not ours")
+        self.assertFalse(self.plan_path.exists())
+
+    def test_concurrent_plan_published_before_link_is_left_untouched(self):
+        plan_path = self.plan_path
+        real_link = os.link
+
+        def other_run_publishes_first(source, destination, *args, **kwargs):
+            if Path(destination) == plan_path:
+                plan_path.write_text("other run", encoding="utf-8")
+            return real_link(source, destination, *args, **kwargs)
+
+        self._start(self._one_wheel, [BEFORE, BEFORE])
+        with mock.patch.object(os, "link", side_effect=other_run_publishes_first):
+            with self.assertRaises(FileExistsError):
+                self.module.plan(self.options)
+        self.assertEqual(plan_path.read_text(encoding="utf-8"), "other run")
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    def test_no_hard_link_filesystem_publishes_by_copy_and_apply_accepts_it(self):
+        self._start(self._one_wheel, [BEFORE, BEFORE, BEFORE, AFTER])
+        with mock.patch.object(
+            os, "link", side_effect=PermissionError("Operation not permitted")
+        ):
+            self.module.plan(self.options)
+        apply_options = argparse.Namespace(
+            plan=self.plan_path,
+            approved_plan_sha256=self.module.ENV.file_digest(self.plan_path),
+        )
+        self.module.apply(apply_options)
+        self.assertEqual(self.pip_calls, [False, True])
+
+    def test_no_hard_link_interrupt_after_copy_removes_copy_and_cache(self):
+        real_digest = self.module.ENV.file_digest
+        plan_path = self.plan_path
+
+        def digest_interrupted_on_plan(path, *args, **kwargs):
+            if Path(path) == plan_path:
+                raise KeyboardInterrupt
+            return real_digest(path, *args, **kwargs)
+
+        self._start(self._one_wheel, [BEFORE, BEFORE])
+        with mock.patch.object(
+            os, "link", side_effect=PermissionError("Operation not permitted")
+        ):
+            with mock.patch.object(
+                self.module.ENV, "file_digest", side_effect=digest_interrupted_on_plan
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    self.module.plan(self.options)
+        self.assertFalse(plan_path.exists())
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
 
 
 @unittest.skipUnless(hasattr(os, "kill"), "POSIX signals are required")
