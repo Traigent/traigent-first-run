@@ -36,9 +36,10 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-# These are stall backstops, not sized to a coding assistant's tool-call time limit;
-# the per-read timeout is the bound that fires quickly. Fitting long installs to an
-# assistant's command limit belongs in the guide, not here.
+# The bounds below are stall backstops. The per-read timeout is the one that fires in
+# the usual case. In the worst case one plan can take up to PIP_TIMEOUT_SECONDS +
+# PLAN_DOWNLOAD_DEADLINE_SECONDS (25 minutes), which can exceed a coding assistant's own
+# tool-call time limit; then the assistant's limit fires first.
 DOWNLOAD_READ_TIMEOUT_SECONDS = 30  # max silence on the socket before one read fails
 # Total wall time for all wheel downloads in one plan, shared across wheels, not per
 # wheel. The bundled lock pins 75 wheels; at 600 s this budget fails links too slow
@@ -643,8 +644,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     https URL may not redirect to a non-https one. Each failure raises a ValueError
     with redacted text and no chained exception, and removes the partial file. On
     timeout the worker is abandoned. A worker stuck inside a call that ignores
-    timeouts (such as DNS) is left running on purpose: it is a daemon, it writes
-    nothing once abandoned, and the caller reports the stall and the script exits.
+    timeouts (such as DNS) is left running on purpose: it is a daemon, the caller
+    closes its stream when it abandons it so it writes nothing once abandoned, and
+    the caller reports the stall and the script exits.
     An interrupt closes the stream and removes the partial file before re-raising.
     """
     deadline_message = (
@@ -657,7 +659,7 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         f"{read_timeout:g}s; nothing was installed or changed."
     )
     size_message = (
-        f"Wheel download exceeded the {MAX_WHEEL_BYTES // (1024 * 1024)} MB size limit; "
+        f"Wheel download exceeded the {MAX_WHEEL_BYTES // (1024 * 1024)} MiB size limit; "
         "nothing was installed or changed."
     )
     redirect_message = (
@@ -667,7 +669,6 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     # Opened before the worker starts: a FileExistsError must not unlink a file this
     # call did not create.
     stream = target.open("xb")
-    abandoned = threading.Event()
     failures: list[BaseException] = []
 
     def transfer() -> None:
@@ -686,8 +687,6 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
                     received += len(block)
                     if received > MAX_WHEEL_BYTES:
                         raise _WheelTooLarge()
-                    if abandoned.is_set():
-                        return
                     stream.write(block)
         except BaseException as error:
             failures.append(error)
@@ -699,14 +698,12 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     except BaseException:
         # Interrupted: release the file so a caller's cleanup can remove it (Windows
         # refuses to remove open files). Cleanup errors must not mask the interrupt.
-        abandoned.set()
         with contextlib.suppress(OSError):
             stream.close()
         with contextlib.suppress(OSError):
             target.unlink(missing_ok=True)
         raise
     if worker.is_alive():
-        abandoned.set()
         stream.close()
         target.unlink(missing_ok=True)
         raise ValueError(deadline_message)

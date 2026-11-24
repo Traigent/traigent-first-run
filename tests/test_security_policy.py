@@ -54,6 +54,24 @@ class SecurityPolicyTests(unittest.TestCase):
         self.assertIn("`.github/workflows/`", scope)
         self.assertIn("`reports/`", scope)
 
+    def test_it_states_the_acknowledgement_and_response_times(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "We will acknowledge receipt within 48 hours and provide a detailed "
+            "response within 7 days.",
+            policy,
+        )
+
+    def test_it_names_the_supported_branch_in_supported_versions(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn("\n## Supported versions\n", policy)
+        section = policy[
+            policy.index("\n## Supported versions\n") : policy.index(
+                "\n## Disclosure\n"
+            )
+        ]
+        self.assertIn("`first-run-guide`", section)
+
     def test_env_example_is_out_of_scope_only_as_placeholder_values(self) -> None:
         policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
         scope = policy[

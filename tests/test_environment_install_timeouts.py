@@ -356,7 +356,7 @@ class DownloadHardeningTests(ServerFixture):
                 module._download(url, target, read_timeout=5, deadline=5)
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 3, "the size cap did not stop the transfer")
-            self.assertIn("exceeded the 2 MB size limit", str(raised.exception))
+            self.assertIn("exceeded the 2 MiB size limit", str(raised.exception))
             self.assertIn("nothing was installed or changed", str(raised.exception))
             self.assertFalse(target.exists(), "partial wheel must be removed")
 
@@ -373,7 +373,7 @@ class DownloadHardeningTests(ServerFixture):
                 module._download(url, target, read_timeout=0.5, deadline=5)
             elapsed = time.monotonic() - started
             self.assertLess(elapsed, 3, "declared length was not checked up front")
-            self.assertIn("exceeded the 2 MB size limit", str(raised.exception))
+            self.assertIn("exceeded the 2 MiB size limit", str(raised.exception))
             self.assertNotIn("sent nothing", str(raised.exception))
             self.assertFalse(target.exists())
 
@@ -574,6 +574,32 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertIsNone(
             raised.exception.__context__, "secret-bearing exception must not be chained"
         )
+
+    def test_pip_failure_output_is_redacted_before_it_is_reported(self):
+        module = load_module()
+        failed = subprocess.CompletedProcess(
+            args=["pip"],
+            returncode=1,
+            stdout="Looking in indexes: https://user:S3CRET@idx.example/simple\n",
+            stderr="ERROR: token=S3CRET\n",
+        )
+        with (
+            mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    Path("/tmp"),
+                    changes_environment=True,
+                )
+        message = str(raised.exception)
+        self.assertNotIn("S3CRET", message)
+        self.assertIn("<artifact-location>", message)
+        self.assertIn("Isolated pip failed", message)
 
     def _pip_timeout_message(self, changes_environment: bool) -> str:
         module = load_module()
@@ -1021,8 +1047,27 @@ class ReadOnlyBlocksResponse:
         return self._blocks.pop(0)
 
 
+class LateBytesResponse:
+    """Fake response whose first read1 blocks until released, then returns bytes once."""
+
+    def __init__(self, release):
+        self._release = release
+        self._blocks = [b"late-bytes", b""]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read1(self, size=-1):
+        if self._blocks[0] == b"late-bytes":
+            self._release.wait(5)
+        return self._blocks.pop(0)
+
+
 class DownloadReadCallTests(unittest.TestCase):
-    def test_body_is_streamed_with_read1_so_an_abandoned_worker_stops_early(self):
+    def test_body_is_streamed_block_by_block_with_read1(self):
         module = load_module()
         response = ReadOnlyBlocksResponse([b"wheel-", b"bytes", b""])
         url = "https://files.example.invalid/pkg-1.0-py3-none-any.whl"
@@ -1031,6 +1076,33 @@ class DownloadReadCallTests(unittest.TestCase):
             with mock.patch.object(module, "_open_url", return_value=response):
                 module._download(url, target, 5, 5)
             self.assertEqual(target.read_bytes(), b"wheel-bytes")
+
+    def test_worker_abandoned_by_the_deadline_writes_nothing_more(self):
+        module = load_module()
+        release = threading.Event()
+        url = "https://files.example.invalid/pkg-1.0-py3-none-any.whl"
+        before = set(threading.enumerate())
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(
+                module, "_open_url", return_value=LateBytesResponse(release)
+            ),
+            mock.patch.object(threading, "excepthook") as hook,
+        ):
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with self.assertRaises(ValueError) as raised:
+                module._download(url, target, 5, 0.05)
+            self.assertIn("deadline", str(raised.exception))
+            (worker,) = [
+                thread
+                for thread in threading.enumerate()
+                if thread not in before and thread.name == "wheel-download"
+            ]
+            release.set()
+            worker.join(5)
+            self.assertFalse(worker.is_alive(), "abandoned worker did not finish")
+            self.assertFalse(target.exists(), "abandoned worker wrote the wheel")
+            hook.assert_not_called()
 
 
 @unittest.skipUnless(os.name == "posix", "the fake interpreter is a POSIX shell script")
@@ -1456,11 +1528,16 @@ class PlanApplyHarnessTests(unittest.TestCase):
             },
             "metadata": {"name": "pkg", "version": "1.0"},
         }
-        with tempfile.TemporaryDirectory() as directory:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(module, "_open_url") as open_url,
+        ):
             with self.assertRaises(ValueError) as raised:
                 module.cache_wheel(item, Path(directory), time.monotonic() - 1)
+        open_url.assert_not_called()
         message = str(raised.exception)
         self.assertIn("plan download deadline", message)
+        self.assertIn("before every wheel was downloaded", message)
         self.assertIn("nothing was installed or changed", message)
         self.assertNotIn("retry", message)
 
