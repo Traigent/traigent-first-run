@@ -481,6 +481,10 @@ class _WheelTooLarge(Exception):
     """Raised inside the transfer when a wheel body exceeds MAX_WHEEL_BYTES."""
 
 
+class _WheelTruncated(Exception):
+    """Raised inside the transfer when the body ends before the declared Content-Length."""
+
+
 class _NoDowngradeRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Follows redirects except an https-to-non-https one, which is refused."""
 
@@ -545,6 +549,10 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         f"Wheel download exceeded the {MAX_WHEEL_BYTES // (1024 * 1024)} MiB size limit; "
         "nothing was installed or changed."
     )
+    truncated_message = (
+        "Wheel download was cut short: the server sent fewer bytes than it declared; "
+        "nothing was installed or changed."
+    )
     redirect_message = (
         "Wheel download refused a redirect from HTTPS to a non-HTTPS URL; "
         "nothing was installed or changed."
@@ -571,6 +579,10 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
                     if received > MAX_WHEEL_BYTES:
                         raise _WheelTooLarge()
                     stream.write(block)
+                # A server that closes early would otherwise look like a complete
+                # wheel; the caller then blames the hash check.
+                if declared is not None and received < declared:
+                    raise _WheelTruncated()
         except BaseException as error:
             failures.append(error)
 
@@ -604,6 +616,8 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     error = failures[0]
     if isinstance(error, _WheelTooLarge):
         raise ValueError(size_message) from None
+    if isinstance(error, _WheelTruncated):
+        raise ValueError(truncated_message) from None
     if isinstance(error, _HttpsDowngradeRefused):
         raise ValueError(redirect_message) from None
     timed_out = isinstance(error, TimeoutError) or (
@@ -950,8 +964,18 @@ def apply(options) -> dict:
     except (KeyboardInterrupt, SystemExit):
         if pip_started:
             # Best effort, as in _download: a dead stderr must not replace the interrupt.
-            with contextlib.suppress(OSError):
-                print(json.dumps({"error": APPLY_STOPPED_MESSAGE}), file=sys.stderr)
+            # Written unbuffered: a buffered print on a dead stderr fails again at
+            # shutdown and turns the exit status into 120.
+            line = (json.dumps({"error": APPLY_STOPPED_MESSAGE}) + "\n").encode("utf-8")
+            # ValueError covers a closed stream, which a plain OSError suppress misses.
+            with contextlib.suppress(OSError, ValueError):
+                try:
+                    descriptor = sys.stderr.fileno()
+                except (AttributeError, ValueError, OSError):
+                    # No real descriptor (a replaced stream such as StringIO).
+                    print(json.dumps({"error": APPLY_STOPPED_MESSAGE}), file=sys.stderr)
+                else:
+                    os.write(descriptor, line)
         raise
     return {
         "status": "installed" if document["artifacts"] else "already-satisfied",

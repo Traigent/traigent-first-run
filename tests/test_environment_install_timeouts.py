@@ -3086,5 +3086,83 @@ class DownloadWorkerDaemonTests(unittest.TestCase):
         self.assertLess(elapsed, 10, "a stalled download thread kept the process alive")
 
 
+class TruncatedWheelBodyTests(unittest.TestCase):
+    def test_body_cut_short_of_declared_length_raises_labelled_error(self):
+        module = load_module()
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        # The server declares 1000 bytes, sends 10, then closes the connection.
+        response = _FakeResponse(b"x" * 10, {"Content-Length": "1000"})
+        with mock.patch.object(module, "_open_url", return_value=response):
+            with self.assertRaises(ValueError) as raised:
+                module._download(
+                    "https://files.example.invalid/pkg-1.0-py3-none-any.whl",
+                    target,
+                    read_timeout=5,
+                    deadline=5,
+                )
+        self.assertIn("cut short", str(raised.exception))
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertFalse(target.exists(), "partial wheel was left behind")
+
+
+CHILD_APPLY_SCRIPT = """
+import importlib.util, json, sys, time
+from pathlib import Path
+
+script, root = sys.argv[1], Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location("environment_install", script)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+plan = root / "plan.json"
+plan.write_text(json.dumps({
+    "schema": 1,
+    "candidate": "/candidate",
+    "identity": "id",
+    "requirements": "/requirements.txt",
+    "requirements_sha256": "x",
+    "artifacts": [{"path": "/pkg.whl", "sha256": "x", "name": "pkg", "version": "1"}],
+}), encoding="utf-8")
+module.ENV.file_digest = lambda path: "x"
+module.snapshot = lambda candidate: {"identity": "id", "installed": {}}
+
+def pip_running(*args, **kwargs):
+    print("READY", flush=True)
+    time.sleep(30)
+
+module.isolated_pip = pip_running
+sys.exit(module.main(["apply", "--plan", str(plan), "--approved-plan-sha256", "x"]))
+"""
+
+
+class InterruptedApplyDeadStderrExitTests(unittest.TestCase):
+    """A real process whose stderr is dead must still exit with the signal status."""
+
+    @unittest.skipIf(os.name == "nt", "POSIX pipes and SIGTERM semantics")
+    def test_sigterm_during_apply_with_dead_stderr_exits_143_not_120(self):
+        root = isolate_temp_dir(self)
+        child = root / "child_apply.py"
+        child.write_text(CHILD_APPLY_SCRIPT, encoding="utf-8")
+        # Keep the pip-output temp directory out of the real system temp dir.
+        environment = dict(os.environ, TMPDIR=str(root))
+        process = subprocess.Popen(
+            [sys.executable, "-I", "-S", "-B", str(child), str(SCRIPT), str(root)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=environment,
+        )
+        self.addCleanup(process.kill)
+        self.addCleanup(process.stdout.close)
+        self.assertEqual(process.stdout.readline().strip(), b"READY")
+        # Closing the only read end makes the warning write fail with EPIPE.
+        process.stderr.close()
+        process.send_signal(signal.SIGTERM)
+        self.assertEqual(
+            process.wait(timeout=20),
+            143,
+            "a dead stderr changed the exit status of an interrupted apply",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
