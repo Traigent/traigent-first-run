@@ -13,9 +13,15 @@
 /skills/traigent-first-run/assets/   @nimrodbusany
 **/requirements*.txt                 @nimrodbusany
 
+# The bundled scripts that run on the user's machine.
+/skills/traigent-first-run/scripts/  @nimrodbusany
+
 # Maintenance tooling (relock, guard census, disclosure scan).
 /tools/                      @nimrodbusany
 
 # Security policy and the test that pins its reporting routes.
 /SECURITY.md                         @nimrodbusany
 /tests/test_security_policy.py       @nimrodbusany
+
+# This file: a change here can drop any owner above.
+/.github/CODEOWNERS                  @nimrodbusany

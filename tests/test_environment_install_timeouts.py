@@ -491,6 +491,17 @@ class DeclaredLengthParsingTests(unittest.TestCase):
             with self.subTest(value=value):
                 self.assertIsNone(module._declared_length(value))
 
+    def test_over_long_digit_string_is_ignored_not_an_error(self):
+        # int() refuses more than 4300 digits with ValueError; the header is advisory,
+        # so an over-long all-digit value must be ignored like any other malformed one.
+        module = load_module()
+        self.assertIsNone(module._declared_length("9" * 5000))
+        self.assertIsNone(module._declared_length("1" * 20))
+
+    def test_nineteen_digit_value_is_its_value(self):
+        module = load_module()
+        self.assertEqual(module._declared_length("1" * 19), 1111111111111111111)
+
 
 class DownloadRefusalAndInterruptTests(unittest.TestCase):
     def test_http_client_invalid_url_error_text_is_withheld_and_not_chained(self):
@@ -743,6 +754,35 @@ class CacheWheelTests(unittest.TestCase):
             self.assertGreater(args[3], 90)
         self.assertEqual(cached["name"], "pkg")
         self.assertEqual(cached["version"], "1.0")
+
+    def test_exhausted_plan_budget_refuses_without_opening_a_download(self):
+        module = load_module()
+        payload = b"wheel-bytes"
+        item = {
+            "download_info": {
+                "url": "https://files.example.invalid/pkg-1.0-py3-none-any.whl",
+                "archive_info": {
+                    "hashes": {"sha256": hashlib.sha256(payload).hexdigest()}
+                },
+            },
+            "metadata": {"name": "pkg", "version": "1.0"},
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(module, "time") as clock,
+            mock.patch.object(
+                module,
+                "_download",
+                side_effect=AssertionError("a download opened on a spent budget"),
+            ) as download,
+        ):
+            # remaining = deadline - monotonic() is exactly 0.0: the budget is spent.
+            clock.monotonic.return_value = 1000.0
+            with self.assertRaises(ValueError) as raised:
+                module.cache_wheel(item, Path(directory), 1000.0)
+            download.assert_not_called()
+            self.assertIn("plan download deadline", str(raised.exception))
+            self.assertIn("ran out", str(raised.exception))
 
 
 class IsolatedPipTimeoutTests(unittest.TestCase):
@@ -1103,6 +1143,11 @@ class PipOutputFileTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
         self.assertEqual(path.parent.parent.resolve(), self.temp_root.resolve())
+
+    def test_successful_save_tells_the_user_to_delete_the_output(self):
+        module = load_module()
+        message, _ = module._save_pip_output(b"out", b"err")
+        self.assertIn("Delete it when done.", message)
 
     def test_save_failure_still_reports_the_stall_without_chaining(self):
         module = load_module()

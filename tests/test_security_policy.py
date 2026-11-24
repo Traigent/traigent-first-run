@@ -115,7 +115,12 @@ class SecurityPolicyTests(unittest.TestCase):
             .splitlines()
             if line.strip() and not line.strip().startswith("#")
         ]
-        for path in ("/SECURITY.md", "/tests/test_security_policy.py"):
+        for path in (
+            "/SECURITY.md",
+            "/tests/test_security_policy.py",
+            "/.github/CODEOWNERS",
+            "/skills/traigent-first-run/scripts/",
+        ):
             with self.subTest(path=path):
                 owners = [line.split()[1:] for line in lines if line.split()[0] == path]
                 self.assertTrue(

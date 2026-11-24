@@ -45,8 +45,9 @@ class TestValidateWorkflowConcurrency(unittest.TestCase):
         )
 
     def test_group_does_not_key_on_sha(self):
-        # A sha-keyed trunk group is predictable from a pull request that edits
-        # this workflow, so a PR could join it and cancel trunk validation.
+        # run_id gives every trunk run its own group, so no trunk push can cancel
+        # another. A sha-keyed group would let two runs of the same commit share a
+        # group, so one could replace or cancel the other.
         group = self.doc["concurrency"]["group"]
         self.assertNotIn("github.sha", group)
 

@@ -567,7 +567,12 @@ def _declared_length(value: str | None) -> int | None:
     if value is None:
         return None
     text = value.strip()
-    return int(text) if text.isascii() and text.isdigit() else None
+    # Any real length fits in 19 digits. Longer all-digit text would make int() raise
+    # (CPython's int-string digit limit, 4300 digits), and the streamed cap enforces
+    # MAX_WHEEL_BYTES regardless, so an over-long value is ignored like any malformed one.
+    if not text.isascii() or not text.isdigit() or len(text) > 19:
+        return None
+    return int(text)
 
 
 def _download(url: str, target: Path, read_timeout: float, deadline: float) -> None:
