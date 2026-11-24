@@ -35,8 +35,20 @@ from pathlib import Path
 from unittest import mock
 from urllib import error as urllib_error
 
+try:
+    import resource
+except ImportError:  # Windows: the address-space cap below is POSIX-only.
+    resource = None
+
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "skills/traigent-first-run/scripts/environment_install.py"
+
+# os.kill(os.getpid(), ...) on Windows is TerminateProcess, which ends the whole test
+# run, and the hang guard needs SIGALRM and rlimits. Skip every such test off POSIX.
+POSIX_ONLY = unittest.skipUnless(
+    os.name == "posix" and resource is not None,
+    "POSIX signals, alarms and rlimits are required",
+)
 
 
 CHILD_CODE = """
@@ -712,6 +724,34 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertIn("<artifact-location>", message)
         self.assertIn("Isolated pip failed", message)
 
+    def test_pip_failure_streams_are_redacted_separately_not_fused(self):
+        # stdout without a final newline: fusing the streams would glue "password="
+        # onto "index" so it no longer starts a token, and the value would leak.
+        module = load_module()
+        failed = subprocess.CompletedProcess(
+            args=["pip"],
+            returncode=1,
+            stdout="Looking in index",
+            stderr="password=S3CRET",
+        )
+        with (
+            mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    Path("/tmp"),
+                    changes_environment=True,
+                )
+        message = str(raised.exception)
+        self.assertNotIn("S3CRET", message)
+        self.assertIn("Looking in index", message)
+        self.assertIn("<artifact-location>", message)
+
     def _pip_timeout_message(self, changes_environment: bool) -> str:
         module = load_module()
         expired = subprocess.TimeoutExpired(
@@ -1048,6 +1088,19 @@ class RedactionTests(unittest.TestCase):
         self.assertEqual(
             module._redacted_pip_output('password ":" S3CRET\n'),
             'password ":" <artifact-location>\n',
+        )
+
+    def test_quoted_or_bracketed_option_key_then_value_redacts_the_value(self):
+        # _redact_line strips leading quotes and brackets before testing for "--",
+        # so a quoted or list-embedded option form must still lose its value.
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output("['pip', '--password', 'S3CRET']\n"),
+            "['pip', '--password', <artifact-location>\n",
+        )
+        self.assertEqual(
+            module._redacted_pip_output('"--password" S3CRET\n'),
+            '"--password" <artifact-location>\n',
         )
 
     def test_percent_encoded_scheme_separator_is_redacted_as_a_url(self):
@@ -1537,7 +1590,6 @@ def _bounded_against_hang_and_unbounded_read(seconds=10, address_space=2 << 30):
     without end. SIGALRM turns the first into an AssertionError, and an address-space
     cap turns the second into a MemoryError within seconds.
     """
-    import resource
 
     def stalled(signum, frame):
         raise AssertionError(f"plan() did not return within {seconds} s")
@@ -1889,6 +1941,7 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertTrue(caches[0].is_dir())
         self.assertEqual(stat.S_IMODE(os.stat(caches[0]).st_mode) & 0o077, 0)
 
+    @POSIX_ONLY
     def test_sigterm_during_plan_cleans_wheel_cache_and_exits_143(self):
         # Runs main() end to end: the signal must become SystemExit(143) so the
         # BaseException cleanup in plan() removes the partial cache.
@@ -2059,6 +2112,7 @@ class PlanApplyHarnessTests(unittest.TestCase):
         )
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
 
+    @POSIX_ONLY
     @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFOs are required")
     def test_foreign_fifo_at_plan_path_is_left_alone_not_read(self):
         def make_fifo(path, size):
@@ -2066,12 +2120,14 @@ class PlanApplyHarnessTests(unittest.TestCase):
 
         self._assert_foreign_plan_entry_is_left_alone(make_fifo)
 
+    @POSIX_ONLY
     def test_foreign_directory_at_plan_path_is_left_alone(self):
         def make_directory(path, size):
             path.mkdir()
 
         self._assert_foreign_plan_entry_is_left_alone(make_directory)
 
+    @POSIX_ONLY
     @unittest.skipUnless(hasattr(os, "symlink"), "POSIX symlinks are required")
     def test_foreign_symlink_to_dev_zero_at_plan_path_is_left_alone(self):
         def make_symlink(path, size):
@@ -2080,7 +2136,7 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self._assert_foreign_plan_entry_is_left_alone(make_symlink)
 
     # `or` short-circuits, so os.geteuid is never called where it does not exist.
-    # `or` short-circuits, so os.geteuid is never called where it does not exist.
+    @POSIX_ONLY
     @unittest.skipIf(
         not hasattr(os, "geteuid") or os.geteuid() == 0,
         "POSIX permissions are required, and root reads an unreadable file anyway",
@@ -2209,7 +2265,7 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
 
 
-@unittest.skipUnless(hasattr(os, "kill"), "POSIX signals are required")
+@POSIX_ONLY
 class PlanSignalExitTests(unittest.TestCase):
     """main() turns SIGTERM/SIGHUP during plan into SystemExit(128 + signum)."""
 
@@ -2374,6 +2430,41 @@ class PortableImportTests(unittest.TestCase):
             timeout=120,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_tests_needing_resource_skip_where_resource_is_absent(self):
+        # Windows has no `resource` module. The four tests that drive the rlimit and
+        # SIGALRM guard must report as skipped there, not as errors. Run them in a
+        # child where importing `resource` fails, and count the outcomes.
+        code = (
+            "import importlib.util, io, json, sys, unittest\n"
+            "sys.modules['resource'] = None\n"
+            "spec = importlib.util.spec_from_file_location('tests_under_test', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "names = [\n"
+            "    'PlanApplyHarnessTests.test_foreign_fifo_at_plan_path_is_left_alone_not_read',\n"
+            "    'PlanApplyHarnessTests.test_foreign_directory_at_plan_path_is_left_alone',\n"
+            "    'PlanApplyHarnessTests.test_foreign_symlink_to_dev_zero_at_plan_path_is_left_alone',\n"
+            "    'PlanApplyHarnessTests.test_foreign_unreadable_file_of_plan_size_is_left_alone',\n"
+            "]\n"
+            "suite = unittest.TestLoader().loadTestsFromNames(names, module)\n"
+            "result = unittest.TextTestRunner(stream=io.StringIO()).run(suite)\n"
+            "print(json.dumps({'ran': result.testsRun, 'errors': len(result.errors),\n"
+            "                  'failures': len(result.failures),\n"
+            "                  'skipped': len(result.skipped)}))\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", code, str(Path(__file__).resolve())],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        outcome = json.loads(completed.stdout.strip().splitlines()[-1])
+        self.assertEqual(outcome["ran"], 4, outcome)
+        self.assertEqual(outcome["errors"], 0, outcome)
+        self.assertEqual(outcome["failures"], 0, outcome)
+        self.assertEqual(outcome["skipped"], 4, outcome)
 
 
 if __name__ == "__main__":
