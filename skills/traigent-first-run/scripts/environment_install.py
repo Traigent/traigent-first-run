@@ -52,7 +52,7 @@ PLAN_DOWNLOAD_DEADLINE_SECONDS = 600
 PIP_TIMEOUT_SECONDS = 900
 # Exit status of pip_adapter when it refuses before pip's main() runs (snapshot identity,
 # unsupported pip API, wheel destination checks): nothing was changed. Pip's own codes
-# are 0-4 and 23, so 65 never collides with one.
+# are 0-4, 23 and 120, so 65 never collides with one.
 PIP_REFUSED_EXIT = 65
 # Largest accepted wheel body: locked wheels are tens of MB; 1 GiB leaves room for a
 # large --change preview.
@@ -558,21 +558,25 @@ def _open_url(url: str, timeout: float):
 
 
 def _declared_length(value: str | None) -> int | None:
-    """Return Content-Length as an int, or None when absent or not a plain decimal.
+    """Return Content-Length as an int, or None when absent, malformed or negative.
 
-    Proxies can send values such as "11, 11". The header is advisory here: the
-    streamed byte count enforces MAX_WHEEL_BYTES regardless, so a malformed value is
-    ignored instead of failing a valid download. Its text is never echoed.
+    This follows http.client's own int() parsing, so a header that http.client counts
+    as the body length is counted here too and the two never disagree about a short
+    body. A malformed or negative value is ignored, and its text is never echoed; the
+    streamed byte count still enforces MAX_WHEEL_BYTES regardless.
     """
     if value is None:
         return None
     text = value.strip()
-    # Any real length fits in 19 digits. Longer all-digit text would make int() raise
-    # (CPython's int-string digit limit, 4300 digits), and the streamed cap enforces
-    # MAX_WHEEL_BYTES regardless, so an over-long value is ignored like any malformed one.
-    if not text.isascii() or not text.isdigit() or len(text) > 19:
+    # No real length has more than 32 digits. Longer text would make int() raise
+    # (CPython's int-string digit limit, 4300 digits), so an over-long value is ignored.
+    if len(text) > 32:
         return None
-    return int(text)
+    try:
+        length = int(text)
+    except ValueError:
+        return None
+    return length if length >= 0 else None
 
 
 def _download(url: str, target: Path, read_timeout: float, deadline: float) -> None:
@@ -903,7 +907,10 @@ def plan(options) -> dict:
     # plan_path. Cleanup can therefore always name what this call may have created,
     # whatever raised the exception and wherever it landed. The only residuals are a
     # 2**-128 name collision with a signal between os.mkdir raising and `cache = None`,
-    # and the copy fallback in _publish_plan.
+    # the copy fallback in _publish_plan, and an interrupt (Ctrl-C or the SIGTERM
+    # handler's SystemExit) during the cache cleanup, or a cleanup removal that fails
+    # under an interrupt: either can leave a `<plan>-wheels-<hex>` directory behind
+    # without naming it in the error.
     cache = plan_path.parent / f"{plan_path.stem}-wheels-{secrets.token_hex(16)}"
     staged = cache / ".plan.json"
     try:

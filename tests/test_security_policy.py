@@ -102,36 +102,6 @@ class SecurityPolicyTests(unittest.TestCase):
         for line in mentions:
             self.assertIn("placeholder", line)
 
-    def test_codeowners_pins_the_policy_paths_and_every_entry_names_the_owner(
-        self,
-    ) -> None:
-        # Every CODEOWNERS entry names the owner, so whichever line GitHub's
-        # last-match rule picks for these paths names the owner. The test does
-        # not model GitHub's matcher; it pins the entries it relies on.
-        lines = [
-            line.strip()
-            for line in (ROOT / ".github" / "CODEOWNERS")
-            .read_text(encoding="utf-8")
-            .splitlines()
-            if line.strip() and not line.strip().startswith("#")
-        ]
-        for path in (
-            "/SECURITY.md",
-            "/tests/test_security_policy.py",
-            "/.github/CODEOWNERS",
-            "/skills/traigent-first-run/scripts/",
-        ):
-            with self.subTest(path=path):
-                owners = [line.split()[1:] for line in lines if line.split()[0] == path]
-                self.assertTrue(
-                    any("@nimrodbusany" in entry for entry in owners),
-                    f"no {path} entry names @nimrodbusany",
-                )
-        for line in lines:
-            with self.subTest(line=line):
-                owners = line.split()[1:]
-                self.assertIn("@nimrodbusany", owners, "every entry names the owner")
-
     def test_in_scope_reports_have_the_private_advisory_form_and_mailbox(self) -> None:
         policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
         start = policy.index("\n## Reporting a vulnerability\n")

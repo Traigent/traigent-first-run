@@ -289,6 +289,41 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertTrue(raised.exception.__suppress_context__)
             self.assertFalse(target.exists())
 
+    def test_url_error_names_the_reason_class_and_never_its_text(self):
+        # The reason's text can carry a host or path, so only its class name is shown.
+        module = load_module()
+        refused = urllib_error.URLError(ConnectionRefusedError(111, "refused /secret"))
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with mock.patch.object(module, "_open_url", side_effect=refused):
+                with self.assertRaises(ValueError) as raised:
+                    module._download(
+                        "http://127.0.0.1:9/x.whl", target, read_timeout=5, deadline=5
+                    )
+            message = str(raised.exception)
+            self.assertIn("URLError (ConnectionRefusedError)", message)
+            self.assertNotIn("/secret", message)
+            self.assertFalse(target.exists())
+
+    def test_existing_target_is_never_opened_for_writing(self):
+        # "xb" refuses an existing file before any transfer, so the file keeps its
+        # bytes and the opener is never asked for a body.
+        module = load_module()
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            target.write_bytes(b"someone else's wheel")
+            fake = _FakeResponse(b"replacement wheel")
+            with mock.patch.object(module, "_open_url", return_value=fake) as opener:
+                with self.assertRaises(FileExistsError):
+                    module._download(
+                        "https://files.example.invalid/x.whl",
+                        target,
+                        read_timeout=5,
+                        deadline=5,
+                    )
+            opener.assert_not_called()
+            self.assertEqual(target.read_bytes(), b"someone else's wheel")
+
 
 class EndlessBodyHandler(BaseHTTPRequestHandler):
     """Sends 200 with no Content-Length and an endless body until the client leaves.
@@ -483,11 +518,19 @@ class DeclaredLengthParsingTests(unittest.TestCase):
         self.assertEqual(module._declared_length(" 12 "), 12)
         self.assertEqual(module._declared_length("0"), 0)
 
-    def test_absent_or_non_plain_decimal_values_are_none(self):
+    def test_values_http_client_parses_are_parsed_the_same_way(self):
+        # http.client sets the body length with int(value), so a header it accepts
+        # must still be counted here: "+100" as 100 and "1_00" as 100.
         module = load_module()
-        # str.isdigit() accepts "²" (int() then raises) and "١٢" (int() parses it).
-        # Only the ASCII check rejects both: Content-Length is ASCII digits only.
-        for value in (None, "", "1,2", "-1", "1e3", "12abc", "²", "١٢"):
+        self.assertEqual(module._declared_length("+100"), 100)
+        self.assertEqual(module._declared_length("1_00"), 100)
+        self.assertEqual(module._declared_length("١٢"), 12)
+
+    def test_absent_negative_or_non_numeric_values_are_none(self):
+        module = load_module()
+        # int() raises on these, and http.client then leaves the length unknown.
+        # A negative length is ignored the same way.
+        for value in (None, "", "abc", "1.5", "-5", "1,2", "1e3", "12abc", "²"):
             with self.subTest(value=value):
                 self.assertIsNone(module._declared_length(value))
 
@@ -496,7 +539,7 @@ class DeclaredLengthParsingTests(unittest.TestCase):
         # so an over-long all-digit value must be ignored like any other malformed one.
         module = load_module()
         self.assertIsNone(module._declared_length("9" * 5000))
-        self.assertIsNone(module._declared_length("1" * 20))
+        self.assertIsNone(module._declared_length("1" * 33))
 
     def test_nineteen_digit_value_is_its_value(self):
         module = load_module()
