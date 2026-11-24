@@ -205,7 +205,7 @@ def _save_pip_output(stdout, stderr) -> str:
     the customer's project and be committed.
     """
     try:
-        directory = Path(tempfile.mkdtemp(prefix="traigent-first-run-pip-"))
+        directory = Path(tempfile.mkdtemp(prefix="first-run-pip-"))
         path = directory / "pip-output.log"
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "wb") as stream:
