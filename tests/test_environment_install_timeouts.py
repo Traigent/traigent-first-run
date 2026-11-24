@@ -18,6 +18,7 @@ import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -1780,6 +1781,58 @@ class PlanSignalExitTests(unittest.TestCase):
             code = module.main(argv)
         self.assertEqual(code, 0)
         self.assertIs(signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
+
+
+class _SwapHung(Exception):
+    """Raised by the SIGALRM guard when _is_same_file blocks on a swapped entry."""
+
+
+class IsSameFileCheckedEntryTests(unittest.TestCase):
+    def setUp(self):
+        self.module = load_module()
+        self.root = Path(tempfile.mkdtemp(prefix="same-file-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.staged = self.root / "staged.json"
+        self.staged.write_bytes(b"plan-bytes")
+        self.plan = self.root / "plan.json"
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFOs are required")
+    def test_entry_swapped_for_fifo_after_lstat_is_not_read(self):
+        # Regression: _is_same_file used to read the path after os.lstat, so a FIFO
+        # swapped in between blocked the read forever. The guard turns a hang into a
+        # failure; the result must come from the checked entry, not from a re-open.
+        self.plan.write_bytes(b"plan-bytes")  # regular, same size, different inode
+        real_lstat = os.lstat
+        swapped = []
+
+        def lstat_then_swap(path, *args, **kwargs):
+            result = real_lstat(path, *args, **kwargs)
+            if Path(path) == self.plan and not swapped:
+                swapped.append(True)
+                os.unlink(self.plan)
+                os.mkfifo(self.plan)
+            return result
+
+        def alarm(signum, frame):
+            raise _SwapHung("_is_same_file blocked reading the swapped FIFO")
+
+        previous = signal.signal(signal.SIGALRM, alarm)
+        self.addCleanup(signal.signal, signal.SIGALRM, previous)
+        self.addCleanup(signal.alarm, 0)
+        signal.alarm(10)
+        with mock.patch.object(self.module.os, "lstat", side_effect=lstat_then_swap):
+            self.assertFalse(self.module._is_same_file(self.plan, self.staged))
+        signal.alarm(0)
+        self.assertEqual(swapped, [True])
+        self.assertTrue(stat.S_ISFIFO(real_lstat(self.plan).st_mode))
+
+    def test_byte_identical_regular_copy_is_this_calls_plan(self):
+        self.plan.write_bytes(b"plan-bytes")
+        self.assertTrue(self.module._is_same_file(self.plan, self.staged))
+
+    def test_regular_file_with_different_bytes_is_not_this_calls_plan(self):
+        self.plan.write_bytes(b"other-bytes")  # same size, different content
+        self.assertFalse(self.module._is_same_file(self.plan, self.staged))
 
 
 if __name__ == "__main__":

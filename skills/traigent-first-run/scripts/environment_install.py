@@ -773,7 +773,9 @@ def _is_same_file(path: Path, staged: Path) -> bool:
     hard links are refused, a byte-identical copy. Contents are unique per call,
     because every artifact path embeds the call's random cache name. Any entry that
     is not a regular file, or cannot be read, is treated as not this call's and is
-    left alone without being reported."""
+    left alone without being reported. The compared bytes come from the very entry
+    that was checked, read once through one descriptor and bounded by the staged size.
+    """
     try:
         entry = os.lstat(path)
         ours = os.stat(staged)
@@ -786,10 +788,30 @@ def _is_same_file(path: Path, staged: Path) -> bool:
     # Copy fallback: only an equal-size regular file can be this call's copy.
     if entry.st_size != ours.st_size:
         return False
+    # Re-open with no-follow and non-blocking flags, then verify the descriptor is the
+    # entry checked above. A FIFO or symlink swapped in after the lstat is refused here
+    # and never read.
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_BINARY", 0)
+    )
     try:
-        return path.read_bytes() == staged.read_bytes()
+        fd = os.open(path, flags)
     except OSError:
         return False
+    try:
+        opened = os.fstat(fd)
+        if not stat.S_ISREG(opened.st_mode) or not os.path.samestat(opened, entry):
+            return False
+        with os.fdopen(fd, "rb", closefd=False) as stream:
+            data = stream.read(ours.st_size + 1)
+        return data == staged.read_bytes()
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
 
 
 def _publish_plan(staged: Path, plan_path: Path) -> None:
