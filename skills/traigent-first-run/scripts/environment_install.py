@@ -339,11 +339,11 @@ def _redact_line(line: str) -> str:
         if separator_pending:
             separator_pending = False
             # `password = S3CRET`: the separator after a bare key word is kept and the
-            # value after it is redacted. A redacted separator is still replaced.
+            # value after it is redacted. A bare key never marks its next token for
+            # redaction, so `redact` is False here and the separator is left as it is.
             if _SEPARATOR_TOKEN.match(token):
                 redact_next = True
-                if not redact:
-                    continue
+                continue
         # A token that carries a key's value is tested first and replaced whole. If
         # it also ends in a separator, its trailing key's value is the next token.
         key = _carries_value(decoded)

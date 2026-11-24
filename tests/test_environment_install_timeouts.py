@@ -392,6 +392,79 @@ class DownloadHardeningTests(ServerFixture):
                     self.assertEqual(target.read_bytes(), b"wheel-bytes")
 
 
+class _FakeResponse:
+    """Stands in for the opener's response: a body and a headers mapping."""
+
+    def __init__(self, body, headers=None):
+        self._body = io.BytesIO(body)
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def read1(self, size=-1):
+        return self._body.read1(size)
+
+
+class SizeCapBoundaryTests(unittest.TestCase):
+    CAP = 1024
+
+    def _download(self, body, headers=None):
+        module = load_module()
+        target_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(target_dir.cleanup)
+        target = Path(target_dir.name) / "pkg-1.0-py3-none-any.whl"
+        with (
+            mock.patch.object(module, "MAX_WHEEL_BYTES", self.CAP),
+            mock.patch.object(
+                module, "_open_url", return_value=_FakeResponse(body, headers)
+            ),
+        ):
+            module._download(
+                "https://example.invalid/pkg-1.0-py3-none-any.whl",
+                target,
+                read_timeout=5,
+                deadline=5,
+            )
+        return target
+
+    def test_body_of_exactly_the_cap_is_accepted(self):
+        target = self._download(b"x" * self.CAP)
+        self.assertEqual(target.stat().st_size, self.CAP)
+
+    def test_declared_length_of_exactly_the_cap_is_accepted(self):
+        target = self._download(b"x" * self.CAP, {"Content-Length": str(self.CAP)})
+        self.assertEqual(target.stat().st_size, self.CAP)
+
+    def test_body_one_byte_over_the_cap_is_refused(self):
+        with self.assertRaises(ValueError) as raised:
+            self._download(b"x" * (self.CAP + 1))
+        self.assertIn("exceeded", str(raised.exception))
+
+    def test_declared_length_one_byte_over_the_cap_is_refused(self):
+        with self.assertRaises(ValueError) as raised:
+            self._download(b"x" * (self.CAP + 1), {"Content-Length": str(self.CAP + 1)})
+        self.assertIn("exceeded", str(raised.exception))
+
+
+class DeclaredLengthParsingTests(unittest.TestCase):
+    def test_plain_decimal_with_surrounding_space_is_its_value(self):
+        module = load_module()
+        self.assertEqual(module._declared_length(" 12 "), 12)
+        self.assertEqual(module._declared_length("0"), 0)
+
+    def test_absent_or_non_plain_decimal_values_are_none(self):
+        module = load_module()
+        # str.isdigit() accepts "²" (int() then raises) and "١٢" (int() parses it).
+        # Only the ASCII check rejects both: Content-Length is ASCII digits only.
+        for value in (None, "", "1,2", "-1", "1e3", "12abc", "²", "١٢"):
+            with self.subTest(value=value):
+                self.assertIsNone(module._declared_length(value))
+
+
 class DownloadRefusalAndInterruptTests(unittest.TestCase):
     def test_http_client_invalid_url_error_text_is_redacted_and_not_chained(self):
         module = load_module()
@@ -1921,8 +1994,12 @@ class PlanApplyHarnessTests(unittest.TestCase):
 
         self._assert_foreign_plan_entry_is_left_alone(make_symlink)
 
-    @unittest.skipUnless(hasattr(os, "geteuid"), "POSIX permissions are required")
-    @unittest.skipIf(os.geteuid() == 0, "root reads an unreadable file anyway")
+    # `or` short-circuits, so os.geteuid is never called where it does not exist.
+    # `or` short-circuits, so os.geteuid is never called where it does not exist.
+    @unittest.skipIf(
+        not hasattr(os, "geteuid") or os.geteuid() == 0,
+        "POSIX permissions are required, and root reads an unreadable file anyway",
+    )
     def test_foreign_unreadable_file_of_plan_size_is_left_alone(self):
         def make_unreadable(path, size):
             # Same size as the staged plan, so only a read could tell them apart.
@@ -1977,7 +2054,11 @@ class PlanApplyHarnessTests(unittest.TestCase):
         def other_run_publishes_then_link_refused(source, destination, *args, **kwargs):
             if Path(destination) == self.plan_path:
                 staged_bytes = Path(source).read_bytes()
-                other_cache = str(self.root / "other-wheels-cache")
+                # Same length as this call's cache path, different in its last
+                # character, so the size check cannot decide the comparison.
+                own_cache = str(Path(source).parent)
+                last = "0" if own_cache[-1] != "0" else "1"
+                other_cache = own_cache[:-1] + last
                 other_plan["bytes"] = staged_bytes.replace(
                     str(Path(source).parent).encode(), other_cache.encode()
                 )
@@ -2184,8 +2265,30 @@ class IsSameFileCheckedEntryTests(unittest.TestCase):
         self.assertTrue(self.module._is_same_file(self.plan, self.staged))
 
     def test_regular_file_with_different_bytes_is_not_this_calls_plan(self):
-        self.plan.write_bytes(b"other-bytes")  # same size, different content
+        # Equal length, so only the byte comparison can tell the two apart.
+        self.plan.write_bytes(b"othr-bytes")
+        self.assertEqual(len(b"othr-bytes"), len(b"plan-bytes"))
         self.assertFalse(self.module._is_same_file(self.plan, self.staged))
+
+
+class PortableImportTests(unittest.TestCase):
+    def test_module_imports_where_os_geteuid_is_absent(self):
+        # Windows has no os.geteuid. Run the import in a child whose os lacks it, so
+        # a module-level call to it fails here on any platform.
+        code = (
+            "import importlib.util, os, sys\n"
+            "del os.geteuid\n"
+            "spec = importlib.util.spec_from_file_location('tests_under_test', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-c", code, str(Path(__file__).resolve())],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
 
 
 if __name__ == "__main__":
