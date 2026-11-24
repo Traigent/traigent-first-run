@@ -1,9 +1,11 @@
-"""Bounded-time checks for the wheel download and isolated pip steps.
+"""Tests for environment_install: bounded timeouts, download and pip hardening, plan handling.
 
-Every server here listens on 127.0.0.1 only, and every server thread is joined
-in its cleanup so a stalled fixture can never hang the suite. Download worker
-threads are daemons: by design they may outlive a test by a few seconds, because
-a stalled name lookup cannot be interrupted.
+Covers the wheel download and isolated pip steps under time limits, credential
+redaction, download size and redirect limits, plan publication and cleanup, signal
+exits, and plan-file identity. Every server here listens on 127.0.0.1 only, and
+every server thread is joined in its cleanup so a stalled fixture can never hang
+the suite. Download worker threads are daemons: by design they may outlive a test
+by a few seconds, because a stalled name lookup cannot be interrupted.
 """
 
 from __future__ import annotations
@@ -1905,8 +1907,9 @@ class PlanApplyHarnessTests(unittest.TestCase):
         with mock.patch.object(
             os, "link", side_effect=other_run_publishes_then_link_refused
         ):
-            with self.assertRaises((ValueError, FileExistsError)):
+            with self.assertRaises(ValueError) as raised:
                 self.module.plan(self.options)
+        self._assert_plan_already_exists(raised)
         self.assertEqual(
             self.plan_path.read_bytes(),
             other_plan["bytes"],
