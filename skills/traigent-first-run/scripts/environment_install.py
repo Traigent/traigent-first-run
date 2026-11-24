@@ -568,10 +568,7 @@ def _declared_length(value: str | None) -> int | None:
     if value is None:
         return None
     text = value.strip()
-    # No real length has more than 32 digits. Longer text would make int() raise
-    # (CPython's int-string digit limit, 4300 digits), so an over-long value is ignored.
-    if len(text) > 32:
-        return None
+    # int() raises ValueError above CPython's 4300-digit limit, the same as http.client's.
     try:
         length = int(text)
     except ValueError:
@@ -698,7 +695,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     if isinstance(error, urllib.error.HTTPError):
         detail += f" (HTTP {error.code})"
     elif isinstance(error, urllib.error.URLError):
-        detail += f" ({type(error.reason).__name__})"
+        # A string reason is text, not an exception: naming its type would name "str".
+        if isinstance(error.reason, BaseException):
+            detail += f" ({type(error.reason).__name__})"
     elif (
         isinstance(error, OSError)
         and not isinstance(error, ssl.SSLError)

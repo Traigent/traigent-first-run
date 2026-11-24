@@ -305,6 +305,24 @@ class DownloadDeadlineTests(ServerFixture):
             self.assertNotIn("/secret", message)
             self.assertFalse(target.exists())
 
+    def test_url_error_with_string_reason_names_no_type_and_no_text(self):
+        # A string reason (e.g. a redirect to a host-less URL) is not an exception, so
+        # its type name "str" would name a Python type, not an error. Show none.
+        module = load_module()
+        refused = urllib_error.URLError("no host given /secret")
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with mock.patch.object(module, "_open_url", side_effect=refused):
+                with self.assertRaises(ValueError) as raised:
+                    module._download(
+                        "http://127.0.0.1:9/x.whl", target, read_timeout=5, deadline=5
+                    )
+            message = str(raised.exception)
+            self.assertIn("Wheel download failed: URLError;", message)
+            self.assertNotIn("(str)", message)
+            self.assertNotIn("/secret", message)
+            self.assertFalse(target.exists())
+
     def test_existing_target_is_never_opened_for_writing(self):
         # "xb" refuses an existing file before any transfer, so the file keeps its
         # bytes and the opener is never asked for a body.
@@ -539,7 +557,13 @@ class DeclaredLengthParsingTests(unittest.TestCase):
         # so an over-long all-digit value must be ignored like any other malformed one.
         module = load_module()
         self.assertIsNone(module._declared_length("9" * 5000))
-        self.assertIsNone(module._declared_length("1" * 33))
+
+    def test_thirty_three_char_values_parse_as_http_client_does(self):
+        # A long value with leading zeros is a real length, not malformed: the
+        # digit-limit ValueError alone decides, so this matches http.client's int().
+        module = load_module()
+        self.assertEqual(module._declared_length("0" * 30 + "100"), 100)
+        self.assertEqual(module._declared_length("1" * 33), int("1" * 33))
 
     def test_nineteen_digit_value_is_its_value(self):
         module = load_module()
