@@ -5,46 +5,11 @@ documented private channel. The policy must point at this repository's own
 advisory form, not another repository's.
 """
 
-import fnmatch
 import re
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def _pattern_matches(pattern: str, rel_path: str) -> bool:
-    """Match one CODEOWNERS pattern, for the forms this repository uses only.
-
-    Supported: an anchored file ("/SECURITY.md"), an anchored directory prefix
-    ("/tests/"), and unanchored globs ("*.md", "**/requirements*.txt") matched
-    against the path. Anything else fails loudly rather than guessing.
-    """
-    if pattern.startswith("/"):
-        anchored = pattern[1:]
-        if anchored.endswith("/"):
-            return rel_path.startswith(anchored)
-        return fnmatch.fnmatchcase(rel_path, anchored)
-    if pattern.endswith("/"):
-        raise ValueError(f"unsupported unanchored directory pattern: {pattern}")
-    return fnmatch.fnmatchcase(rel_path, pattern)
-
-
-def _effective_owners(owners_text: str, path: str) -> list[str]:
-    """Return the owners GitHub applies to ``path``: the last matching line's owners.
-
-    An ownerless matching line therefore clears the owners, as GitHub does.
-    """
-    rel_path = path.lstrip("/")
-    effective: list[str] = []
-    for raw in owners_text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        pattern, *line_owners = line.split()
-        if _pattern_matches(pattern, rel_path):
-            effective = line_owners
-    return effective
 
 
 class SecurityPolicyTests(unittest.TestCase):
@@ -137,15 +102,30 @@ class SecurityPolicyTests(unittest.TestCase):
         for line in mentions:
             self.assertIn("placeholder", line)
 
-    def test_security_policy_and_its_pin_test_are_effectively_owned(self) -> None:
-        # A PR that edits the advisory URL or mailbox together with this test
-        # routes its review request to the owner, so both paths must resolve to
-        # the owner under GitHub's rule: the last matching CODEOWNERS line wins.
-        owners_text = (ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
-        for path in ("SECURITY.md", "tests/test_security_policy.py"):
+    def test_codeowners_pins_the_policy_paths_and_every_entry_names_the_owner(
+        self,
+    ) -> None:
+        # Every CODEOWNERS entry names the owner, so whichever line GitHub's
+        # last-match rule picks for these paths names the owner. The test does
+        # not model GitHub's matcher; it pins the entries it relies on.
+        lines = [
+            line.strip()
+            for line in (ROOT / ".github" / "CODEOWNERS")
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        for path in ("/SECURITY.md", "/tests/test_security_policy.py"):
             with self.subTest(path=path):
-                owners = _effective_owners(owners_text, path)
-                self.assertIn("@nimrodbusany", owners, f"effective owners: {owners}")
+                owners = [line.split()[1:] for line in lines if line.split()[0] == path]
+                self.assertTrue(
+                    any("@nimrodbusany" in entry for entry in owners),
+                    f"no {path} entry names @nimrodbusany",
+                )
+        for line in lines:
+            with self.subTest(line=line):
+                owners = line.split()[1:]
+                self.assertIn("@nimrodbusany", owners, "every entry names the owner")
 
     def test_in_scope_reports_have_the_private_advisory_form_and_mailbox(self) -> None:
         policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
@@ -212,6 +192,28 @@ class SecurityPolicyTests(unittest.TestCase):
         ]
         self.assertEqual(len(lines), 1, "exactly one out-of-scope scope line")
         self.assertIn("`deps/`", lines[0])
+
+    def test_in_scope_line_names_the_guide_and_the_bundled_skill(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        lines = [
+            line for line in policy.splitlines() if line.startswith("- **In scope:**")
+        ]
+        self.assertEqual(len(lines), 1, "exactly one in-scope line")
+        self.assertIn("`GUIDE.md`", lines[0])
+        self.assertIn("`skills/traigent-first-run/`", lines[0])
+
+    def test_out_of_scope_line_excludes_the_tests_and_tools_maintenance_trees(
+        self,
+    ) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        lines = [
+            line
+            for line in policy.splitlines()
+            if line.startswith("- **Out of scope:**")
+        ]
+        self.assertEqual(len(lines), 1, "exactly one out-of-scope scope line")
+        self.assertIn("`tests/`", lines[0])
+        self.assertIn("`tools/`", lines[0])
 
 
 if __name__ == "__main__":

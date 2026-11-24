@@ -850,10 +850,14 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("retry", message)
         self.assertNotIn("re-run", message)
 
-    def _pip_failure_message(self, changes_environment: bool) -> str:
+    def _pip_failure_message(
+        self, changes_environment: bool, returncode: int = 2
+    ) -> str:
         isolate_temp_dir(self)
         module = load_module()
-        failed = subprocess.CompletedProcess(args=["pip"], returncode=2, stdout="x")
+        failed = subprocess.CompletedProcess(
+            args=["pip"], returncode=returncode, stdout="x"
+        )
         with (
             mock.patch.object(module.subprocess, "run", return_value=failed),
             mock.patch.object(
@@ -931,6 +935,36 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         )
         self.assertNotIn("partly changed", message)
         self.assertNotIn("retry", message)
+
+    def test_apply_killed_by_signal_names_the_signal_not_an_exit_code(self):
+        # -9 is SIGKILL, e.g. the OOM killer; pip writes nothing when it is killed.
+        message = self._pip_failure_message(changes_environment=True, returncode=-9)
+        self.assertTrue(
+            message.startswith(
+                "Isolated pip was killed by SIGKILL during apply after 42s; the "
+                "environment may be partly changed. Stop and inspect it before any "
+                "further change. "
+            ),
+            message,
+        )
+        self.assertNotIn("exit code", message)
+
+    def test_plan_killed_by_signal_says_nothing_was_changed(self):
+        message = self._pip_failure_message(changes_environment=False, returncode=-9)
+        self.assertTrue(
+            message.startswith(
+                "Isolated pip was killed by SIGKILL after 42s; nothing was installed "
+                "or changed. "
+            ),
+            message,
+        )
+        self.assertNotIn("exit code", message)
+        self.assertNotIn("partly changed", message)
+
+    def test_signal_number_without_a_name_is_still_reported_as_a_signal(self):
+        message = self._pip_failure_message(changes_environment=False, returncode=-200)
+        self.assertIn("was killed by signal 200 after 42s", message)
+        self.assertNotIn("exit code", message)
 
 
 class PipOutputBytesTests(unittest.TestCase):
@@ -2948,6 +2982,11 @@ class _FormatRaisesInterrupt:
 
     def __format__(self, spec):
         raise self._interrupt
+
+    def __lt__(self, other):
+        # The failure path tests `returncode < 0` before formatting; answer it
+        # as "not a signal" so the interrupt still lands in the message.
+        return False
 
 
 class StallPathInterruptTests(unittest.TestCase):

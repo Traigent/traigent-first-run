@@ -276,6 +276,14 @@ def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
     )
 
 
+def _signal_name(number: int) -> str:
+    """Name a signal number for a message, or say the number when it has no name."""
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return f"signal {number}"
+
+
 def isolated_pip(
     candidate: Path, arguments: list[str], working: Path, *, changes_environment: bool
 ) -> None:
@@ -345,6 +353,21 @@ def isolated_pip(
                     f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second "
                     f"bound (stopped after {elapsed}s); nothing was installed or changed. "
                     "The network or dependency resolution stalled. " + saved
+                )
+        elif result.returncode < 0:
+            # A negative code is the signal that killed pip (e.g. -9, the OOM killer).
+            # pip writes nothing when killed, so name the signal rather than an exit code.
+            name = _signal_name(-result.returncode)
+            if changes_environment:
+                message = (
+                    f"Isolated pip was killed by {name} during apply after {elapsed}s; "
+                    "the environment may be partly changed. Stop and inspect it before "
+                    "any further change. " + saved
+                )
+            else:
+                message = (
+                    f"Isolated pip was killed by {name} after {elapsed}s; nothing was "
+                    "installed or changed. " + saved
                 )
         elif result.returncode == PIP_REFUSED_EXIT:
             message = (
