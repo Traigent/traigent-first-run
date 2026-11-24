@@ -14,3 +14,7 @@
 
 # Maintenance tooling (relock, guard census, disclosure scan).
 /tools/                      @nimrodbusany
+
+# Security policy and the test that pins its reporting routes.
+/SECURITY.md                         @nimrodbusany
+/tests/test_security_policy.py       @nimrodbusany

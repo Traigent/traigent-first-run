@@ -102,6 +102,65 @@ class SecurityPolicyTests(unittest.TestCase):
         for line in mentions:
             self.assertIn("placeholder", line)
 
+    def test_security_policy_and_its_pin_test_are_code_owned(self) -> None:
+        # A PR that edits the advisory URL or mailbox together with this test must
+        # still need an owner's review, so both paths need a CODEOWNERS entry.
+        owners = (ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
+        for path in ("/SECURITY.md", "/tests/test_security_policy.py"):
+            with self.subTest(path=path):
+                self.assertRegex(
+                    owners,
+                    rf"(?m)^{re.escape(path)}[ \t]+@\S+",
+                    f"{path} has no CODEOWNERS owner",
+                )
+
+    def test_reporting_paragraph_says_to_report_privately(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "Please report security issues privately rather than in a public issue "
+            "or pull request.",
+            policy,
+        )
+
+    def test_hosted_service_route_is_on_the_out_of_scope_line(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        lines = [
+            line
+            for line in policy.splitlines()
+            if "Out of scope for this repository" in line
+        ]
+        self.assertEqual(len(lines), 1, "exactly one out-of-scope routing line")
+        self.assertIn(
+            "the hosted Traigent service to [security@traigent.ai]"
+            "(mailto:security@traigent.ai)",
+            lines[0],
+        )
+
+    def test_reporters_are_told_not_to_include_real_secrets(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        self.assertIn(
+            "Do not include real secrets or customer data in a report.", policy
+        )
+
+    def test_only_the_current_tip_is_supported(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        section = policy[
+            policy.index("\n## Supported versions\n") : policy.index(
+                "\n## Disclosure\n"
+            )
+        ]
+        self.assertIn("Only its current tip is supported.", section)
+
+    def test_deps_is_out_of_scope(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        lines = [
+            line
+            for line in policy.splitlines()
+            if line.startswith("- **Out of scope:**")
+        ]
+        self.assertEqual(len(lines), 1, "exactly one out-of-scope scope line")
+        self.assertIn("`deps/`", lines[0])
+
 
 if __name__ == "__main__":
     unittest.main()

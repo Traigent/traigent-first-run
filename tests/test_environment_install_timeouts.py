@@ -2631,13 +2631,25 @@ class InterruptedApplyWarningTests(unittest.TestCase):
         module = load_module()
         root = isolate_temp_dir(self)
         plan, digest = self._approved_plan(module, root)
+        # A closed stream raises ValueError, not OSError, on write and fileno().
+        closed_stringio = io.StringIO()
+        closed_stringio.close()
+        closed_file = open(os.devnull, "w", encoding="utf-8")
+        closed_file.close()
+        streams = [
+            (errno.errorcode[code], DeadStream(code))
+            for code in (errno.EIO, errno.EPIPE)
+        ] + [
+            ("closed StringIO", closed_stringio),
+            ("closed file", closed_file),
+        ]
         interrupts = (
             ("KeyboardInterrupt", KeyboardInterrupt, lambda: KeyboardInterrupt()),
             ("SystemExit", SystemExit, lambda: SystemExit(143)),
         )
         for name, expected, make in interrupts:
-            for code in (errno.EIO, errno.EPIPE):
-                with self.subTest(interrupt=name, errno=errno.errorcode[code]):
+            for stream_name, stream in streams:
+                with self.subTest(interrupt=name, stream=stream_name):
                     raised = None
                     with (
                         mock.patch.object(
@@ -2653,7 +2665,7 @@ class InterruptedApplyWarningTests(unittest.TestCase):
                             "trusted_interpreter",
                             return_value=Path("/usr/bin/python3"),
                         ),
-                        mock.patch.object(sys, "stderr", DeadStream(code)),
+                        mock.patch.object(sys, "stderr", stream),
                     ):
                         try:
                             module.apply(
@@ -3280,6 +3292,25 @@ class InterruptedApplyDeadStderrExitTests(unittest.TestCase):
             process.wait(timeout=20),
             143,
             "a dead stderr changed the exit status of an interrupted apply",
+        )
+
+
+class DocumentedBoundsTests(unittest.TestCase):
+    def test_bounds_match_their_documented_values(self):
+        # The comments above the constants in environment_install.py state these
+        # values; a change to either must change this pin in the same commit.
+        module = load_module()
+        self.assertEqual(module.PIP_TIMEOUT_SECONDS, 900)
+        self.assertEqual(module.PLAN_DOWNLOAD_DEADLINE_SECONDS, 600)
+        self.assertEqual(
+            module.PIP_TIMEOUT_SECONDS + module.PLAN_DOWNLOAD_DEADLINE_SECONDS,
+            25 * 60,
+        )
+        self.assertEqual(module.MAX_WHEEL_BYTES, 1024**3)
+        self.assertEqual(module.DOWNLOAD_READ_TIMEOUT_SECONDS, 30)
+        self.assertLess(
+            module.DOWNLOAD_READ_TIMEOUT_SECONDS,
+            module.PLAN_DOWNLOAD_DEADLINE_SECONDS,
         )
 
 
