@@ -1168,6 +1168,35 @@ class PlanDownloadBudgetTests(unittest.TestCase):
         self.assertFalse(plan_path.exists())
 
 
+@contextlib.contextmanager
+def _bounded_against_hang_and_unbounded_read(seconds=10, address_space=2 << 30):
+    """Fail a regression instead of hanging or exhausting memory.
+
+    A FIFO blocks an unbounded open(); a symlink to /dev/zero makes read_bytes grow
+    without end. SIGALRM turns the first into an AssertionError, and an address-space
+    cap turns the second into a MemoryError within seconds.
+    """
+    import resource
+
+    def stalled(signum, frame):
+        raise AssertionError(f"plan() did not return within {seconds} s")
+
+    previous_handler = signal.signal(signal.SIGALRM, stalled)
+    previous_limit = resource.getrlimit(resource.RLIMIT_AS)
+    _, hard = previous_limit
+    capped = (
+        address_space if hard == resource.RLIM_INFINITY else min(address_space, hard)
+    )
+    resource.setrlimit(resource.RLIMIT_AS, (capped, hard))
+    signal.alarm(seconds)
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        resource.setrlimit(resource.RLIMIT_AS, previous_limit)
+        signal.signal(signal.SIGALRM, previous_handler)
+
+
 class PlanApplyHarnessTests(unittest.TestCase):
     def setUp(self):
         self.module = load_module()
@@ -1580,6 +1609,80 @@ class PlanApplyHarnessTests(unittest.TestCase):
                 self.module.plan(self.options)
         self.assertEqual(plan_path.read_text(encoding="utf-8"), "other run")
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    def _foreign_entry_appears_at_link(self, make_entry):
+        # Another process creates an entry at plan_path just before this run's
+        # exclusive os.link, so publication fails with FileExistsError. The fake
+        # records what it created so the test can prove the entry was left unchanged.
+        real_link = os.link
+        self.foreign_stat = None
+
+        def foreign_entry_then_exists(source, destination, *args, **kwargs):
+            if Path(destination) == self.plan_path:
+                make_entry(self.plan_path, os.stat(source).st_size)
+                self.foreign_stat = os.lstat(self.plan_path)
+                raise FileExistsError("File exists")
+            return real_link(source, destination, *args, **kwargs)
+
+        return mock.patch.object(os, "link", side_effect=foreign_entry_then_exists)
+
+    def _assert_foreign_plan_entry_is_left_alone(self, make_entry):
+        self._start(self._one_wheel, [BEFORE, BEFORE])
+        with self._foreign_entry_appears_at_link(make_entry):
+            with _bounded_against_hang_and_unbounded_read():
+                with self.assertRaises(FileExistsError):
+                    self.module.plan(self.options)
+        after = os.lstat(self.plan_path)
+        self.assertEqual(
+            (after.st_ino, after.st_mode, after.st_size),
+            (
+                self.foreign_stat.st_ino,
+                self.foreign_stat.st_mode,
+                self.foreign_stat.st_size,
+            ),
+        )
+        self.assertEqual(list(self.root.glob("*-wheels-*")), [])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFOs are required")
+    def test_foreign_fifo_at_plan_path_is_left_alone_not_read(self):
+        def make_fifo(path, size):
+            os.mkfifo(path)
+
+        self._assert_foreign_plan_entry_is_left_alone(make_fifo)
+
+    def test_foreign_directory_at_plan_path_is_left_alone(self):
+        def make_directory(path, size):
+            path.mkdir()
+
+        self._assert_foreign_plan_entry_is_left_alone(make_directory)
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "POSIX symlinks are required")
+    def test_foreign_symlink_to_dev_zero_at_plan_path_is_left_alone(self):
+        def make_symlink(path, size):
+            path.symlink_to("/dev/zero")
+
+        self._assert_foreign_plan_entry_is_left_alone(make_symlink)
+
+    @unittest.skipUnless(hasattr(os, "geteuid"), "POSIX permissions are required")
+    @unittest.skipIf(os.geteuid() == 0, "root reads an unreadable file anyway")
+    def test_foreign_unreadable_file_of_plan_size_is_left_alone(self):
+        def make_unreadable(path, size):
+            # Same size as the staged plan, so only a read could tell them apart.
+            path.write_bytes(b"\0" * size)
+            os.chmod(path, 0)
+
+        try:
+            self._assert_foreign_plan_entry_is_left_alone(make_unreadable)
+        finally:
+            os.chmod(self.plan_path, 0o600)
+
+    def test_is_same_file_regular_file_of_other_size_is_not_read(self):
+        staged = self.root / "staged.json"
+        staged.write_bytes(b"abc")
+        other = self.root / "other.json"
+        other.write_bytes(b"abcdef")
+        with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("read")):
+            self.assertFalse(self.module._is_same_file(other, staged))
 
     def test_no_hard_link_filesystem_publishes_by_copy_and_apply_accepts_it(self):
         self._start(self._one_wheel, [BEFORE, BEFORE, BEFORE, AFTER])

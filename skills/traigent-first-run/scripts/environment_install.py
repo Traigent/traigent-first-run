@@ -23,6 +23,7 @@ import re
 import secrets
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import sysconfig
@@ -770,12 +771,24 @@ def cache_wheel(item: dict, directory: Path, download_deadline: float) -> dict:
 def _is_same_file(path: Path, staged: Path) -> bool:
     """True when `path` is this call's plan: the hard link to `staged`, or, where
     hard links are refused, a byte-identical copy. Contents are unique per call,
-    because every artifact path embeds the call's random cache name."""
+    because every artifact path embeds the call's random cache name. Any entry that
+    is not a regular file, or cannot be read, is treated as not this call's and is
+    left alone without being reported."""
     try:
-        return (
-            os.path.samefile(path, staged) or path.read_bytes() == staged.read_bytes()
-        )
-    except FileNotFoundError:
+        entry = os.lstat(path)
+        ours = os.stat(staged)
+    except OSError:
+        return False
+    if not stat.S_ISREG(entry.st_mode):  # symlink, FIFO, directory, device: never ours
+        return False
+    if os.path.samestat(entry, ours):  # the hard link this call published
+        return True
+    # Copy fallback: only an equal-size regular file can be this call's copy.
+    if entry.st_size != ours.st_size:
+        return False
+    try:
+        return path.read_bytes() == staged.read_bytes()
+    except OSError:
         return False
 
 
