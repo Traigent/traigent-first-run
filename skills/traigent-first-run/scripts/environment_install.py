@@ -14,6 +14,7 @@ import argparse
 import configparser
 import contextlib
 import csv
+import errno
 import email.parser
 import importlib.util
 import json
@@ -202,8 +203,11 @@ def _save_pip_output(stdout, stderr) -> str:
     Never printed or chained: pip output can carry index or proxy addresses. The
     directory is a fresh mkdtemp under the system temp dir (0700 on POSIX; on Windows
     the per-user %TEMP% ACL applies), never the plan's directory, which may sit inside
-    the customer's project and be committed.
+    the customer's project and be committed. A save that fails after the directory
+    exists removes that directory; if even that fails, the message names it so the
+    user can delete it.
     """
+    directory = None
     try:
         directory = Path(tempfile.mkdtemp(prefix="first-run-pip-"))
         path = directory / "pip-output.log"
@@ -221,7 +225,18 @@ def _save_pip_output(stdout, stderr) -> str:
                         else part.encode("utf-8", "replace")
                     )
     except OSError as error:
-        return f"pip's output could not be saved ({type(error).__name__})"
+        kind = type(error).__name__
+        if directory is None:
+            return f"pip's output could not be saved ({kind})"
+        try:
+            shutil.rmtree(directory)
+        except OSError:
+            # Not chained: the removal error's text may name the same paths.
+            return (
+                f"pip's output could not be saved ({kind}); a partial copy may remain "
+                f"in {directory}: delete it"
+            )
+        return f"pip's output could not be saved ({kind})"
     return (
         f"pip's full output is saved, unredacted, in {path} (readable only by you). "
         "Read it for the cause and quote only the lines that show it: it can contain "
@@ -547,6 +562,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         detail += f" (HTTP {error.code})"
     elif isinstance(error, urllib.error.URLError):
         detail += f" ({type(error.reason).__name__})"
+    elif isinstance(error, OSError) and error.errno in errno.errorcode:
+        # A local write failure (e.g. a full disk): the errno name is fixed text.
+        detail += f" ({errno.errorcode[error.errno]})"
     raise ValueError(
         f"Wheel download failed: {detail}; nothing was installed or changed."
     ) from None
@@ -858,19 +876,21 @@ def apply(options) -> dict:
     }
 
 
-def _run_plan_handling_termination(options) -> dict:
-    """Run plan() so SIGTERM/SIGHUP unwind through its cleanup of the wheel cache.
+def _run_handling_termination(command, options) -> dict:
+    """Run command(options) so SIGTERM/SIGHUP unwind through its own cleanup.
 
     Without a Python handler the default action ends the process with no exception,
-    so plan()'s BaseException cleanup never runs and partial wheels stay behind.
-    Raising SystemExit(128 + signum) unwinds exactly like Ctrl-C and keeps the
-    conventional exit status. Handlers can only be set from the main thread.
+    so BaseException cleanup never runs: plan() would leave partial wheels behind,
+    and apply() would leave its pip child running, because subprocess.run kills its
+    child only when an exception propagates. Raising SystemExit(128 + signum)
+    unwinds exactly like Ctrl-C and keeps the conventional exit status. Handlers can
+    only be set from the main thread.
 
     A signal whose disposition is already SIG_IGN is left alone: `nohup` starts the
-    process with SIGHUP ignored, and that choice must survive the plan.
+    process with SIGHUP ignored, and that choice must survive the command.
     """
     if threading.current_thread() is not threading.main_thread():
-        return plan(options)
+        return command(options)
 
     def terminate(signum, frame):
         raise SystemExit(128 + signum)
@@ -882,7 +902,7 @@ def _run_plan_handling_termination(options) -> dict:
             if signal.getsignal(signum) is signal.SIG_IGN:
                 continue
             previous[signum] = signal.signal(signum, terminate)
-        return plan(options)
+        return command(options)
     finally:
         for signum, handler in previous.items():
             signal.signal(signum, handler)
@@ -914,9 +934,9 @@ def main(argv=None) -> int:
                 arguments[1:] if arguments[:1] == ["--"] else arguments,
             )
         if options.command == "plan":
-            result = _run_plan_handling_termination(options)
+            result = _run_handling_termination(plan, options)
         else:
-            result = apply(options)
+            result = _run_handling_termination(apply, options)
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return 1

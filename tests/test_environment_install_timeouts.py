@@ -284,6 +284,8 @@ class DownloadDeadlineTests(ServerFixture):
                     )
             self.assertIn("the server sent nothing for 0.5s", str(raised.exception))
             self.assertNotIn("ran out", str(raised.exception))
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
             self.assertFalse(target.exists())
 
 
@@ -380,6 +382,8 @@ class DownloadHardeningTests(ServerFixture):
             self.assertLess(elapsed, 3, "the size cap did not stop the transfer")
             self.assertIn("exceeded the 2 MiB size limit", str(raised.exception))
             self.assertIn("nothing was installed or changed", str(raised.exception))
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
             self.assertFalse(target.exists(), "partial wheel must be removed")
 
     def test_declared_length_over_cap_fails_before_reading(self):
@@ -397,6 +401,8 @@ class DownloadHardeningTests(ServerFixture):
             self.assertLess(elapsed, 3, "declared length was not checked up front")
             self.assertIn("exceeded the 2 MiB size limit", str(raised.exception))
             self.assertNotIn("sent nothing", str(raised.exception))
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
             self.assertFalse(target.exists())
 
     def test_malformed_content_length_is_ignored_and_valid_body_downloads(self):
@@ -566,7 +572,57 @@ class DownloadRefusalAndInterruptTests(unittest.TestCase):
                 "nothing was installed or changed.",
             )
             self.assertIsNone(raised.exception.__context__)
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
             self.assertFalse(target.exists())
+
+    def test_local_write_error_keeps_its_errno_name_without_text_or_path(self):
+        module = load_module()
+        real_open = Path.open
+
+        class FullDisk:
+            def __init__(self, handle):
+                self.handle = handle
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                self.handle.close()
+                return False
+
+            def write(self, data):
+                raise OSError(errno.ENOSPC, "No space left on device /secret/path")
+
+            def close(self):
+                self.handle.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            with (
+                mock.patch.object(
+                    Path,
+                    "open",
+                    lambda path, *a, **k: FullDisk(real_open(path, *a, **k)),
+                ),
+                mock.patch.object(
+                    module, "_open_url", return_value=_FakeResponse(b"wheel-bytes")
+                ),
+            ):
+                with self.assertRaises(ValueError) as raised:
+                    module._download(
+                        "https://files.example.invalid/x.whl",
+                        target,
+                        read_timeout=5,
+                        deadline=5,
+                    )
+            message = str(raised.exception)
+            self.assertIn("Wheel download failed: OSError (ENOSPC);", message)
+            self.assertNotIn("No space left", message)
+            self.assertNotIn("/secret/path", message)
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertTrue(raised.exception.__suppress_context__)
+            self.assertFalse(target.exists(), "partial wheel must be removed")
 
     def test_interrupt_during_download_closes_stream_and_removes_partial_file(self):
         module = load_module()
@@ -838,6 +894,97 @@ class PipOutputFileTests(unittest.TestCase):
         self.assertIn("Installer stalled", message)
         self.assertIn("could not be saved (PermissionError)", message)
         self.assertIsNone(error.__context__)
+
+    def test_write_failing_after_the_file_exists_leaves_no_partial_copy(self):
+        module = load_module()
+        real_fdopen = os.fdopen
+
+        class FailsOnSecondWrite:
+            def __init__(self, stream):
+                self.stream = stream
+                self.writes = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                self.stream.close()
+                return False
+
+            def write(self, data):
+                self.writes += 1
+                if self.writes == 2:
+                    raise OSError(errno.ENOSPC, "No space left on device")
+                return self.stream.write(data)
+
+        with mock.patch.object(
+            module.os,
+            "fdopen",
+            side_effect=lambda fd, mode: FailsOnSecondWrite(real_fdopen(fd, mode)),
+        ):
+            message = module._save_pip_output(b"out", b"err")
+        self.assertIn("could not be saved (OSError)", message)
+        self.assertNotIn("No space left", message)
+        self.assertEqual(
+            list(self.temp_root.glob("first-run-pip-*")),
+            [],
+            "a failed save must remove its partial file and directory",
+        )
+
+    def test_failed_open_leaves_no_empty_directory(self):
+        module = load_module()
+        real_open = os.open
+
+        def open_refuses_only_the_log(path, *args, **kwargs):
+            # shutil.rmtree uses os.open too, so only the log file is refused.
+            if str(path).endswith("pip-output.log"):
+                raise PermissionError("denied")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch.object(
+            module.os, "open", side_effect=open_refuses_only_the_log
+        ):
+            message = module._save_pip_output(b"out", b"err")
+        self.assertIn("could not be saved (PermissionError)", message)
+        self.assertEqual(
+            list(self.temp_root.glob("first-run-pip-*")),
+            [],
+            "a failed save must remove the empty directory it created",
+        )
+
+    def test_failed_cleanup_names_the_directory_and_says_to_delete_it(self):
+        module = load_module()
+        with (
+            mock.patch.object(module.os, "open", side_effect=PermissionError("denied")),
+            mock.patch.object(
+                module.shutil, "rmtree", side_effect=OSError(errno.EBUSY, "busy")
+            ),
+        ):
+            message = module._save_pip_output(b"out", b"err")
+        directories = list(self.temp_root.glob("first-run-pip-*"))
+        self.assertEqual(len(directories), 1)
+        self.assertIn("could not be saved (PermissionError)", message)
+        self.assertIn(
+            f"; a partial copy may remain in {directories[0]}: delete it", message
+        )
+        self.assertNotIn("busy", message)
+
+    def test_stall_and_failure_messages_report_elapsed_seconds(self):
+        module = load_module()
+        expired = subprocess.TimeoutExpired(cmd=["pip"], timeout=0.1)
+        failed = subprocess.CompletedProcess(args=["pip"], returncode=1)
+        cases = (
+            (expired, False, "(stopped after 42s)"),
+            (expired, True, "during apply (stopped after 42s)"),
+            (failed, True, "failed with exit code 1 after 42s;"),
+        )
+        for outcome, changes, expected in cases:
+            with self.subTest(expected=expected):
+                with mock.patch.object(
+                    module.time, "monotonic", side_effect=[100.0, 142.4]
+                ):
+                    error = self.pip_error(module, outcome, changes_environment=changes)
+                self.assertIn(expected, str(error))
 
     def test_no_child_byte_reaches_the_message(self):
         module = load_module()
@@ -1932,8 +2079,52 @@ class PlanSignalExitTests(unittest.TestCase):
         self.assertIs(signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
 
 
+class ApplySignalExitTests(unittest.TestCase):
+    """SIGTERM during apply must stop the pip child, not leave it running."""
+
+    @POSIX_ONLY
+    def test_sigterm_during_apply_stops_the_pip_child(self):
+        module = load_module()
+        root = isolate_temp_dir(self)
+        marker = root / "child-finished"
+        # Stands in for the trusted interpreter: sleeps as a slow pip install would,
+        # then writes the marker only if it was not stopped first.
+        fake = root / "fake_interpreter.sh"
+        fake.write_text(
+            "#!/bin/sh\nfor a; do last=$a; done\nsleep 4\n" 'echo finished > "$last"\n',
+            encoding="utf-8",
+        )
+        fake.chmod(0o700)
+
+        def apply_runs_pip(options):
+            threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGTERM)).start()
+            module.isolated_pip(
+                Path("/nonexistent/candidate"),
+                [str(marker)],
+                root,
+                changes_environment=True,
+            )
+            return {}
+
+        # Recording handler stands in for the default action, which would end the
+        # runner on the pre-fix code before the child could be observed.
+        previous = signal.signal(signal.SIGTERM, lambda number, frame: None)
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        started = time.monotonic()
+        with (
+            mock.patch.object(module, "require_isolation"),
+            mock.patch.object(module, "apply", side_effect=apply_runs_pip),
+            mock.patch.object(module.ENV, "trusted_interpreter", return_value=fake),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            module.main(["apply", "--plan", "p", "--approved-plan-sha256", "x"])
+        self.assertLess(time.monotonic() - started, 3, "SIGTERM did not stop apply")
+        self.assertEqual(raised.exception.code, 143)
+        self.assertFalse(marker.exists(), "pip child kept running after SIGTERM")
+
+
 class PlanOffMainThreadTests(unittest.TestCase):
-    """_run_plan_handling_termination must not touch signal handlers off the main thread."""
+    """_run_handling_termination must not touch signal handlers off the main thread."""
 
     def test_plan_runs_off_main_thread_without_touching_signal_handlers(self):
         module = load_module()
@@ -1941,8 +2132,8 @@ class PlanOffMainThreadTests(unittest.TestCase):
 
         def run():
             try:
-                outcome["result"] = module._run_plan_handling_termination(
-                    argparse.Namespace()
+                outcome["result"] = module._run_handling_termination(
+                    module.plan, argparse.Namespace()
                 )
             except (
                 BaseException
