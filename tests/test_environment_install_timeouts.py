@@ -1118,6 +1118,27 @@ class PipOutputFileTests(unittest.TestCase):
             "a failed save must remove its partial file and directory",
         )
 
+    def test_log_is_opened_in_binary_mode_so_newlines_are_not_translated(self):
+        module = load_module()
+        real_open = os.open
+        recorded = []
+
+        def recording_open(path, flags, *args, **kwargs):
+            if str(path).endswith("pip-output.log"):
+                recorded.append(flags)
+            return real_open(path, flags, *args, **kwargs)
+
+        # A fake O_BINARY stands in for Windows, where text mode would turn \n into \r\n.
+        with (
+            mock.patch.object(os, "O_BINARY", 0x8000, create=True),
+            mock.patch.object(module.os, "open", side_effect=recording_open),
+        ):
+            message, _ = module._save_pip_output(b"out\n", b"err\n")
+        self.assertIn("is saved, unredacted", message)
+        self.assertEqual(len(recorded), 1)
+        self.assertEqual(recorded[0] & 0x8000, 0x8000, "log must be opened binary")
+        self.assertTrue(recorded[0] & os.O_EXCL, "log must be created exclusively")
+
     def test_failed_open_leaves_no_empty_directory(self):
         module = load_module()
         real_open = os.open

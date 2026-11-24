@@ -5,6 +5,7 @@ documented private channel. The policy must point at this repository's own
 advisory form, not another repository's.
 """
 
+import re
 import unittest
 from pathlib import Path
 
@@ -20,6 +21,21 @@ class SecurityPolicyTests(unittest.TestCase):
         self.assertIn(
             "https://github.com/Traigent/traigent-first-run/security/advisories/new",
             policy,
+        )
+
+    def test_out_of_scope_line_routes_sdk_reports_to_the_sdk_advisory_form(
+        self,
+    ) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        lines = [
+            line
+            for line in policy.splitlines()
+            if "Out of scope for this repository" in line
+        ]
+        self.assertEqual(len(lines), 1, "exactly one out-of-scope routing line")
+        urls = re.findall(r"<(https://[^>]+)>", lines[0])
+        self.assertIn(
+            "https://github.com/Traigent/Traigent/security/advisories/new", urls
         )
 
     def test_it_names_the_security_mailbox(self) -> None:

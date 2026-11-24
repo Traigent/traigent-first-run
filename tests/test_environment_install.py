@@ -354,6 +354,71 @@ print(json.dumps({"attempted": attempted, "error": None}))
             },
         )
 
+    def pre_pip_refusal(self, members):
+        """Run the real _pip child on a wheel with exactly these archive members."""
+        wheel_path = self.wheels / "pr545_example-2.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as archive:
+            for filename, content in members.items():
+                archive.writestr(filename, content)
+        return subprocess.run(
+            [
+                str(TRUSTED),
+                "-I",
+                "-S",
+                "-B",
+                str(SCRIPT),
+                "_pip",
+                "--candidate",
+                str(self.target),
+                "--",
+                "install",
+                str(wheel_path),
+            ],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+    def wheel_members(self, entry_points, *, wheel_file=True):
+        """Archive members of a valid wheel, with the given entry_points.txt text."""
+        dist_info = "pr545_example-2.0.dist-info"
+        members = {
+            "pr545_example.py": "def main():\n    pass\n",
+            f"{dist_info}/METADATA": "Metadata-Version: 2.1\nName: pr545-example\nVersion: 2.0\n",
+            f"{dist_info}/entry_points.txt": entry_points,
+            f"{dist_info}/RECORD": "",
+        }
+        if wheel_file:
+            members[f"{dist_info}/WHEEL"] = (
+                "Wheel-Version: 1.0\nGenerator: local-test\nRoot-Is-Purelib: true\n"
+                "Tag: py3-none-any\n"
+            )
+        return members
+
+    def test_duplicate_console_script_refuses_before_pip_with_exit_65(self):
+        # configparser.DuplicateOptionError: not a ValueError, so it once escaped.
+        result = self.pre_pip_refusal(
+            self.wheel_members(
+                "[console_scripts]\n"
+                "pr545-example = pr545_example:main\n"
+                "pr545-example = pr545_example:other\n"
+            )
+        )
+        self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+        self.assertIn("error", json.loads(result.stderr))
+
+    def test_wheel_without_wheel_metadata_refuses_before_pip_with_exit_65(self):
+        # KeyError from archive.read of the missing WHEEL file: not a ValueError.
+        result = self.pre_pip_refusal(
+            self.wheel_members(
+                "[console_scripts]\npr545-example = pr545_example:main\n",
+                wheel_file=False,
+            )
+        )
+        self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+        self.assertIn("error", json.loads(result.stderr))
+
     @unittest.skipUnless(os.name == "posix", "requires symbolic links")
     def test_outward_package_symlink_is_refused_without_writes(self):
         outside = self.root / "outside"

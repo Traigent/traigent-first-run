@@ -228,7 +228,11 @@ def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
     try:
         directory = Path(tempfile.mkdtemp(prefix="first-run-pip-"))
         path = directory / "pip-output.log"
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        descriptor = os.open(
+            path,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0),
+            0o600,
+        )
         with os.fdopen(descriptor, "wb") as stream:
             for label, part in (
                 (b"--- stdout ---\n", stdout),
@@ -479,7 +483,11 @@ def pip_adapter(candidate: Path, arguments: list[str]) -> int:
                 artifact = Path(argument)
                 if argument.endswith(".whl") and artifact.is_file():
                     validate_wheel_paths(artifact, Path(state["prefix"]), get_scheme)
-    except (OSError, ValueError, RuntimeError) as error:
+    except Exception as error:
+        # Everything in this try only reads: the snapshot, the imports, the API checks and
+        # wheel path validation (configparser, zipfile and KeyError refusals included).
+        # "Before pip's main() runs" is what makes "nothing was changed" true, not the
+        # exception type, so every failure here exits as a refusal.
         # Child stderr only: the parent saves it to the log and never prints it.
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return PIP_REFUSED_EXIT
