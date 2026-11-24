@@ -2903,6 +2903,102 @@ class PipChildOutlivesKilledParentTests(unittest.TestCase):
         )
 
 
+@POSIX_ONLY
+class LifelineOnLowDescriptorTests(unittest.TestCase):
+    """The lifeline survives a parent whose stdin, stdout or stderr is closed.
+
+    os.pipe() takes the lowest free descriptors. With fd 1 or 2 closed, the lifeline's read
+    end lands there, and Popen's stdout/stderr dup2 in the child overwrites it: the child
+    then watches its own output pipe, not the lifeline. The parent's standard fds are
+    closed right before isolated_pip, so the lifeline is forced onto them whatever
+    startup happened to open.
+    """
+
+    def _run_parent(self, closed, *, sleep_seconds):
+        root = isolate_temp_dir(self)
+        stand_in = _lifeline_stand_in(root)
+        if sleep_seconds is not None:
+            stand_in.write_text(
+                stand_in.read_text().replace(
+                    "time.sleep(60)", f"time.sleep({sleep_seconds})"
+                ),
+                encoding="utf-8",
+            )
+        parent_code = "\n".join(
+            [
+                "import importlib.util, os, subprocess, sys",
+                "from pathlib import Path",
+                "from unittest import mock",
+                "spec = importlib.util.spec_from_file_location("
+                f"'parent_under_test', {str(SCRIPT)!r})",
+                "module = importlib.util.module_from_spec(spec)",
+                "spec.loader.exec_module(module)",
+                # Report on a duplicate of stdout, taken before fd 1 is closed.
+                "report = os.fdopen(os.dup(1), 'w')",
+                f"for descriptor in {tuple(closed)!r}:",
+                "    os.close(descriptor)",
+                "real_fork_exec = subprocess._fork_exec",
+                "def fork_exec(*args, **kwargs):",
+                "    pid = real_fork_exec(*args, **kwargs)",
+                "    print(pid, file=report, flush=True)",
+                "    return pid",
+                "with mock.patch.object(subprocess, '_fork_exec', fork_exec), \\",
+                "        mock.patch.object(module.ENV, 'trusted_interpreter',",
+                f"                          return_value=Path({str(stand_in)!r})):",
+                "    module.isolated_pip(Path('/nonexistent/candidate'), ['install', 'x'],",
+                f"                        Path({str(root)!r}), changes_environment=True)",
+                "print('returned', file=report, flush=True)",
+                "",
+            ]
+        )
+        parent = subprocess.Popen(
+            [sys.executable, "-c", parent_code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=dict(os.environ, TMPDIR=str(root)),
+        )
+        self.addCleanup(parent.stdout.close)
+        self.addCleanup(parent.stderr.close)
+        self.addCleanup(parent.wait)
+        self.addCleanup(parent.kill)
+        child = int(parent.stdout.readline())
+        self.addCleanup(_reap, child)
+        return parent, child
+
+    def _assert_sigkill_stops_child(self, closed):
+        parent, child = self._run_parent(closed, sleep_seconds=None)
+        time.sleep(
+            1.0
+        )  # the child's watcher has started; the parent waits in communicate()
+        self.assertFalse(_child_gone(child), "pip child should run while parent waits")
+        os.kill(parent.pid, signal.SIGKILL)
+        parent.wait(timeout=10)
+        self.assertTrue(
+            _gone_within(child, 2),
+            f"pip child outlived its parent's SIGKILL with fds {closed} closed",
+        )
+
+    def test_sigkill_stops_child_when_stdout_and_stderr_are_closed(self):
+        self._assert_sigkill_stops_child((1, 2))
+
+    def test_sigkill_stops_child_when_stdout_is_closed(self):
+        self._assert_sigkill_stops_child((1,))
+
+    def test_sigkill_stops_child_when_stderr_is_closed(self):
+        self._assert_sigkill_stops_child((2,))
+
+    def test_sigkill_stops_child_when_all_standard_fds_are_closed(self):
+        self._assert_sigkill_stops_child((0, 1, 2))
+
+    def test_pip_still_runs_and_returns_with_standard_fds_closed(self):
+        parent, _child = self._run_parent((0, 1, 2), sleep_seconds=0)
+        self.assertEqual(
+            parent.stdout.readline().strip(), "returned", parent.stderr.read()
+        )
+        self.assertEqual(parent.wait(timeout=30), 0)
+
+
 class PlanOffMainThreadTests(unittest.TestCase):
     """_run_handling_termination must not touch signal handlers off the main thread."""
 
@@ -3904,6 +4000,233 @@ class DocumentedBoundsTests(unittest.TestCase):
             module.DOWNLOAD_READ_TIMEOUT_SECONDS,
             module.PLAN_DOWNLOAD_DEADLINE_SECONDS,
         )
+
+
+@POSIX_ONLY
+class LifelinePipeAllocationTests(unittest.TestCase):
+    def test_failed_second_move_closes_the_first_and_leaks_no_descriptor(self):
+        module = load_module()
+        fcntl = importlib.import_module("fcntl")
+        real_fcntl = fcntl.fcntl
+        calls = []
+
+        def second_move_fails(descriptor, command, argument=0):
+            calls.append(descriptor)
+            if len(calls) == 2:
+                raise OSError(errno.EMFILE, "too many open files")
+            return real_fcntl(descriptor, command, argument)
+
+        before = set(os.listdir("/dev/fd"))
+        with mock.patch.object(fcntl, "fcntl", side_effect=second_move_fails):
+            with self.assertRaises(OSError) as raised:
+                module._lifeline_pipe()
+        self.assertEqual(raised.exception.errno, errno.EMFILE)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(set(os.listdir("/dev/fd")), before)
+
+
+class SavedLogAdviceTests(unittest.TestCase):
+    def test_saved_log_message_carries_the_advice_word_for_word(self):
+        isolate_temp_dir(self)
+        module = load_module()
+        message, directory = module._save_pip_output(b"out", b"err")
+        self.assertIsNotNone(directory)
+        advice = (
+            "Read it for the cause and quote only the lines that show it: it can contain "
+            "index or proxy addresses. Delete it when done."
+        )
+        self.assertTrue(
+            message.endswith(" " + advice),
+            f"saved-log message must end with the advice, got {message!r}",
+        )
+
+
+UNCHAINED_SENTINEL = "caught-text-sentinel-8c1d"
+
+
+def _refuse_exclusive_open(real_open):
+    """Path.open replacement that raises FileExistsError for the "xb" open only."""
+
+    def open_guard(path, mode="r", *args, **kwargs):
+        if mode == "xb":
+            raise FileExistsError(errno.EEXIST, UNCHAINED_SENTINEL)
+        return real_open(path, mode, *args, **kwargs)
+
+    return open_guard
+
+
+# One row per `raise ... from None` in environment_install.py: (site, driver method).
+UNCHAINED_RAISE_SITES = (
+    ("_download: declared length over MAX_WHEEL_BYTES", "_site_download_size"),
+    ("_download: body cut short", "_site_download_truncated"),
+    ("_download: https-to-http redirect refused", "_site_download_redirect"),
+    ("_download: stalled read", "_site_download_read_timeout"),
+    ("_download: any other transfer failure", "_site_download_generic"),
+    ("_publish_plan: plan exists (hard link)", "_site_publish_exists_by_link"),
+    ("_publish_plan: plan exists (exclusive copy)", "_site_publish_exists_by_copy"),
+    ("plan(): cache removal fails under a labelled error", "_site_plan_cache_removal"),
+)
+
+
+class UnchainedRaiseSitesTests(unittest.TestCase):
+    """Every `raise ... from None` in environment_install.py raises an unchained error.
+
+    The contract: no exception text is ever chained. Each row drives one such site
+    through a real call path with an injected exception whose text is UNCHAINED_SENTINEL,
+    and checks that the raised error has no __cause__, suppresses its context, and
+    prints none of the sentinel. __context__ is not pinned to None: Python sets it to
+    the handled exception whenever a raise sits inside an except block (as the
+    _publish_plan sites do), and `from None` is what keeps it out of the output.
+    The count check fails when a `from None` site is added without a row here.
+    """
+
+    def _raised(self, drive):
+        with self.assertRaises(ValueError) as raised:
+            drive()
+        return raised.exception
+
+    def _download(self, module, **open_patch):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        with mock.patch.object(module, "_open_url", **open_patch):
+            return self._raised(
+                lambda: module._download(
+                    "https://example.invalid/wheel.whl",
+                    Path(directory.name) / "wheel.whl",
+                    5,
+                    time.monotonic() + 30,
+                )
+            )
+
+    def _site_download_size(self):
+        module = load_module()
+        response = _FakeResponse(b"", length=module.MAX_WHEEL_BYTES + 1)
+        return self._download(module, return_value=response)
+
+    def _site_download_truncated(self):
+        module = load_module()
+        return self._download(module, return_value=_FakeResponse(b"abc", length=10))
+
+    def _site_download_redirect(self):
+        module = load_module()
+        return self._download(
+            module, side_effect=module._HttpsDowngradeRefused(UNCHAINED_SENTINEL)
+        )
+
+    def _site_download_read_timeout(self):
+        module = load_module()
+        return self._download(module, side_effect=TimeoutError(UNCHAINED_SENTINEL))
+
+    def _site_download_generic(self):
+        module = load_module()
+        return self._download(
+            module, side_effect=urllib_error.URLError(UNCHAINED_SENTINEL)
+        )
+
+    def _publish(self, module):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        staged = root / "staged.json"
+        staged.write_text("{}", encoding="utf-8")
+        return self._raised(
+            lambda: module._publish_plan(staged, root / "approval.json")
+        )
+
+    def _site_publish_exists_by_link(self):
+        module = load_module()
+        with mock.patch.object(
+            module.os,
+            "link",
+            side_effect=FileExistsError(errno.EEXIST, UNCHAINED_SENTINEL),
+        ):
+            return self._publish(module)
+
+    def _site_publish_exists_by_copy(self):
+        module = load_module()
+        real_open = Path.open
+        with (
+            mock.patch.object(
+                module.os, "link", side_effect=OSError(errno.EPERM, "no hard links")
+            ),
+            mock.patch.object(Path, "open", new=_refuse_exclusive_open(real_open)),
+        ):
+            return self._publish(module)
+
+    def _site_plan_cache_removal(self):
+        module = load_module()
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        root = Path(directory.name)
+        candidate = root / "env"
+        candidate.mkdir()
+        requirements = root / "requirements.txt"
+        requirements.write_text("pkg==1.0\n", encoding="utf-8")
+        options = argparse.Namespace(
+            candidate=candidate,
+            requirements=requirements,
+            plan=root / "approval.json",
+            change=[],
+            no_index=False,
+            find_links=None,
+        )
+
+        def fake_pip(_candidate, arguments, _working, *, changes_environment):
+            if "--report" in arguments:
+                report = Path(arguments[arguments.index("--report") + 1])
+                report.write_text(
+                    json.dumps({"install": [WHEEL_ITEM]}), encoding="utf-8"
+                )
+
+        def failing_cache(_item, _directory, _download_deadline):
+            raise ValueError("Wheel download stalled: labelled.")
+
+        real_rmtree = shutil.rmtree
+
+        def rmtree_fails_for_wheel_cache(path, *args, **kwargs):
+            if "-wheels-" in str(path):
+                raise OSError(errno.EBUSY, UNCHAINED_SENTINEL)
+            return real_rmtree(path, *args, **kwargs)
+
+        with (
+            mock.patch.object(module, "snapshot", return_value=BEFORE),
+            mock.patch.object(module.ENV, "read_pins", return_value={"pkg": "1.0"}),
+            mock.patch.object(module, "isolated_pip", side_effect=fake_pip),
+            mock.patch.object(module, "cache_wheel", side_effect=failing_cache),
+            mock.patch.object(
+                module.shutil, "rmtree", side_effect=rmtree_fails_for_wheel_cache
+            ),
+        ):
+            try:
+                return self._raised(lambda: module.plan(options))
+            finally:
+                for leftover in root.glob("*-wheels-*"):
+                    real_rmtree(leftover)
+
+    def test_every_from_none_site_has_a_row(self):
+        source = SCRIPT.read_text(encoding="utf-8")
+        sites = re.findall(r"\bfrom None\b", source)
+        self.assertEqual(
+            len(sites),
+            len(UNCHAINED_RAISE_SITES),
+            f"environment_install.py has {len(sites)} `from None` sites but the table "
+            f"drives {len(UNCHAINED_RAISE_SITES)}: add a row for every new site",
+        )
+
+    def test_every_from_none_site_raises_unchained(self):
+        for label, method in UNCHAINED_RAISE_SITES:
+            with self.subTest(site=label):
+                error = getattr(self, method)()
+                self.assertIsNone(error.__cause__, f"{label}: __cause__ is set")
+                self.assertTrue(
+                    error.__suppress_context__, f"{label}: context is not suppressed"
+                )
+                rendered = "".join(traceback.format_exception(error))
+                self.assertNotIn(
+                    UNCHAINED_SENTINEL,
+                    rendered,
+                    f"{label}: the caught exception's text is printed",
+                )
 
 
 if __name__ == "__main__":

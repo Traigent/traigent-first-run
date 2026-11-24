@@ -202,6 +202,13 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
                 validate_uninstall_path(scripts / (name + suffix), prefix)
 
 
+# The one home of the saved-log advice: the disclosure contract pins it word for word.
+SAVED_LOG_ADVICE = (
+    "Read it for the cause and quote only the lines that show it: it can contain "
+    "index or proxy addresses. Delete it when done."
+)
+
+
 def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
     """Save pip's raw output where only this user can read it.
 
@@ -266,14 +273,8 @@ def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
                 None,
             )
         return f"pip's output could not be saved ({failure})", None
-    return (
-        (
-            f"pip's full output is saved, unredacted, in {path}. "
-            "Read it for the cause and quote only the lines that show it: it can contain "
-            "index or proxy addresses. Delete it when done."
-        ),
-        directory,
-    )
+    message = f"pip's full output is saved, unredacted, in {path}. {SAVED_LOG_ADVICE}"
+    return message, directory
 
 
 def _signal_name(number: int) -> str:
@@ -303,6 +304,33 @@ def _watch_lifeline(descriptor: int) -> None:
     threading.Thread(target=watch, name="lifeline", daemon=True).start()
 
 
+def _lifeline_pipe() -> tuple[int, int]:
+    """os.pipe(), with both ends moved to descriptor 3 or above.
+
+    os.pipe() takes the lowest free descriptors. When stdout or stderr is closed, an end
+    lands on 1 or 2, where Popen's stdout/stderr dup2 overwrites it in the child; the child
+    would then watch its own output pipe instead of the lifeline. Popen only rewrites 0-2.
+    F_DUPFD_CLOEXEC with a minimum of 3 is the CPython fcntl route to a fresh descriptor at
+    or above 3 that is not inherited across exec. If the second move fails, the first is
+    closed, so no descriptor leaks; the original ends are closed in every case.
+    """
+    import fcntl  # POSIX only, as is the lifeline
+
+    ends = os.pipe()
+    moved = []
+    try:
+        for end in ends:
+            moved.append(fcntl.fcntl(end, fcntl.F_DUPFD_CLOEXEC, 3))
+        return tuple(moved)
+    except BaseException:
+        for descriptor in moved:
+            os.close(descriptor)
+        raise
+    finally:
+        for end in ends:
+            os.close(end)
+
+
 def isolated_pip(
     candidate: Path, arguments: list[str], working: Path, *, changes_environment: bool
 ) -> None:
@@ -321,11 +349,14 @@ def isolated_pip(
     output = None
     started = time.monotonic()
     # Lifeline (POSIX; Windows has no pass_fds, so it is skipped there). The child holds
-    # the read end and SIGKILLs itself when every copy of the write end is closed. Only
-    # this frame holds the write end, and it closes it last, on every exit path: after
-    # the child is reaped, or when a signal, interrupt or outer SIGKILL stops this process
-    # at any point, including inside Popen, where no kill() below has run yet.
-    lifeline = os.pipe() if os.name == "posix" else None
+    # the read end and SIGKILLs itself when every copy of the write end is closed. Both
+    # ends are at descriptor 3 or above (_lifeline_pipe): a lifeline on fd 0-2 would be
+    # overwritten by Popen's stdio setup in the child, or would sit on a standard fd the
+    # parent has closed, and the child would then watch the wrong pipe. Only this frame
+    # holds the write end, and it closes it last, on every exit path: after the child is
+    # reaped, or when a signal, interrupt or outer SIGKILL stops this process at any
+    # point, including inside Popen, where no kill() below has run yet.
+    lifeline = _lifeline_pipe() if os.name == "posix" else None
     try:
         try:
             process = subprocess.Popen(
@@ -1083,11 +1114,11 @@ def _run_handling_termination(command, options) -> dict:
     """Run command(options) so SIGTERM/SIGHUP unwind through its own cleanup.
 
     Without a Python handler the default action ends the process with no exception,
-    so BaseException cleanup never runs: plan() would leave partial wheels behind,
-    and apply() would leave its pip child running, because subprocess.run kills its
-    child only when an exception propagates. Raising SystemExit(128 + signum)
-    unwinds exactly like Ctrl-C and keeps the conventional exit status. Handlers can
-    only be set from the main thread.
+    so no BaseException cleanup runs: plan() would leave its partial `-wheels` cache
+    behind, and apply() would print no interrupt warning. Raising SystemExit(128 + signum)
+    unwinds exactly like Ctrl-C: plan() removes its cache, apply() prints its warning when
+    pip had started, and the process exits with the conventional status 128 + signum
+    (143 for SIGTERM, 129 for SIGHUP). Handlers can only be set from the main thread.
 
     A signal whose disposition is already SIG_IGN is left alone: `nohup` starts the
     process with SIGHUP ignored, and that choice must survive the command.
