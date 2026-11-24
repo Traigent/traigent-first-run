@@ -19,7 +19,6 @@ import importlib.util
 import json
 import ntpath
 import os
-import re
 import secrets
 import shutil
 import signal
@@ -197,217 +196,37 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
                 validate_uninstall_path(scripts / (name + suffix), prefix)
 
 
-_ARTIFACT_LOCATION = "<artifact-location>"
-_TOKEN_SPLIT = re.compile(r"(\s+)")  # odd indexes are whitespace, even are tokens
-_KEY_NAMES = (
-    r"(?i:password|passwd|pwd|secret|token|apikey|api_key|api-key|private_key"
-    r"|privatekey|access_key|accesskey|credentials?|auth)"
-)
-# A bare key: the whole decoded token is the key, optionally after leading "-\"'{[("
-# and a prefix of letters, digits and underscores that ends in "_" or a camelCase
-# boundary (`client_secret`, `AWS_SECRET_ACCESS_KEY`, `apiToken`), followed only by
-# separators or quotes. A hyphen-joined prefix is a package name (`google-auth`).
-_KEY_TAIL = re.compile(
-    r"[-\"'{\[(]*(?:[A-Za-z0-9_]*_|[A-Za-z0-9_]*[a-z0-9](?=[A-Z]))?"
-    + _KEY_NAMES
-    + r"[\"'=:,]*\Z"
-)
-# A key starts the token, follows a non-alphanumeric character, or starts at a camelCase
-# boundary. The separator is "=" not followed by "=" (a pip version pin such as
-# `tiktoken==0.8.0` is not a separator) or ":".
-_KEY_START = r"(?:(?<![A-Za-z0-9])|(?<=[a-z0-9])(?=[A-Z]))"
-# A key with a value in the same token: a non-empty value follows the separator.
-_KEY_WITH_VALUE = re.compile(_KEY_START + _KEY_NAMES + r"[\"']*(?:=(?!=)|:)(?=.)")
-# A key whose separator ends the token, so its value is the next token (`my-token= x`).
-_KEY_ASSIGN_END = re.compile(_KEY_START + _KEY_NAMES + r"[\"']*(?:=(?!=)|:)\Z")
+def _save_pip_output(stdout, stderr) -> str:
+    """Save pip's raw output where only this user can read it; return the path or why not.
 
-
-def _carries_value(decoded: str) -> bool:
-    """Whether a decoded token holds a key's value, so the whole token is a secret.
-
-    That is a key with a non-empty value after its separator (`password=S3CRET`), or a
-    key that ends the token after an earlier separator (`user:S3CRET:password:`), whose
-    earlier text is the value. A lone key ending in a separator (`my-token=`) does not.
+    Never printed or chained: pip output can carry index or proxy addresses. The
+    directory is a fresh mkdtemp under the system temp dir (0700 on POSIX; on Windows
+    the per-user %TEMP% ACL applies), never the plan's directory, which may sit inside
+    the customer's project and be committed.
     """
-    if "=" not in decoded and ":" not in decoded:
-        return False
-    if _KEY_WITH_VALUE.search(decoded) is not None:
-        return True
-    if not decoded.endswith(("=", ":")):
-        return False
-    ending = _KEY_ASSIGN_END.search(decoded)
-    return ending is not None and any(c in "=:" for c in decoded[: ending.start()])
-
-
-_SEPARATOR_TOKEN = re.compile(r"[\"'=:]+\Z")
-_TOKEN_PREFIX = re.compile(
-    r"(?<![A-Za-z0-9])(?:"
-    r"(?:gh[pousr]_|github_pat_|glpat-|sk-|xox[bp]-)[A-Za-z0-9_-]{8,}"
-    r"|pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]+"
-    r"|(?:AKIA|ASIA)[A-Z0-9]{16}"
-    r")"
-)
-_HEADER_NAMES = frozenset({"authorization:", "proxy-authorization:"})
-_AUTH_SCHEMES = frozenset({"basic", "bearer"})
-_MAX_DECODE_PASSES = 3
-
-
-def _decode(token: str) -> str:
-    """Percent-decode a token until it stops changing, at most `_MAX_DECODE_PASSES` times."""
-    decoded = token
-    for _ in range(_MAX_DECODE_PASSES):
-        again = urllib.parse.unquote(decoded)
-        if again == decoded:
-            break
-        decoded = again
-    return decoded
-
-
-def _redact_line(line: str) -> str:
-    """Redact credentials from one line of pip output, keeping whitespace and line ends.
-
-    The line is split into tokens and whitespace; whitespace includes every character
-    `str.isspace` accepts, such as a vertical tab or a form feed. Each token is tested
-    after percent decoding (repeated until it stops changing, at most 3 passes). A token
-    is replaced by `_ARTIFACT_LOCATION` when:
-    - it contains `://` (any URL, with or without credentials);
-    - it contains `@` and is longer than one character (a lone `@`, pip's
-      `name @ url` separator, is kept), so `user:secret@host` and `ghp_x@host` match;
-    - it contains a well-known token prefix (`ghp_`, `gho_`, `ghu_`, `ghs_`,
-      `ghr_`, `github_pat_`, `glpat-`, `sk-`, `xoxb-`, `xoxp-`) followed by 8 or more of
-      `[A-Za-z0-9_-]`, or a PyPI API token (`pypi-AgEIcHlwaS5vcmc` followed by more of
-      `[A-Za-z0-9_-]`), or an AWS access key id (`AKIA` or `ASIA` followed by exactly
-      16 of `[A-Z0-9]`), at its start or after a non-alphanumeric character, so
-      `task-runner-12345678`, `pypi-attestations` and `pypi-simple` are kept;
-    - it is a key token, matched case-insensitively against the decoded token (so
-      camelCase is seen). Key names: `password`, `passwd`, `pwd`, `secret`, `token`,
-      `apikey`, `api_key`, `api-key`, `private_key`, `privatekey`, `access_key`,
-      `accesskey`, `credential(s)`, `auth`.
-      - Bare key: the whole token is the key name, optionally after leading `-"'{[(`
-        and a prefix of letters, digits and underscores that ends in `_` or at a
-        camelCase boundary (`client_secret`, `AWS_SECRET_ACCESS_KEY`, `apiToken`),
-        followed only by any of `"'=:,`. A hyphen-joined prefix is a package name, so
-        `tiktoken`, `google-auth` and `pkg-token` are not keys.
-      - Key with value: the key name starts the token, follows a non-alphanumeric
-        character, or starts at a camelCase boundary; then an optional run of `"'`,
-        then `=` or `:`, then a non-empty value. `=` followed by `=` is a pip version
-        pin (`tiktoken==0.8.0`), not a separator, so it is not a value.
-      - Key ending in a separator: the same key start, then an optional run of `"'`
-        and `=` or `:` ending the token (`my-token=`, `user:password:`).
-    A key name is not a secret, so a bare key token is kept unchanged and only its
-    value is redacted:
-    - a bare key that ends in `=` or `:` (after any quotes), or starts with `-`
-      (option form), redacts the next token (`my-token= S3CRET`, `--password S3CRET`,
-      `"password": "S3CRET"`);
-    - any other bare key (a plain word such as `password` or `Credentials`) redacts
-      the next token only when that token is separator-only (`=`, `:`, quotes). The
-      separator is kept and the token after it is redacted (`password = S3CRET`).
-      Otherwise the next token is left alone (`Saving credentials to keyring`);
-    - a token that carries a key's value (`password=S3CRET`, `"token":"S3CRET"`,
-      `user:S3CRET:password:`) is tested before the bare-key rules and replaced whole;
-      if it also ends in a separator, the next token is redacted too
-      (`password=S3CRET,token= NEXTS3CRET`). Only a token that does not carry a value
-      falls through to the bare-key rules above.
-    Whitespace-split userinfo: a token with a `:` at index >= 1 that is not its last
-    character and has no `@` marks a pending start, whether or not that token is itself
-    redacted. When a later token is redacted
-    for its `@`, every token from the pending start through it is redacted too.
-    A token equal to `Authorization:` or `Proxy-Authorization:` redacts every remaining
-    token on the line; a token equal to `Basic` or `Bearer` redacts the next token.
-    All state resets at each line. Every regex is linear: no nested quantifiers and
-    no regex scans across the whole line, so a long line is processed in linear time.
-    """
-    parts = _TOKEN_SPLIT.split(line)
-    redact_next = False
-    separator_pending = False
-    redact_rest = False
-    pending: int | None = None
-    for index in range(0, len(parts), 2):
-        token = parts[index]
-        if not token:
-            continue
-        if redact_rest:
-            parts[index] = _ARTIFACT_LOCATION
-            continue
-        redact = redact_next
-        redact_next = False
-        decoded = _decode(token)
-        lowered = decoded.lower()
-        if lowered in _HEADER_NAMES:
-            redact_rest = True
-        elif lowered in _AUTH_SCHEMES:
-            redact_next = True
-        if separator_pending:
-            separator_pending = False
-            # `password = S3CRET`: the separator after a bare key word is kept and the
-            # value after it is redacted. A bare key never marks its next token for
-            # redaction, so `redact` is False here and the separator is left as it is.
-            if _SEPARATOR_TOKEN.match(token):
-                redact_next = True
-                continue
-        # A token that carries a key's value is tested first and replaced whole. If
-        # it also ends in a separator, its trailing key's value is the next token.
-        key = _carries_value(decoded)
-        if key:
-            if decoded.rstrip("\"'").endswith(("=", ":")):
-                redact_next = True
-        else:
-            # A bare key name carries no secret, so it is kept and only its value goes.
-            bare_key = _KEY_TAIL.match(decoded) is not None
-            if not bare_key and decoded.endswith(("=", ":")):
-                bare_key = _KEY_ASSIGN_END.search(decoded) is not None
-            if bare_key:
-                if decoded.rstrip("\"'").endswith(("=", ":")) or (
-                    decoded.lstrip("\"'{[(").startswith("-")
-                ):
-                    redact_next = True
-                else:
-                    separator_pending = True
-        has_userinfo = "@" in decoded and len(decoded) > 1
-        if (
-            redact
-            or has_userinfo
-            or "://" in decoded
-            or key
-            or _TOKEN_PREFIX.search(decoded) is not None
-        ):
-            parts[index] = _ARTIFACT_LOCATION
-            if has_userinfo and pending is not None:
-                for earlier in range(pending, index, 2):
-                    if parts[earlier]:
-                        parts[earlier] = _ARTIFACT_LOCATION
-                pending = None
-        # The pending start is decided for every token, redacted or not: a redacted
-        # first piece such as `https://user:a` still starts a split userinfo.
-        if pending is None and "@" not in decoded:
-            colon = decoded.find(":", 1, len(decoded) - 1)
-            if colon != -1:
-                pending = index
-    return "".join(parts)
-
-
-def _redacted_pip_output(*parts: bytes | str | None) -> str:
-    """Decode and redact each stream separately, then join them line-wise.
-
-    Redacting the parts one at a time keeps a stream that ends mid-line from fusing
-    with the next stream's first token, which the key rules need a boundary to see.
-    A single "\\n" is added between two non-empty parts only when the earlier one does
-    not already end with one.
-    """
-    pieces: list[str] = []
-    for part in parts:
-        text = (
-            part.decode("utf-8", errors="replace")
-            if isinstance(part, bytes)
-            else part or ""
-        )
-        if not text:
-            continue
-        if pieces and not pieces[-1].endswith("\n"):
-            pieces.append("\n")
-        # Only "\n" ends a line here; other separators are whitespace inside a line.
-        pieces.append("\n".join(_redact_line(line) for line in text.split("\n")))
-    return "".join(pieces)
+    try:
+        directory = Path(tempfile.mkdtemp(prefix="traigent-first-run-pip-"))
+        path = directory / "pip-output.log"
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            for label, part in (
+                (b"--- stdout ---\n", stdout),
+                (b"\n--- stderr ---\n", stderr),
+            ):
+                stream.write(label)
+                if part:
+                    stream.write(
+                        part
+                        if isinstance(part, bytes)
+                        else part.encode("utf-8", "replace")
+                    )
+    except OSError as error:
+        return f"pip's output could not be saved ({type(error).__name__})"
+    return (
+        f"pip's full output is saved, unredacted, in {path} (readable only by you). "
+        "Read it for the cause and quote only the lines that show it: it can contain "
+        "index or proxy addresses. Delete it when done."
+    )
 
 
 def isolated_pip(
@@ -424,7 +243,9 @@ def isolated_pip(
         if not key.startswith(("PYTHON", "PIP_", "LD_", "DYLD_"))
     }
     environment["PIP_CONFIG_FILE"] = os.devnull
-    stalled_output = None
+    stalled = False
+    saved = ""
+    started = time.monotonic()
     try:
         result = subprocess.run(
             [
@@ -447,33 +268,28 @@ def isolated_pip(
             timeout=PIP_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired as expired:
-        # Only the redacted text is kept. The raise sits outside this block so no
-        # __context__ holds TimeoutExpired, whose output can carry index credentials.
-        stalled_output = _redacted_pip_output(expired.stdout, expired.stderr)
-    if stalled_output is not None:
-        # Partial pip output is the diagnostic the guide asks to quote.
-        detail = (
-            f"\npip output before it was stopped:\n{stalled_output}"
-            if stalled_output
-            else ""
-        )
+        saved = _save_pip_output(expired.stdout, expired.stderr)
+        stalled = True
+    elapsed = round(time.monotonic() - started)
+    # The raises sit outside the except so no __context__ holds TimeoutExpired, whose
+    # output can carry index credentials.
+    if stalled:
         if changes_environment:
             raise ValueError(
                 f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound "
-                "during apply; the environment may be partly changed. Stop and inspect "
-                "it before any further change." + detail
+                f"during apply (stopped after {elapsed}s); the environment may be partly "
+                "changed. Stop and inspect it before any further change. " + saved
             )
         raise ValueError(
-            f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound; "
-            "nothing was installed or changed. The network or dependency resolution "
-            "stalled." + detail
+            f"Installer stalled: pip exceeded the {PIP_TIMEOUT_SECONDS}-second bound "
+            f"(stopped after {elapsed}s); nothing was installed or changed. The network "
+            "or dependency resolution stalled. " + saved
         )
     if result.returncode:
-        # pip may include index credentials in verbose diagnostics. Retain only
-        # URL-redacted output in the error that the approval workflow displays.
-        output = _redacted_pip_output(result.stdout, result.stderr)
+        saved = _save_pip_output(result.stdout, result.stderr)
         raise ValueError(
-            "Isolated pip failed; inspect the target before retrying:\n" + output
+            f"Isolated pip failed with exit code {result.returncode} after {elapsed}s; "
+            "inspect the target before retrying. " + saved
         )
 
 
@@ -645,7 +461,8 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
 
     The body is capped at MAX_WHEEL_BYTES whatever Content-Length says, and an
     https URL may not redirect to a non-https one. Each failure raises a ValueError
-    with redacted text and no chained exception, and removes the partial file. On
+    that names the error type and status only, with no chained exception, and removes
+    the partial file. On
     timeout the worker is abandoned. A worker stuck inside a call that ignores
     timeouts (such as DNS) is left running on purpose: it is a daemon, the caller
     closes its stream when it abandons it so it writes nothing once abandoned, and
@@ -725,10 +542,13 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     )
     if timed_out:
         raise ValueError(read_message) from None
+    detail = type(error).__name__
+    if isinstance(error, urllib.error.HTTPError):
+        detail += f" (HTTP {error.code})"
+    elif isinstance(error, urllib.error.URLError):
+        detail += f" ({type(error.reason).__name__})"
     raise ValueError(
-        "Wheel download failed: "
-        + _redacted_pip_output(f"{type(error).__name__}: {error}")
-        + "; nothing was installed or changed."
+        f"Wheel download failed: {detail}; nothing was installed or changed."
     ) from None
 
 

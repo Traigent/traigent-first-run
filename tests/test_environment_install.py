@@ -10,6 +10,7 @@ import csv
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -55,6 +56,9 @@ class IsolatedInstallerTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="first run installer ")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # pip output is saved under TMPDIR; keep it out of the real system temp dir.
+        self.scratch = tempfile.TemporaryDirectory(prefix="first run pip scratch ")
+        self.addCleanup(self.scratch.cleanup)
         self.target = self.root / ".venv"
         venv.EnvBuilder(with_pip=False, symlinks=os.name == "posix").create(self.target)
         self.site = Path(
@@ -80,6 +84,13 @@ class IsolatedInstallerTests(unittest.TestCase):
         )
         self.sequence = 0
 
+    def pip_output(self, result) -> str:
+        """Return pip's saved output, which the failed run's error names (never printed)."""
+        message = json.loads(result.stderr)["error"]
+        match = re.search(r" in (.+?pip-output\.log) \(readable", message)
+        assert match is not None, message
+        return Path(match.group(1)).read_text(encoding="utf-8")
+
     def invoke(self, *arguments, success=True):
         result = subprocess.run(
             [str(TRUSTED), "-I", "-S", "-B", str(SCRIPT), *map(str, arguments)],
@@ -91,6 +102,7 @@ class IsolatedInstallerTests(unittest.TestCase):
             env={
                 **os.environ,
                 "PYTHONPATH": str(self.root),
+                "TMPDIR": self.scratch.name,
                 "PIP_INDEX_URL": "https://example.invalid/no-network",
             },
         )
@@ -183,7 +195,7 @@ class IsolatedInstallerTests(unittest.TestCase):
         wheel(self.wheels, "pr545-example", "2.0", ("pr545-dependency>=2",))
         self.requirements.write_text("pr545-example==2.0\n")
         refused = self.plan(success=False)
-        self.assertIn("ResolutionImpossible", refused.stderr)
+        self.assertIn("ResolutionImpossible", self.pip_output(refused))
         self.assertTrue((self.site / "pr545_dependency-1.0.dist-info").exists())
         plan = self.plan("--change", "pr545-dependency==2.0")
         self.assertEqual(plan["changes"], ["pr545-dependency 1.0 -> 2.0"])
@@ -214,9 +226,9 @@ class IsolatedInstallerTests(unittest.TestCase):
         wheel(self.wheels, "pr545-example", "2.0", ("pr545-client>=2.20,<3",))
         self.requirements.write_text("pr545-example==2.0\n")
         refused = self.plan(success=False)
-        self.assertIn("ResolutionImpossible", refused.stderr)
-        self.assertIn("pr545-client==3.13", refused.stderr)
-        self.assertIn("pr545-client<3", refused.stderr)
+        self.assertIn("ResolutionImpossible", self.pip_output(refused))
+        self.assertIn("pr545-client==3.13", self.pip_output(refused))
+        self.assertIn("pr545-client<3", self.pip_output(refused))
         self.assertFalse((self.root / f"plan-{self.sequence}.json").exists())
         self.assertEqual(
             {
@@ -272,7 +284,7 @@ class IsolatedInstallerTests(unittest.TestCase):
             self.wheels, "pr545-example", "2.0", (f"pr545-source @ {source.as_uri()}",)
         )
         result = self.plan(success=False)
-        self.assertIn("Only wheel artifacts", result.stderr)
+        self.assertIn("Only wheel artifacts", self.pip_output(result))
 
     def test_adapter_refuses_subprocess_creation_before_a_child_can_execute(self):
         """Exercise the process boundary independently of wheel-only rejection."""
@@ -364,7 +376,7 @@ print(json.dumps({"attempted": attempted, "error": None}))
         (self.target / "share").symlink_to(outside, target_is_directory=True)
         plan = self.plan()
         result = self.apply(plan, success=False)
-        self.assertIn("destination escapes", result.stderr)
+        self.assertIn("destination escapes", self.pip_output(result))
         self.assertEqual((outside / "overwrite").read_text(), "customer data")
         self.assertFalse((self.site / "pr545_example.py").exists())
 
@@ -373,7 +385,9 @@ print(json.dumps({"attempted": attempted, "error": None}))
         with zipfile.ZipFile(artifact, "a") as archive:
             archive.writestr("../escape", "wheel data")
         plan = self.plan()
-        self.assertIn("unsafe archive path", self.apply(plan, success=False).stderr)
+        self.assertIn(
+            "unsafe archive path", self.pip_output(self.apply(plan, success=False))
+        )
         self.assertFalse((self.site / "pr545_example.py").exists())
 
     def test_installed_script_name_cannot_expand_uninstall_scope(self):
@@ -420,7 +434,9 @@ print(json.dumps({"attempted": attempted, "error": None}))
         configuration = self.target / "pyvenv.cfg"
         original = configuration.read_bytes()
         plan = self.plan()
-        self.assertIn("destination escapes", self.apply(plan, success=False).stderr)
+        self.assertIn(
+            "destination escapes", self.pip_output(self.apply(plan, success=False))
+        )
         self.assertEqual(configuration.read_bytes(), original)
         self.assertFalse((self.site / "pr545_example.py").exists())
 
@@ -473,7 +489,9 @@ print(json.dumps({"attempted": attempted, "error": None}))
         configuration = self.target / "pyvenv.cfg"
         original = configuration.read_bytes()
         plan = self.plan()
-        self.assertIn("destination escapes", self.apply(plan, success=False).stderr)
+        self.assertIn(
+            "destination escapes", self.pip_output(self.apply(plan, success=False))
+        )
         self.assertEqual(configuration.read_bytes(), original)
 
     def test_unknown_executable_hook_is_refused_before_resolution(self):

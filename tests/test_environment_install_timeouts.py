@@ -1,7 +1,7 @@
 """Tests for environment_install: bounded timeouts, download and pip hardening, plan handling.
 
-Covers the wheel download and isolated pip steps under time limits, credential
-redaction, download size and redirect limits, plan publication and cleanup, signal
+Covers the wheel download and isolated pip steps under time limits, pip output
+saving, download size and redirect limits, plan publication and cleanup, signal
 exits, and plan-file identity. Every server here listens on 127.0.0.1 only, and
 every server thread is joined in its cleanup so a stalled fixture can never hang
 the suite. Download worker threads are daemons: by design they may outlive a test
@@ -19,6 +19,8 @@ import importlib.util
 import io
 import json
 import os
+import re
+import secrets
 import shutil
 import signal
 import stat
@@ -51,19 +53,6 @@ POSIX_ONLY = unittest.skipUnless(
 )
 
 
-CHILD_CODE = """
-import importlib.util, json, sys, time
-spec = importlib.util.spec_from_file_location("environment_install_under_test", sys.argv[1])
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
-text = sys.stdin.read()
-started = time.process_time()
-redacted = module._redacted_pip_output(text)
-cpu_seconds = time.process_time() - started
-sys.stdout.write(json.dumps({"cpu_seconds": cpu_seconds, "redacted": redacted}))
-"""
-
-
 def load_module():
     spec = importlib.util.spec_from_file_location(
         "environment_install_under_test", SCRIPT
@@ -72,6 +61,24 @@ def load_module():
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def isolate_temp_dir(test: unittest.TestCase) -> Path:
+    """Point tempfile at a throwaway directory so pip-output.log never lands in the real temp dir."""
+    directory = tempfile.TemporaryDirectory()
+    test.addCleanup(directory.cleanup)
+    patcher = mock.patch.object(tempfile, "tempdir", directory.name)
+    patcher.start()
+    test.addCleanup(patcher.stop)
+    return Path(directory.name)
+
+
+def saved_output_path(message: str) -> Path:
+    """Return the pip-output.log path that a pip failure message names."""
+    match = re.search(r" in (\S+pip-output\.log) \(", message)
+    if match is None:
+        raise AssertionError(f"message names no saved pip output: {message!r}")
+    return Path(match.group(1))
 
 
 class ServerFixture(unittest.TestCase):
@@ -478,17 +485,17 @@ class DeclaredLengthParsingTests(unittest.TestCase):
 
 
 class DownloadRefusalAndInterruptTests(unittest.TestCase):
-    def test_http_client_invalid_url_error_text_is_redacted_and_not_chained(self):
+    def test_http_client_invalid_url_error_text_is_withheld_and_not_chained(self):
         module = load_module()
         error = http.client.InvalidURL("nonnumeric port: 'https://alice:S3CRET@h/x'")
         self.assert_download_error_is_safe(module, error)
 
-    def test_url_error_text_is_redacted_and_not_chained(self):
+    def test_url_error_text_is_withheld_and_not_chained(self):
         module = load_module()
         error = urllib_error.URLError("https://alice:S3CRET@h/x unreachable")
         self.assert_download_error_is_safe(module, error)
 
-    def test_http_error_is_redacted_and_not_chained(self):
+    def test_http_error_is_withheld_and_not_chained(self):
         module = load_module()
         error = urllib_error.HTTPError(
             "https://alice:S3CRET@h/x.whl", 500, "Server Error", None, None
@@ -509,6 +516,11 @@ class DownloadRefusalAndInterruptTests(unittest.TestCase):
             self.assertIsNone(err.__context__)
             self.assertIn("Wheel download failed", str(err))
             self.assertIn("nothing was installed or changed", str(err))
+            self.assertIn(type(error).__name__, str(err))
+            self.assertNotIn("h/x.whl", str(err))
+            self.assertNotIn("://", str(err))
+            if isinstance(error, urllib_error.HTTPError):
+                self.assertIn(f"HTTP {error.code}", str(err))
             self.assertFalse(target.exists(), "partial wheel must be removed")
 
     def test_https_to_http_redirect_is_refused(self):
@@ -676,11 +688,13 @@ class CacheWheelTests(unittest.TestCase):
 
 
 class IsolatedPipTimeoutTests(unittest.TestCase):
-    def test_pip_timeout_is_bounded_and_child_output_is_redacted(self):
+    def test_pip_timeout_is_bounded_and_child_output_is_saved_not_printed(self):
+        isolate_temp_dir(self)
         module = load_module()
-        secret_output = b"https://user:secret@host/x"
         expired = subprocess.TimeoutExpired(
-            cmd=["pip"], timeout=0.1, output=secret_output
+            cmd=["pip"],
+            timeout=0.1,
+            output=b"MARKER-7f3a https://user:secret@host/x",
         )
         with (
             mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
@@ -699,21 +713,21 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs.get("timeout"), 0.1)
         message = str(raised.exception)
         self.assertIn("0.1", message)
-        self.assertIn("<artifact-location>", message)
+        self.assertIn("pip-output.log", message)
+        self.assertNotIn("MARKER-7f3a", message)
         self.assertNotIn("secret", message)
-        self.assertNotIn("https://", message)
         self.assertIsNone(raised.exception.__cause__)
         self.assertIsNone(
             raised.exception.__context__, "secret-bearing exception must not be chained"
         )
+        saved = saved_output_path(message).read_bytes()
+        self.assertIn(b"https://user:secret@host/x", saved)
 
-    def test_pip_failure_output_is_redacted_before_it_is_reported(self):
+    def test_pip_failure_reports_exit_code_and_saves_output(self):
+        isolate_temp_dir(self)
         module = load_module()
         failed = subprocess.CompletedProcess(
-            args=["pip"],
-            returncode=1,
-            stdout="Looking in indexes: https://user:S3CRET@idx.example/simple\n",
-            stderr="ERROR: token=S3CRET\n",
+            args=["pip"], returncode=2, stdout="MARKER-7f3a out", stderr="ERROR: S3CRET"
         )
         with (
             mock.patch.object(module.subprocess, "run", return_value=failed),
@@ -729,39 +743,15 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
                     changes_environment=True,
                 )
         message = str(raised.exception)
+        self.assertIn("exit code 2", message)
+        self.assertNotIn("MARKER-7f3a", message)
         self.assertNotIn("S3CRET", message)
-        self.assertIn("<artifact-location>", message)
-        self.assertIn("Isolated pip failed", message)
-
-    def test_pip_failure_streams_are_redacted_separately_not_fused(self):
-        # stdout without a final newline: fusing the streams would glue "password="
-        # onto "index" so it no longer starts a token, and the value would leak.
-        module = load_module()
-        failed = subprocess.CompletedProcess(
-            args=["pip"],
-            returncode=1,
-            stdout="Looking in index",
-            stderr="password=S3CRET",
-        )
-        with (
-            mock.patch.object(module.subprocess, "run", return_value=failed),
-            mock.patch.object(
-                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
-            ),
-        ):
-            with self.assertRaises(ValueError) as raised:
-                module.isolated_pip(
-                    Path("/tmp/candidate"),
-                    ["install", "x"],
-                    Path("/tmp"),
-                    changes_environment=True,
-                )
-        message = str(raised.exception)
-        self.assertNotIn("S3CRET", message)
-        self.assertIn("Looking in index", message)
-        self.assertIn("<artifact-location>", message)
+        saved = saved_output_path(message).read_text(encoding="utf-8")
+        self.assertIn("MARKER-7f3a", saved)
+        self.assertIn("S3CRET", saved)
 
     def _pip_timeout_message(self, changes_environment: bool) -> str:
+        isolate_temp_dir(self)
         module = load_module()
         expired = subprocess.TimeoutExpired(
             cmd=["pip"], timeout=0.1, output=b"https://user:secret@host/x"
@@ -785,62 +775,6 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("https://", message)
         return message
 
-    def test_pip_timeout_bytes_output_is_decoded_and_redacted(self):
-        module = load_module()
-        expired = subprocess.TimeoutExpired(
-            cmd=["pip"],
-            timeout=0.1,
-            output=b"Collecting x from https://u:p@h/x\n",
-            stderr=b"",
-        )
-        with (
-            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
-            mock.patch.object(module.subprocess, "run", side_effect=expired),
-            mock.patch.object(
-                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
-            ),
-        ):
-            with self.assertRaises(ValueError) as raised:
-                module.isolated_pip(
-                    Path("/tmp/candidate"),
-                    ["install", "--dry-run", "x"],
-                    Path("/tmp"),
-                    changes_environment=False,
-                )
-        message = str(raised.exception)
-        self.assertIn("Collecting x from <artifact-location>", message)
-        self.assertNotIn("u:p", message)
-        self.assertIsNone(raised.exception.__context__)
-
-    def test_stalled_stdout_without_newline_does_not_fuse_with_stderr_secret(self):
-        # pip's stdout ends mid-line; the stderr token must stay a token boundary
-        # apart, or the key rule misses `password=` and the value leaks.
-        module = load_module()
-        expired = subprocess.TimeoutExpired(
-            cmd=["pip"],
-            timeout=0.1,
-            output=b"Collecting foo",
-            stderr=b"password=S3CRET",
-        )
-        with (
-            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
-            mock.patch.object(module.subprocess, "run", side_effect=expired),
-            mock.patch.object(
-                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
-            ),
-        ):
-            with self.assertRaises(ValueError) as raised:
-                module.isolated_pip(
-                    Path("/tmp/candidate"),
-                    ["install", "--dry-run", "x"],
-                    Path("/tmp"),
-                    changes_environment=False,
-                )
-        message = str(raised.exception)
-        self.assertIn("Collecting foo\n<artifact-location>", message)
-        self.assertNotIn("S3CRET", message)
-        self.assertIsNone(raised.exception.__context__)
-
     def test_plan_timeout_reports_that_nothing_changed(self):
         message = self._pip_timeout_message(changes_environment=False)
         self.assertIn("nothing was installed or changed", message)
@@ -858,496 +792,121 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("retry", message)
         self.assertNotIn("re-run", message)
 
-    def test_silent_pip_stall_omits_the_output_header(self):
-        # No output at all: the diagnostic header must not be printed over nothing.
-        module = load_module()
-        for changes_environment in (False, True):
-            with self.subTest(changes_environment=changes_environment):
-                expired = subprocess.TimeoutExpired(cmd=["pip"], timeout=0.1)
-                with (
-                    mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
-                    mock.patch.object(module.subprocess, "run", side_effect=expired),
-                    mock.patch.object(
-                        module.ENV,
-                        "trusted_interpreter",
-                        return_value=Path("/usr/bin/python3"),
-                    ),
-                ):
-                    with self.assertRaises(ValueError) as raised:
-                        module.isolated_pip(
-                            Path("/tmp/candidate"),
-                            ["install", "x"],
-                            Path("/tmp"),
-                            changes_environment=changes_environment,
-                        )
-                message = str(raised.exception)
-                self.assertIn("pip exceeded the 0.1-second bound", message)
-                self.assertNotIn("pip output before it was stopped:", message)
 
+class PipOutputFileTests(unittest.TestCase):
+    def setUp(self):
+        self.temp_root = isolate_temp_dir(self)
 
-class RedactionTests(unittest.TestCase):
-    CREDENTIAL_FORMS = (
-        "HTTPS://user:secret@h/x",
-        "git+ssh://user:secret@h/x",
-        "ftp://user:secret@h/x",
-        "user:secret@host/x",
-        "https://user:secret@h/x",
-        "file:///tmp/x.whl",
-        "a:secret@host/x",
-        "x(https://user:secret@h/y)",
-        "u:p@h",
-    )
-
-    def test_every_credential_form_is_replaced_and_no_secret_survives(self):
-        module = load_module()
-        for form in self.CREDENTIAL_FORMS:
-            with self.subTest(form=form):
-                redacted = module._redacted_pip_output(f"Collecting x from {form}\n")
-                self.assertNotIn("secret", redacted)
-                self.assertIn("<artifact-location>", redacted)
-
-    def test_bare_url_token_is_replaced_whole(self):
-        module = load_module()
-        for form in self.CREDENTIAL_FORMS:
-            with self.subTest(form=form):
-                self.assertEqual(
-                    module._redacted_pip_output(form),
-                    "<artifact-location>",
-                )
-
-    def test_plain_pip_line_is_kept_unchanged(self):
-        module = load_module()
-        line = "Collecting pkg==1.0\n"
-        self.assertEqual(module._redacted_pip_output(line), line)
-
-    def test_bytes_and_none_parts_are_decoded_and_redacted(self):
-        module = load_module()
-        redacted = module._redacted_pip_output(
-            b"HTTPS://user:secret@h/x\n", None, "git+ssh://user:secret@h/y"
-        )
-        self.assertNotIn("secret", redacted)
-        self.assertEqual(redacted.count("<artifact-location>"), 2)
-
-    SECRET_FORMS = (
-        "alice%3AS3CRET%40host/x",
-        "https%3A%2F%2Falice%3AS3CRET%40h%2Fx",
-        "ghp_S3CRET@github.com",
-        ":S3CRET@host",
-        "user:S3CRET@",
-        "password=S3CRET",
-        "token=S3CRET",
-        "secret=S3CRET",
-        # a key that ends its token with a separator; the value is the next token
-        "foo:password= S3CRET",
-        "my-token= S3CRET",
-        "user:password: S3CRET",
-        "api_key=S3CRET",
-        "password= S3CRET",
-        "Authorization: Basic S3CRET",
-        "Authorization: Bearer S3CRET",
-        "Proxy-Authorization: Basic S3CRET",
-        "Basic S3CRET",
-        "Bearer S3CRET",
-        "ghp_S3CRETabcdef12",
-        "x=sk-S3CRETabcdef12",
-        "gho_S3CRETabcdef12",
-        "github_pat_S3CRETabcdef12",
-        "glpat-S3CRETabcdef12",
-        "xoxb-S3CRETabcdef12",
-        "xoxp-S3CRETabcdef12",
-    )
-
-    def test_encoded_token_only_key_value_header_and_prefixed_forms_are_redacted(self):
-        module = load_module()
-        for form in self.SECRET_FORMS:
-            with self.subTest(form=form):
-                redacted = module._redacted_pip_output(f"Collecting x from {form}\n")
-                self.assertNotIn("S3CRET", redacted)
-                self.assertIn("<artifact-location>", redacted)
-
-    def test_whitespace_split_userinfo_is_redacted_through_the_host_token(self):
-        module = load_module()
-        art = "<artifact-location>"
-        expected = {
-            "user:S3C RET@host/x": f"Collecting {art} {art}\n",
-            "user:a b c@host": f"Collecting {art} {art} {art}\n",
-        }
-        for form, want in expected.items():
-            with self.subTest(form=form):
-                self.assertEqual(
-                    module._redacted_pip_output(f"Collecting {form}\n"), want
-                )
-
-    SECURITY_PASS_FORMS = (
-        # key-value with spaces around the separator
-        "password = S3CRET",
-        "token : S3CRET",
-        # quoted and JSON keys
-        '{"password": "S3CRET"}',
-        '"token":"S3CRET"',
-        "'secret': 'S3CRET'",
-        # keys outside the list, and camelCase
-        "private_key=S3CRET",
-        "apiToken=S3CRET",
-        "client_secret=S3CRET",
-        "credentials=S3CRET",
-        # option form, with a space or with "="
-        "--password S3CRET",
-        "--token=S3CRET",
-        # double percent-encoding
-        "password%253DS3CRET",
-        "alice%253AS3CRET%2540host",
-        # token prefixes: PyPI API tokens and AWS access key ids
-        "pypi-AgEIcHlwaS5vcmcS3CRETabc",
-        "AKIAS3CRETABCDEFGHIJ",
-        "ASIAS3CRETABCDEFGHIJ",
-        # userinfo split by a separator that str.splitlines would break on
-        "user:S3C\x0bRET@host",
-        "user:S3C\x0cRET@host",
-        "user:S3C\x1cRET@host",
-        "user:S3C\x85RET@host",
-        "user:S3C RET@host",
-    )
-
-    def test_security_pass_forms_are_redacted_and_no_secret_survives(self):
-        module = load_module()
-        for form in self.SECURITY_PASS_FORMS:
-            with self.subTest(form=form):
-                redacted = module._redacted_pip_output(f"Collecting x from {form}\n")
-                self.assertNotIn("S3C", redacted)
-                self.assertNotIn("RET", redacted)
-                self.assertIn("<artifact-location>", redacted)
-
-    def test_underscore_joined_key_prefixes_of_any_length_are_redacted(self):
-        module = load_module()
-        cases = {
-            "MY_DB_PASSWORD = S3CRET": "MY_DB_PASSWORD = <artifact-location>",
-            "AWS_SECRET_ACCESS_KEY = S3CRET": (
-                "AWS_SECRET_ACCESS_KEY = <artifact-location>"
+    def pip_error(self, module, outcome, changes_environment=True):
+        """Run isolated_pip with pip replaced by outcome (an exception or a result)."""
+        if isinstance(outcome, BaseException):
+            run = mock.patch.object(module.subprocess, "run", side_effect=outcome)
+        else:
+            run = mock.patch.object(module.subprocess, "run", return_value=outcome)
+        with (
+            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
+            run,
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
-            "GITHUB_API_TOKEN = S3CRET": "GITHUB_API_TOKEN = <artifact-location>",
-            "my_dbPassword = S3CRET": "my_dbPassword = <artifact-location>",
-        }
-        for line, want in cases.items():
-            with self.subTest(line=line):
-                self.assertEqual(module._redacted_pip_output(line + "\n"), want + "\n")
-
-    def test_hyphen_joined_prefixes_are_package_names_not_keys(self):
-        module = load_module()
-        for line in ("google-auth S3CRET", "pkg-token S3CRET", "tiktoken S3CRET"):
-            with self.subTest(line=line):
-                self.assertEqual(module._redacted_pip_output(line), line)
-
-    def test_key_name_alone_keeps_the_key_and_redacts_only_the_value(self):
-        module = load_module()
-        cases = {
-            "401 Error, Credentials not correct for https://h/simple/": (
-                "401 Error, Credentials not correct for <artifact-location>"
-            ),
-            "Saving credentials to keyring": "Saving credentials to keyring",
-            "password = S3CRET": "password = <artifact-location>",
-            "token : S3CRET": "token : <artifact-location>",
-            "--password S3CRET": "--password <artifact-location>",
-            '{"password": "S3CRET"}': '{"password": <artifact-location>',
-            '"token":"S3CRET"': "<artifact-location>",
-            "apiToken=S3CRET": "<artifact-location>",
-            "my-token= S3CRET": "my-token= <artifact-location>",
-        }
-        for line, want in cases.items():
-            with self.subTest(line=line):
-                self.assertEqual(module._redacted_pip_output(line + "\n"), want + "\n")
-
-    def test_token_prefix_body_of_eight_characters_is_the_minimum_redacted(self):
-        # The docstring states "followed by 8 or more"; 7 characters are kept.
-        module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output("ghp_ABCDEFGH\n"), "<artifact-location>\n"
-        )
-        self.assertEqual(module._redacted_pip_output("ghp_ABCDEFG\n"), "ghp_ABCDEFG\n")
-
-    def test_vertical_tab_and_form_feed_split_an_option_from_its_value(self):
-        # \x0b and \x0c are whitespace (str.isspace), so they separate the key and value.
-        module = load_module()
-        for separator in ("\x0b", "\x0c"):
-            with self.subTest(separator=repr(separator)):
-                self.assertEqual(
-                    module._redacted_pip_output(f"--password{separator}S3CRET\n"),
-                    f"--password{separator}<artifact-location>\n",
-                )
-
-    def test_credential_and_credentials_keys_with_a_value_are_redacted(self):
-        module = load_module()
-        for line in ("credential=S3CRET", "credentials=S3CRET"):
-            with self.subTest(line=line):
-                self.assertEqual(
-                    module._redacted_pip_output(line + "\n"),
-                    "<artifact-location>\n",
-                )
-
-    def test_bare_key_with_trailing_comma_then_separator_redacts_the_value(self):
-        # `,` is in the bare-key tail, so `password,` is a key and `=` a separator.
-        module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output("password, = S3CRET\n"),
-            "password, = <artifact-location>\n",
-        )
-
-    def test_quoted_separator_token_then_value_redacts_the_value(self):
-        module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output('password ":" S3CRET\n'),
-            'password ":" <artifact-location>\n',
-        )
-
-    def test_quoted_or_bracketed_option_key_then_value_redacts_the_value(self):
-        # _redact_line strips leading quotes and brackets before testing for "--",
-        # so a quoted or list-embedded option form must still lose its value.
-        module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output("['pip', '--password', 'S3CRET']\n"),
-            "['pip', '--password', <artifact-location>\n",
-        )
-        self.assertEqual(
-            module._redacted_pip_output('"--password" S3CRET\n'),
-            '"--password" <artifact-location>\n',
-        )
-
-    def test_percent_encoded_scheme_separator_is_redacted_as_a_url(self):
-        # The "://" test runs on the decoded token, so %3A%2F%2F counts as a scheme.
-        module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output("https%3A%2F%2Fh%2Fx\n"),
-            "<artifact-location>\n",
-        )
-
-    def test_triple_percent_encoded_key_value_is_redacted(self):
-        # `password%25253DS3CRET` needs three decode passes to reach `password=S3CRET`.
-        module = load_module()
-        redacted = module._redacted_pip_output(
-            "Collecting x from password%25253DS3CRET\n"
-        )
-        self.assertNotIn("S3CRET", redacted)
-        self.assertIn("<artifact-location>", redacted)
-
-    def test_aws_key_id_is_redacted_only_at_exactly_sixteen_characters(self):
-        module = load_module()
-        for prefix in ("AKIA", "ASIA"):
-            with self.subTest(prefix=prefix):
-                self.assertEqual(
-                    module._redacted_pip_output(prefix + "ABCDEFGHIJKLMNOP\n"),
-                    "<artifact-location>\n",
-                )
-                self.assertEqual(
-                    module._redacted_pip_output(prefix + "ABCDEFGHIJKLMNO\n"),
-                    prefix + "ABCDEFGHIJKLMNO\n",
-                )
-
-    def test_split_userinfo_after_a_redacted_first_piece_redacts_the_middle(self):
-        # The first piece is redacted (URL or key=value), yet a pending start must
-        # still be recorded so the whitespace-split middle token is redacted too.
-        module = load_module()
-        for line in (
-            "https://user:a MIDDLE S3CRET@host/simple\n",
-            "token=abc:def MIDDLE x@h\n",
         ):
-            with self.subTest(line=line):
-                redacted = module._redacted_pip_output(line)
-                self.assertNotIn("MIDDLE", redacted)
-                self.assertNotIn("S3CRET", redacted)
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    Path("/tmp"),
+                    changes_environment=changes_environment,
+                )
+        return raised.exception
 
-    def test_whitespace_split_userinfo_redacts_every_pending_token(self):
-        # The earliest pending start is kept, so `a:S3CRETA` is redacted as well.
+    @unittest.skipIf(os.name == "nt", "owner-only is a POSIX permission check")
+    def test_output_file_and_directory_are_owner_only(self):
         module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output("a:S3CRETA b:S3CRETB x@host\n"),
-            "<artifact-location> <artifact-location> <artifact-location>\n",
-        )
+        path = saved_output_path(module._save_pip_output(b"out", b"err"))
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(path.parent.stat().st_mode), 0o700)
+        self.assertEqual(path.parent.parent.resolve(), self.temp_root.resolve())
 
-    def test_colon_at_index_zero_or_as_last_character_starts_no_pending_span(self):
-        # Pending starts need a colon at index >= 1 that is not the token's last
-        # character. Neither `:S3CRET` nor `S3CRET:` starts one, so both stay clear.
+    def test_save_failure_still_reports_the_stall_without_chaining(self):
         module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output(":S3CRET x@host\n"),
-            ":S3CRET <artifact-location>\n",
-        )
-        self.assertEqual(
-            module._redacted_pip_output("S3CRET: x@host\n"),
-            "S3CRET: <artifact-location>\n",
-        )
-        self.assertEqual(
-            module._redacted_pip_output("abc: def x@host\n"),
-            "abc: def <artifact-location>\n",
-        )
-
-    def test_redaction_state_resets_at_each_line(self):
-        # A header on line one must not redact the pip diagnostic on line two.
-        module = load_module()
-        self.assertEqual(
-            module._redacted_pip_output(
-                "Authorization: Basic S3CRET\nCollecting pkg==1.0\n"
-            ),
-            "Authorization: <artifact-location> <artifact-location>\nCollecting pkg==1.0\n",
-        )
-
-    def test_authorization_header_redacts_every_remaining_token_on_its_line(self):
-        # Digest and Negotiate are not in the Basic/Bearer scheme list, so only
-        # the header-name rule (redact_rest) can hide their credential tokens.
-        module = load_module()
-        lines = (
-            'Authorization: Digest username="alice", response="S3CRET"\n',
-            "Proxy-Authorization: Negotiate S3CRETPART1 S3CRETPART2\n",
-        )
-        for line in lines:
-            with self.subTest(line=line):
-                redacted = module._redacted_pip_output(line)
-                self.assertNotIn("S3CRET", redacted)
-                self.assertNotIn("alice", redacted)
-                header = line.split(":", 1)[0] + ":"
-                self.assertIn(header, redacted)
-
-    def test_key_token_carrying_value_is_redacted_even_when_another_key_ends_it(self):
-        # A token with a key's value in it is replaced whole, even when another key
-        # name ends the token with a separator; that trailing key is not a bare key.
-        module = load_module()
-        forms = (
-            "password=S3CRET,token=",
-            "?token=S3CRET&password=",
-            "apikey=S3CRET;auth:",
-            "user:S3CRET:password:",
-            "token%3DS3CRET%26password%3D",
-        )
-        for form in forms:
-            with self.subTest(form=form):
-                redacted = module._redacted_pip_output(form)
-                self.assertNotIn("S3C", redacted)
-                self.assertNotIn("RET", redacted)
-                self.assertIn("<artifact-location>", redacted)
-
-    def test_value_after_trailing_key_of_a_carrying_token_is_redacted(self):
-        module = load_module()
-        redacted = module._redacted_pip_output("password=S3CRET,token= NEXTS3CRET\n")
-        self.assertNotIn("S3C", redacted)
-        self.assertNotIn("RET", redacted)
-        self.assertEqual(redacted, "<artifact-location> <artifact-location>\n")
-
-    def test_lines_pip_prints_for_normal_work_are_unchanged(self):
-        module = load_module()
-        lines = (
-            "Collecting pkg==1.0\n",
-            "ERROR: Could not find a version that satisfies the requirement pkg==1.0\n",
-            "Downloading pkg-1.0-py3-none-any.whl (1.2 MB)\n",
-            "Requirement already satisfied: pkg in ./lib (1.0)\n",
-            "pkg @ \n",
-            "name @ \n",
-            "task-runner-12345678 disk-abcdefgh12\n",
-            "Collecting pypi-attestations==0.0.21\n",
-            "Collecting pypi-simple\n",
-            "Collecting tokenizers==0.21.0\n",
-            # Package names that end in a key name are not credentials.
-            "Collecting tiktoken==0.8.0\n",
-            "No matching distribution found for tiktoken==0.8.0\n",
-            "Requirement already satisfied: tiktoken in ./lib (0.8.0)\n",
-            "The user requested tiktoken==0.8.0\n",
-            "Collecting google-auth==2.36.0\n",
-            "Requirement already satisfied: google-auth in ./lib (2.36.0)\n",
-            "Collecting pkg-token==1.0\n",
-        )
-        for line in lines:
-            with self.subTest(line=line):
-                self.assertEqual(module._redacted_pip_output(line), line)
-
-    def test_parts_are_redacted_separately_so_streams_do_not_fuse(self):
-        module = load_module()
-        for parts in (
-            ("Collecting foo", "password=S3CRET\n"),
-            ("Collecting foo", "token= S3CRETX"),
+        expired = subprocess.TimeoutExpired(cmd=["pip"], timeout=0.1, output=b"x")
+        with mock.patch.object(
+            module.tempfile, "mkdtemp", side_effect=PermissionError("denied")
         ):
-            with self.subTest(parts=parts):
-                self.assertNotIn("S3CRET", module._redacted_pip_output(*parts))
+            error = self.pip_error(module, expired)
+        message = str(error)
+        self.assertIn("Installer stalled", message)
+        self.assertIn("could not be saved (PermissionError)", message)
+        self.assertIsNone(error.__context__)
 
-    def test_parts_join_with_one_newline_only_where_none_exists(self):
+    def test_no_child_byte_reaches_the_message(self):
         module = load_module()
-        self.assertEqual(module._redacted_pip_output("a\n", "b\n"), "a\nb\n")
-        self.assertEqual(module._redacted_pip_output("a", None, "b"), "a\nb")
-        self.assertEqual(module._redacted_pip_output("a", "", "b\n"), "a\nb\n")
+        stdout = secrets.token_urlsafe(3072)  # about 4 KiB of text
+        stderr = secrets.token_urlsafe(3072)
+        fragments = {
+            text[i : i + 8] for text in (stdout, stderr) for i in range(len(text) - 7)
+        }
+        for label, outcome, changes in (
+            (
+                "stall during apply",
+                subprocess.TimeoutExpired(
+                    cmd=["pip"],
+                    timeout=0.1,
+                    output=stdout.encode(),
+                    stderr=stderr.encode(),
+                ),
+                True,
+            ),
+            (
+                "stall during plan",
+                subprocess.TimeoutExpired(
+                    cmd=["pip"],
+                    timeout=0.1,
+                    output=stdout.encode(),
+                    stderr=stderr.encode(),
+                ),
+                False,
+            ),
+            (
+                "failure",
+                subprocess.CompletedProcess(
+                    args=["pip"], returncode=1, stdout=stdout, stderr=stderr
+                ),
+                True,
+            ),
+        ):
+            with self.subTest(label):
+                message = str(
+                    self.pip_error(module, outcome, changes_environment=changes)
+                )
+                leaked = [fragment for fragment in fragments if fragment in message]
+                self.assertEqual(leaked, [], "child output reached the message")
 
-    def test_redaction_keeps_line_endings_and_other_lines_exactly(self):
+    def test_each_failure_writes_its_own_file(self):
         module = load_module()
-        text = "Collecting pkg==1.0\r\npassword=S3CRET\nDownloading pkg-1.0.whl\n"
+        first = self.pip_error(
+            module,
+            subprocess.CompletedProcess(
+                args=["pip"], returncode=1, stdout="first run\n", stderr=""
+            ),
+            changes_environment=False,
+        )
+        first_path = saved_output_path(str(first))
+        first_bytes = first_path.read_bytes()
+        second = self.pip_error(
+            module,
+            subprocess.CompletedProcess(
+                args=["pip"], returncode=1, stdout="second run\n", stderr=""
+            ),
+            changes_environment=False,
+        )
+        second_path = saved_output_path(str(second))
+        self.assertNotEqual(first_path, second_path)
+        self.assertEqual(first_path.read_bytes(), first_bytes)
         self.assertEqual(
-            module._redacted_pip_output(text),
-            "Collecting pkg==1.0\r\n<artifact-location>\nDownloading pkg-1.0.whl\n",
+            second_path.read_text(encoding="utf-8"),
+            "--- stdout ---\nsecond run\n\n--- stderr ---\n",
         )
-
-    def assertRedactsQuickly(self, text):
-        # Run in a child process so a catastrophic regex fails this test
-        # instead of hanging the whole suite.
-        try:
-            completed = subprocess.run(
-                [sys.executable, "-I", "-c", CHILD_CODE, str(SCRIPT)],
-                input=text,
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-        except subprocess.TimeoutExpired:
-            self.fail("redaction did not finish within 10 s")
-        self.assertEqual(
-            completed.returncode,
-            0,
-            f"redaction child failed: {completed.stderr}",
-        )
-        result = json.loads(completed.stdout)
-        # CPU time, not wall time: load on the host must not fail a linear-time check.
-        cpu_seconds = result["cpu_seconds"]
-        self.assertLess(cpu_seconds, 1.0, f"redaction used {cpu_seconds:.2f}s of CPU")
-        return result["redacted"]
-
-    def test_long_colon_token_without_at_is_linear_and_unchanged(self):
-        for text in (":" * 4000, "a:" * 2000):
-            with self.subTest(prefix=text[:2]):
-                self.assertEqual(self.assertRedactsQuickly(text), text)
-
-    def test_long_letter_run_without_scheme_separator_is_linear_and_unchanged(self):
-        text = "a" * 100000
-        self.assertEqual(self.assertRedactsQuickly(text), text)
-
-    def test_colon_dense_line_before_credential_url_is_fast_and_redacted(self):
-        redacted = self.assertRedactsQuickly(":" * 50000 + " https://user:secret@h/x")
-        self.assertNotIn("secret", redacted)
-        self.assertIn("<artifact-location>", redacted)
-
-    def test_one_megabyte_mixed_credential_line_is_linear(self):
-        # About 1 MB: quadratic work at this size is already ~10^12 steps, so a
-        # linear-vs-quadratic check needs no more, and 1.0 s stays a wide margin.
-        text = (
-            ("a%3A" * 60000)
-            + ("password= " * 40000)
-            + ("Bearer " * 40000)
-            + ("ghp_" * 60000)
-        )
-        self.assertGreaterEqual(len(text), 1_000_000)
-        redacted = self.assertRedactsQuickly(text)
-        # The glued `a%3Apassword=` is a bare key name, which is kept; each value
-        # after a `password=` key is redacted, so no `password=` run survives.
-        self.assertNotIn("password= password=", redacted)
-        self.assertNotIn("ghp_", redacted)
-
-    def test_one_megabyte_line_mixing_spaced_option_encoded_separator_and_aws_is_linear(
-        self,
-    ):
-        text = (
-            ('"password" = LEAK ' * 16000)
-            + ("password%253DLEAK " * 16000)
-            + ("--token LEAK " * 24000)
-            + ("user:LEAK\x0bX@host " * 8000)
-            + ("AKIAABCDEFGHIJKLMNOP " * 4000)
-        )
-        self.assertGreaterEqual(len(text), 1_000_000)
-        redacted = self.assertRedactsQuickly(text)
-        self.assertNotIn("LEAK", redacted)
-        self.assertNotIn("AKIAABCDEFGHIJKLMNOP", redacted)
 
 
 class ReadOnlyBlocksResponse:
@@ -1491,7 +1050,8 @@ class DownloadReadCallTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix", "the fake interpreter is a POSIX shell script")
 class RealStalledChildTests(unittest.TestCase):
-    def test_real_stalled_child_is_killed_and_child_output_is_redacted(self):
+    def test_real_stalled_child_is_killed_and_child_output_is_saved(self):
+        isolate_temp_dir(self)
         module = load_module()
         with tempfile.TemporaryDirectory() as directory:
             fake_interpreter = Path(directory) / "fake-python"
@@ -1520,7 +1080,7 @@ class RealStalledChildTests(unittest.TestCase):
         self.assertLess(elapsed, 10, "stalled child was not killed at the bound")
         self.assertIn("Installer stalled", str(raised.exception))
         self.assertNotIn("secret", str(raised.exception))
-        self.assertIn("<artifact-location>", str(raised.exception))
+        self.assertIn("pip-output.log", str(raised.exception))
         self.assertIsNone(
             raised.exception.__context__, "secret-bearing exception must not be chained"
         )
