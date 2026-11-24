@@ -499,6 +499,41 @@ class DownloadRefusalAndInterruptTests(unittest.TestCase):
             self.assertFalse(target.exists(), "partial wheel must be removed")
 
 
+class OpenerWiringTests(unittest.TestCase):
+    """_open_url must go through _OPENER, the only opener that refuses downgrades.
+
+    A local server cannot speak https, so the refusal is checked on the opener's
+    handler chain, and the transfer path is checked by recording _OPENER.open.
+    """
+
+    def test_open_url_routes_through_the_no_downgrade_opener(self):
+        module = load_module()
+        redirect_handlers = [
+            handler
+            for handler in module._OPENER.handlers
+            if isinstance(handler, urllib.request.HTTPRedirectHandler)
+        ]
+        self.assertEqual(len(redirect_handlers), 1)
+        self.assertIsInstance(redirect_handlers[0], module._NoDowngradeRedirectHandler)
+        self.assertFalse(
+            any(
+                type(handler) is urllib.request.HTTPRedirectHandler
+                for handler in module._OPENER.handlers
+            ),
+            "a plain HTTPRedirectHandler would follow https->http redirects",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "pkg-1.0-py3-none-any.whl"
+            source.write_bytes(b"wheel")
+            with mock.patch.object(
+                module._OPENER, "open", wraps=module._OPENER.open
+            ) as opened:
+                with module._open_url(source.as_uri(), timeout=5) as response:
+                    self.assertEqual(response.read(), b"wheel")
+        opened.assert_called_once()
+        self.assertEqual(opened.call_args.kwargs.get("timeout"), 5)
+
+
 class CacheWheelTests(unittest.TestCase):
     def test_cache_wheel_downloads_through_bounded_helper(self):
         module = load_module()
@@ -700,6 +735,32 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("nothing was installed", message)
         self.assertNotIn("retry", message)
         self.assertNotIn("re-run", message)
+
+    def test_silent_pip_stall_omits_the_output_header(self):
+        # No output at all: the diagnostic header must not be printed over nothing.
+        module = load_module()
+        for changes_environment in (False, True):
+            with self.subTest(changes_environment=changes_environment):
+                expired = subprocess.TimeoutExpired(cmd=["pip"], timeout=0.1)
+                with (
+                    mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
+                    mock.patch.object(module.subprocess, "run", side_effect=expired),
+                    mock.patch.object(
+                        module.ENV,
+                        "trusted_interpreter",
+                        return_value=Path("/usr/bin/python3"),
+                    ),
+                ):
+                    with self.assertRaises(ValueError) as raised:
+                        module.isolated_pip(
+                            Path("/tmp/candidate"),
+                            ["install", "x"],
+                            Path("/tmp"),
+                            changes_environment=changes_environment,
+                        )
+                message = str(raised.exception)
+                self.assertIn("pip exceeded the 0.1-second bound", message)
+                self.assertNotIn("pip output before it was stopped:", message)
 
 
 class RedactionTests(unittest.TestCase):
@@ -1651,6 +1712,25 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.module.apply(apply_options)
         self.assertEqual(self.pip_calls, [False, True])
 
+    @unittest.skipIf(os.name == "nt", "POSIX directory modes do not apply on Windows")
+    def test_wheel_cache_directory_is_private_to_the_owner(self):
+        def writing_cache(item, directory, download_deadline):
+            artifact = directory / "pkg-1.0-py3-none-any.whl"
+            artifact.write_bytes(b"wheel")
+            return {
+                "path": str(artifact),
+                "sha256": hashlib.sha256(b"wheel").hexdigest(),
+                "name": "pkg",
+                "version": "1.0",
+            }
+
+        self._start(writing_cache, [BEFORE, BEFORE])
+        self.module.plan(self.options)
+        caches = list(self.root.glob("*-wheels-*"))
+        self.assertEqual(len(caches), 1, "plan must leave exactly one wheel cache")
+        self.assertTrue(caches[0].is_dir())
+        self.assertEqual(stat.S_IMODE(os.stat(caches[0]).st_mode) & 0o077, 0)
+
     def test_sigterm_during_plan_cleans_wheel_cache_and_exits_143(self):
         # Runs main() end to end: the signal must become SystemExit(143) so the
         # BaseException cleanup in plan() removes the partial cache.
@@ -1684,7 +1764,7 @@ class PlanApplyHarnessTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob("*-wheels-*")), [])
         self.assertFalse(self.plan_path.exists())
 
-    # Ownership by construction (r22): each resource is named or staged before it
+    # Ownership by construction: each resource is named or staged before it
     # exists, so an interrupt at any point finds only what this call owns.
 
     def _one_wheel(self, item, directory, download_deadline):
@@ -2024,6 +2104,36 @@ class PlanSignalExitTests(unittest.TestCase):
             code = module.main(argv)
         self.assertEqual(code, 0)
         self.assertIs(signal.getsignal(signal.SIGHUP), signal.SIG_IGN)
+
+
+class PlanOffMainThreadTests(unittest.TestCase):
+    """_run_plan_handling_termination must not touch signal handlers off the main thread."""
+
+    def test_plan_runs_off_main_thread_without_touching_signal_handlers(self):
+        module = load_module()
+        outcome = {}
+
+        def run():
+            try:
+                outcome["result"] = module._run_plan_handling_termination(
+                    argparse.Namespace()
+                )
+            except (
+                BaseException
+            ) as error:  # collected here, asserted on the main thread
+                outcome["error"] = error
+
+        before = signal.getsignal(signal.SIGTERM)
+        with mock.patch.object(module, "plan", return_value={"ok": True}):
+            worker = threading.Thread(target=run)
+            worker.start()
+            worker.join(timeout=10)
+        self.assertFalse(worker.is_alive(), "worker thread did not finish")
+        self.assertNotIn(
+            "error", outcome, f"plan raised off the main thread: {outcome}"
+        )
+        self.assertEqual(outcome.get("result"), {"ok": True})
+        self.assertIs(signal.getsignal(signal.SIGTERM), before)
 
 
 class _SwapHung(Exception):
