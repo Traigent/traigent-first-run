@@ -5,11 +5,46 @@ documented private channel. The policy must point at this repository's own
 advisory form, not another repository's.
 """
 
+import fnmatch
 import re
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _pattern_matches(pattern: str, rel_path: str) -> bool:
+    """Match one CODEOWNERS pattern, for the forms this repository uses only.
+
+    Supported: an anchored file ("/SECURITY.md"), an anchored directory prefix
+    ("/tests/"), and unanchored globs ("*.md", "**/requirements*.txt") matched
+    against the path. Anything else fails loudly rather than guessing.
+    """
+    if pattern.startswith("/"):
+        anchored = pattern[1:]
+        if anchored.endswith("/"):
+            return rel_path.startswith(anchored)
+        return fnmatch.fnmatchcase(rel_path, anchored)
+    if pattern.endswith("/"):
+        raise ValueError(f"unsupported unanchored directory pattern: {pattern}")
+    return fnmatch.fnmatchcase(rel_path, pattern)
+
+
+def _effective_owners(owners_text: str, path: str) -> list[str]:
+    """Return the owners GitHub applies to ``path``: the last matching line's owners.
+
+    An ownerless matching line therefore clears the owners, as GitHub does.
+    """
+    rel_path = path.lstrip("/")
+    effective: list[str] = []
+    for raw in owners_text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        pattern, *line_owners = line.split()
+        if _pattern_matches(pattern, rel_path):
+            effective = line_owners
+    return effective
 
 
 class SecurityPolicyTests(unittest.TestCase):
@@ -102,17 +137,34 @@ class SecurityPolicyTests(unittest.TestCase):
         for line in mentions:
             self.assertIn("placeholder", line)
 
-    def test_security_policy_and_its_pin_test_are_code_owned(self) -> None:
-        # A PR that edits the advisory URL or mailbox together with this test must
-        # still need an owner's review, so both paths need a CODEOWNERS entry.
-        owners = (ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
-        for path in ("/SECURITY.md", "/tests/test_security_policy.py"):
+    def test_security_policy_and_its_pin_test_are_effectively_owned(self) -> None:
+        # A PR that edits the advisory URL or mailbox together with this test
+        # routes its review request to the owner, so both paths must resolve to
+        # the owner under GitHub's rule: the last matching CODEOWNERS line wins.
+        owners_text = (ROOT / ".github" / "CODEOWNERS").read_text(encoding="utf-8")
+        for path in ("SECURITY.md", "tests/test_security_policy.py"):
             with self.subTest(path=path):
-                self.assertRegex(
-                    owners,
-                    rf"(?m)^{re.escape(path)}[ \t]+@\S+",
-                    f"{path} has no CODEOWNERS owner",
-                )
+                owners = _effective_owners(owners_text, path)
+                self.assertIn("@nimrodbusany", owners, f"effective owners: {owners}")
+
+    def test_in_scope_reports_have_the_private_advisory_form_and_mailbox(self) -> None:
+        policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")
+        start = policy.index("\n## Reporting a vulnerability\n")
+        end = policy.index("\n## ", start + 1)
+        section = policy[start:end]
+        advisory_urls = re.findall(
+            r"<(https://github\.com/[^>]+/security/advisories/new)>", section
+        )
+        self.assertIn(
+            "https://github.com/Traigent/traigent-first-run/security/advisories/new",
+            advisory_urls,
+        )
+        self.assertIn("security@traigent.ai", section)
+        self.assertIn(
+            "Please report security issues privately rather than in a public issue "
+            "or pull request.",
+            section,
+        )
 
     def test_reporting_paragraph_says_to_report_privately(self) -> None:
         policy = (ROOT / "SECURITY.md").read_text(encoding="utf-8")

@@ -1,6 +1,7 @@
-# Code owners for review routing. Changes to these paths need review from the
-# owner before merge. No org team has access to this repo, so the owner is a
-# named login.
+# Code owners for review routing: GitHub requests review from the owner on a
+# pull request that changes these paths. Whether that review is required is a
+# branch setting, not this file. No org team has access to this repo, so the
+# owner is a named login.
 
 # CI workflows: a change here can alter what runs with repo secrets.
 /.github/workflows/          @nimrodbusany
