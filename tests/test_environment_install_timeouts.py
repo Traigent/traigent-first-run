@@ -1008,6 +1008,91 @@ class RedactionTests(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(module._redacted_pip_output(line + "\n"), want + "\n")
 
+    def test_token_prefix_body_of_eight_characters_is_the_minimum_redacted(self):
+        # The docstring states "followed by 8 or more"; 7 characters are kept.
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output("ghp_ABCDEFGH\n"), "<artifact-location>\n"
+        )
+        self.assertEqual(module._redacted_pip_output("ghp_ABCDEFG\n"), "ghp_ABCDEFG\n")
+
+    def test_vertical_tab_and_form_feed_split_an_option_from_its_value(self):
+        # \x0b and \x0c are whitespace (str.isspace), so they separate the key and value.
+        module = load_module()
+        for separator in ("\x0b", "\x0c"):
+            with self.subTest(separator=repr(separator)):
+                self.assertEqual(
+                    module._redacted_pip_output(f"--password{separator}S3CRET\n"),
+                    f"--password{separator}<artifact-location>\n",
+                )
+
+    def test_credential_and_credentials_keys_with_a_value_are_redacted(self):
+        module = load_module()
+        for line in ("credential=S3CRET", "credentials=S3CRET"):
+            with self.subTest(line=line):
+                self.assertEqual(
+                    module._redacted_pip_output(line + "\n"),
+                    "<artifact-location>\n",
+                )
+
+    def test_bare_key_with_trailing_comma_then_separator_redacts_the_value(self):
+        # `,` is in the bare-key tail, so `password,` is a key and `=` a separator.
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output("password, = S3CRET\n"),
+            "password, = <artifact-location>\n",
+        )
+
+    def test_quoted_separator_token_then_value_redacts_the_value(self):
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output('password ":" S3CRET\n'),
+            'password ":" <artifact-location>\n',
+        )
+
+    def test_percent_encoded_scheme_separator_is_redacted_as_a_url(self):
+        # The "://" test runs on the decoded token, so %3A%2F%2F counts as a scheme.
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output("https%3A%2F%2Fh%2Fx\n"),
+            "<artifact-location>\n",
+        )
+
+    def test_whitespace_split_userinfo_redacts_every_pending_token(self):
+        # The earliest pending start is kept, so `a:S3CRETA` is redacted as well.
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output("a:S3CRETA b:S3CRETB x@host\n"),
+            "<artifact-location> <artifact-location> <artifact-location>\n",
+        )
+
+    def test_colon_at_index_zero_or_as_last_character_starts_no_pending_span(self):
+        # Pending starts need a colon at index >= 1 that is not the token's last
+        # character. Neither `:S3CRET` nor `S3CRET:` starts one, so both stay clear.
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output(":S3CRET x@host\n"),
+            ":S3CRET <artifact-location>\n",
+        )
+        self.assertEqual(
+            module._redacted_pip_output("S3CRET: x@host\n"),
+            "S3CRET: <artifact-location>\n",
+        )
+        self.assertEqual(
+            module._redacted_pip_output("abc: def x@host\n"),
+            "abc: def <artifact-location>\n",
+        )
+
+    def test_redaction_state_resets_at_each_line(self):
+        # A header on line one must not redact the pip diagnostic on line two.
+        module = load_module()
+        self.assertEqual(
+            module._redacted_pip_output(
+                "Authorization: Basic S3CRET\nCollecting pkg==1.0\n"
+            ),
+            "Authorization: <artifact-location> <artifact-location>\nCollecting pkg==1.0\n",
+        )
+
     def test_authorization_header_redacts_every_remaining_token_on_its_line(self):
         # Digest and Negotiate are not in the Basic/Bearer scheme list, so only
         # the header-name rule (redact_rest) can hide their credential tokens.
