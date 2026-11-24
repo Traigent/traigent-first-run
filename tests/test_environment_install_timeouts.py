@@ -23,6 +23,7 @@ import re
 import secrets
 import shutil
 import signal
+import ssl
 import stat
 import subprocess
 import sys
@@ -2260,6 +2261,168 @@ class PortableImportTests(unittest.TestCase):
         self.assertEqual(outcome["errors"], 0, outcome)
         self.assertEqual(outcome["failures"], 0, outcome)
         self.assertEqual(outcome["skipped"], 4, outcome)
+
+
+class InterruptedApplyWarningTests(unittest.TestCase):
+    """A SIGTERM during apply says the environment may be partly changed; plan does not."""
+
+    APPLY_STOPPED = (
+        "Installer stopped by signal during apply; the environment may be partly "
+        "changed. Stop and inspect it before any further change."
+    )
+
+    @POSIX_ONLY
+    def test_sigterm_during_apply_exits_143_and_warns_on_stderr(self):
+        module = load_module()
+
+        def apply_is_signalled(options):
+            threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM)).start()
+            time.sleep(5)
+            return {}
+
+        stderr = io.StringIO()
+        started = time.monotonic()
+        with (
+            mock.patch.object(module, "require_isolation"),
+            mock.patch.object(module, "apply", side_effect=apply_is_signalled),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            module.main(["apply", "--plan", "p", "--approved-plan-sha256", "x"])
+        self.assertLess(time.monotonic() - started, 3, "SIGTERM did not stop apply")
+        self.assertEqual(raised.exception.code, 143)
+        self.assertIn("may be partly changed", stderr.getvalue())
+        self.assertEqual(json.loads(stderr.getvalue()), {"error": self.APPLY_STOPPED})
+
+    @POSIX_ONLY
+    def test_sigterm_during_plan_prints_no_apply_warning(self):
+        module = load_module()
+
+        def plan_is_signalled(options):
+            threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM)).start()
+            time.sleep(5)
+            return {}
+
+        stderr = io.StringIO()
+        argv = ["plan", "--candidate", "c", "--requirements", "r", "--plan", "p"]
+        with (
+            mock.patch.object(module, "require_isolation"),
+            mock.patch.object(module, "plan", side_effect=plan_is_signalled),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            module.main(argv)
+        self.assertEqual(raised.exception.code, 143)
+        self.assertEqual(stderr.getvalue(), "")
+
+
+class DownloadTlsErrorLabelTests(unittest.TestCase):
+    """TLS errors carry OpenSSL codes in errno; they must not be labelled as OS errnos."""
+
+    def assert_tls_error_is_named_by_type_only(self, error, type_name):
+        module = load_module()
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        url = "https://example.invalid/pkg-1.0-py3-none-any.whl"
+        with mock.patch.object(module, "_open_url", side_effect=error):
+            with self.assertRaises(ValueError) as raised:
+                module._download(url, target, read_timeout=5, deadline=5)
+        self.assertEqual(
+            str(raised.exception),
+            f"Wheel download failed: {type_name}; nothing was installed or changed.",
+        )
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+
+    def test_ssl_eof_error_is_named_by_type_not_by_openssl_errno(self):
+        self.assert_tls_error_is_named_by_type_only(
+            ssl.SSLEOFError(8, "EOF occurred"), "SSLEOFError"
+        )
+
+    def test_ssl_error_is_named_by_type_not_by_openssl_errno(self):
+        self.assert_tls_error_is_named_by_type_only(ssl.SSLError(1, "x"), "SSLError")
+
+
+class InterruptedPipOutputSaveTests(unittest.TestCase):
+    """An interrupt while saving pip output must not leave a partial log behind."""
+
+    def setUp(self):
+        self.temp_root = isolate_temp_dir(self)
+
+    def test_interrupt_during_write_removes_the_partial_log_and_propagates(self):
+        module = load_module()
+        real_fdopen = os.fdopen
+        for interrupt in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt.__name__):
+
+                class InterruptedOnSecondWrite:
+                    def __init__(self, stream):
+                        self.stream = stream
+                        self.writes = 0
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *exc_info):
+                        self.stream.close()
+                        return False
+
+                    def write(self, data):
+                        self.writes += 1
+                        if self.writes == 2:
+                            raise interrupt()
+                        return self.stream.write(data)
+
+                with mock.patch.object(
+                    module.os,
+                    "fdopen",
+                    side_effect=lambda fd, mode: InterruptedOnSecondWrite(
+                        real_fdopen(fd, mode)
+                    ),
+                ):
+                    with self.assertRaises(interrupt):
+                        module._save_pip_output(b"out", b"err")
+                self.assertEqual(
+                    list(self.temp_root.iterdir()),
+                    [],
+                    "an interrupted save must remove its partial log and directory",
+                )
+
+
+class DownloadWorkerDaemonTests(unittest.TestCase):
+    """A stalled lookup must not keep the process alive after the download deadline."""
+
+    def test_stalled_lookup_does_not_hold_the_process_after_the_deadline(self):
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        code = (
+            "import importlib.util, sys, time\n"
+            "from pathlib import Path\n"
+            "spec = importlib.util.spec_from_file_location('env_under_test', sys.argv[1])\n"
+            "module = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(module)\n"
+            "def stalled_lookup(url, timeout):\n"
+            "    time.sleep(20)\n"
+            "module._open_url = stalled_lookup\n"
+            "try:\n"
+            "    module._download(\n"
+            "        'https://example.invalid/pkg-1.0-py3-none-any.whl',\n"
+            "        Path(sys.argv[2]), read_timeout=5, deadline=1,\n"
+            "    )\n"
+            "except ValueError as error:\n"
+            "    print(error)\n"
+        )
+        started = time.monotonic()
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", code, str(SCRIPT), str(target)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("plan download deadline", completed.stdout)
+        self.assertLess(elapsed, 10, "a stalled download thread kept the process alive")
 
 
 if __name__ == "__main__":

@@ -23,6 +23,7 @@ import os
 import secrets
 import shutil
 import signal
+import ssl
 import stat
 import subprocess
 import sys
@@ -201,11 +202,11 @@ def _save_pip_output(stdout, stderr) -> str:
     """Save pip's raw output where only this user can read it; return the path or why not.
 
     Never printed or chained: pip output can carry index or proxy addresses. The
-    directory is a fresh mkdtemp under the system temp dir (0700 on POSIX; on Windows
-    the per-user %TEMP% ACL applies), never the plan's directory, which may sit inside
-    the customer's project and be committed. A save that fails after the directory
-    exists removes that directory; if even that fails, the message names it so the
-    user can delete it.
+    directory is a fresh mkdtemp in the temp dir Python's tempfile picks (TMPDIR/TEMP/TMP
+    if set, else the system default), never the plan's directory; and the message tells
+    the user to delete it when done. A save that fails or is interrupted after the
+    directory exists removes that directory; if even that fails, the message names it
+    so the user can delete it.
     """
     directory = None
     try:
@@ -237,6 +238,16 @@ def _save_pip_output(stdout, stderr) -> str:
                 f"in {directory}: delete it"
             )
         return f"pip's output could not be saved ({kind})"
+    except BaseException:
+        # An interrupt (Ctrl-C, or the SIGTERM handler's SystemExit) mid-write must not
+        # leave the unredacted log behind. The re-raised interrupt is the failure the
+        # user sees, so a removal error here is dropped rather than replacing it.
+        if directory is not None:
+            try:
+                shutil.rmtree(directory)
+            except OSError:
+                pass
+        raise
     return (
         f"pip's full output is saved, unredacted, in {path} (readable only by you). "
         "Read it for the cause and quote only the lines that show it: it can contain "
@@ -562,8 +573,13 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         detail += f" (HTTP {error.code})"
     elif isinstance(error, urllib.error.URLError):
         detail += f" ({type(error.reason).__name__})"
-    elif isinstance(error, OSError) and error.errno in errno.errorcode:
+    elif (
+        isinstance(error, OSError)
+        and not isinstance(error, ssl.SSLError)
+        and error.errno in errno.errorcode
+    ):
         # A local write failure (e.g. a full disk): the errno name is fixed text.
+        # TLS errors are excluded: their errno is an OpenSSL code, not an OS one.
         detail += f" ({errno.errorcode[error.errno]})"
     raise ValueError(
         f"Wheel download failed: {detail}; nothing was installed or changed."
@@ -936,7 +952,24 @@ def main(argv=None) -> int:
         if options.command == "plan":
             result = _run_handling_termination(plan, options)
         else:
-            result = _run_handling_termination(apply, options)
+            try:
+                result = _run_handling_termination(apply, options)
+            except SystemExit:
+                # The pip child was stopped mid-install, so the environment may hold a
+                # partial change. Say so on stderr, then keep the 128+signum status.
+                print(
+                    json.dumps(
+                        {
+                            "error": (
+                                "Installer stopped by signal during apply; the "
+                                "environment may be partly changed. Stop and inspect "
+                                "it before any further change."
+                            )
+                        }
+                    ),
+                    file=sys.stderr,
+                )
+                raise
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return 1
