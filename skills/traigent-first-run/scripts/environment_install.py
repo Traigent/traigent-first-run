@@ -284,18 +284,23 @@ def _signal_name(number: int) -> str:
         return f"signal {number}"
 
 
-# Set while isolated_pip is inside subprocess.Popen. A SIGTERM/SIGHUP that lands in
-# that window is recorded in pending rather than raised, so the child exists only
-# under isolated_pip's kill-on-exception block. Read and written on the main thread.
-_SIGNAL_DEFERRAL = {"active": False, "pending": None}
+def _watch_lifeline(descriptor: int) -> None:
+    """Child side of the lifeline: SIGKILL this process once the parent's write end closes.
 
+    The parent never writes, so read returns b"" only when every copy of its write end
+    is closed: the parent exited, was killed, or finished with this child. That is a
+    state, not an event, so it is seen whether the parent closed early or long before
+    the watcher started. A read error is not EOF and is not treated as one: the thread
+    fails with a traceback and the child keeps running, so a live parent is never killed.
+    """
+    os.fstat(descriptor)  # fail loudly now if the descriptor is not open
 
-def _raise_deferred_signal() -> None:
-    """Raise the SystemExit for a signal recorded while the child was being created."""
-    pending = _SIGNAL_DEFERRAL["pending"]
-    if pending is not None:
-        _SIGNAL_DEFERRAL["pending"] = None
-        raise SystemExit(128 + pending)
+    def watch() -> None:
+        while os.read(descriptor, 1):
+            pass
+        os.kill(os.getpid(), signal.SIGKILL)
+
+    threading.Thread(target=watch, name="lifeline", daemon=True).start()
 
 
 def isolated_pip(
@@ -315,50 +320,55 @@ def isolated_pip(
     stalled = False
     output = None
     started = time.monotonic()
-    _SIGNAL_DEFERRAL["active"] = True
+    # Lifeline (POSIX; Windows has no pass_fds, so it is skipped there). The child holds
+    # the read end and SIGKILLs itself when every copy of the write end is closed. Only
+    # this frame holds the write end, and it closes it last, on every exit path: after
+    # the child is reaped, or when a signal, interrupt or outer SIGKILL stops this process
+    # at any point, including inside Popen, where no kill() below has run yet.
+    lifeline = os.pipe() if os.name == "posix" else None
     try:
-        process = subprocess.Popen(
-            [
-                str(ENV.trusted_interpreter()),
-                "-I",
-                "-S",
-                "-B",
-                str(Path(__file__).resolve()),
-                "_pip",
-                "--candidate",
-                str(candidate),
-                "--",
-                *arguments,
-            ],
-            cwd=working,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-    except BaseException:
-        _SIGNAL_DEFERRAL["active"] = False
-        _raise_deferred_signal()
-        raise
-    try:
-        # Clearing the flag here, inside the protected block, leaves no window where a
-        # signal raises with the child running and nothing to stop it. A signal recorded
-        # during Popen is raised now, and the except below kills the child.
-        _SIGNAL_DEFERRAL["active"] = False
-        _raise_deferred_signal()
-        stdout, stderr = process.communicate(timeout=PIP_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        # The bound is ours to enforce now: kill, then collect what the pipes hold.
-        # Only copy the output here: the save runs after this handler, so no __context__
-        # of a later interrupt can hold TimeoutExpired and its raw bytes.
-        process.kill()
-        stdout, stderr = process.communicate()
-        output = (stdout, stderr)
-        stalled = True
-    except BaseException:
-        # A signal or interrupt while pip runs: stop the child before it propagates.
-        process.kill()
-        process.wait()
-        raise
+        try:
+            process = subprocess.Popen(
+                [
+                    str(ENV.trusted_interpreter()),
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(Path(__file__).resolve()),
+                    "_pip",
+                    "--candidate",
+                    str(candidate),
+                    *(["--lifeline", str(lifeline[0])] if lifeline else []),
+                    "--",
+                    *arguments,
+                ],
+                cwd=working,
+                env=environment,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=(lifeline[0],) if lifeline else (),
+            )
+        finally:
+            if lifeline is not None:
+                os.close(lifeline[0])  # the child has its own copy; we never read it
+        try:
+            stdout, stderr = process.communicate(timeout=PIP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            # The bound is ours to enforce now: kill, then collect what the pipes hold.
+            # Only copy the output here: the save runs after this handler, so no __context__
+            # of a later interrupt can hold TimeoutExpired and its raw bytes.
+            process.kill()
+            stdout, stderr = process.communicate()
+            output = (stdout, stderr)
+            stalled = True
+        except BaseException:
+            # A signal or interrupt while pip runs: stop the child before it propagates.
+            process.kill()
+            process.wait()
+            raise
+    finally:
+        if lifeline is not None:
+            os.close(lifeline[1])
     elapsed = round(time.monotonic() - started)
     if not stalled and process.returncode == 0:
         return
@@ -1082,21 +1092,17 @@ def _run_handling_termination(command, options) -> dict:
     A signal whose disposition is already SIG_IGN is left alone: `nohup` starts the
     process with SIGHUP ignored, and that choice must survive the command.
 
-    Deferral window: while isolated_pip is inside subprocess.Popen, the child may
-    already exist before its kill-on-exception block is active. A signal in that window
-    is recorded in _SIGNAL_DEFERRAL and returned from the handler, and isolated_pip
-    raises it as soon as the block is active, so the child is stopped, not orphaned.
+    Pip child lifetime: on POSIX the pip child kills itself once the write end of its
+    lifeline closes. isolated_pip closes that end only after the child is reaped, or on
+    any exit from isolated_pip, so a signal, an interrupt or an outer SIGKILL at any
+    point leaves no pip running. Windows has no lifeline (no pass_fds): there, a signal
+    raised inside subprocess.Popen, before isolated_pip's kill-on-exception block is
+    active, can still leave the child running.
     """
     if threading.current_thread() is not threading.main_thread():
         return command(options)
 
     def terminate(signum, frame):
-        if _SIGNAL_DEFERRAL["active"]:
-            # Inside Popen: keep the first signal for isolated_pip to raise once the
-            # child is under its kill-on-exception block.
-            if _SIGNAL_DEFERRAL["pending"] is None:
-                _SIGNAL_DEFERRAL["pending"] = signum
-            return
         raise SystemExit(128 + signum)
 
     signums = [signal.SIGTERM, getattr(signal, "SIGHUP", None)]
@@ -1127,11 +1133,14 @@ def main(argv=None) -> int:
     install.add_argument("--approved-plan-sha256", required=True)
     internal = commands.add_parser("_pip", help=argparse.SUPPRESS)
     internal.add_argument("--candidate", required=True, type=Path)
+    internal.add_argument("--lifeline", type=int)
     internal.add_argument("arguments", nargs=argparse.REMAINDER)
     options = parser.parse_args(argv)
     try:
         require_isolation()
         if options.command == "_pip":
+            if options.lifeline is not None:
+                _watch_lifeline(options.lifeline)
             arguments = options.arguments
             return pip_adapter(
                 options.candidate,

@@ -2642,45 +2642,135 @@ class ApplySignalExitTests(unittest.TestCase):
         self.assertFalse(marker.exists(), "pip child kept running after SIGTERM")
 
 
-class PopenCreationSignalTests(unittest.TestCase):
-    """SIGTERM while subprocess.Popen is still creating the pip child must not orphan it."""
+def _lifeline_stand_in(root: Path) -> Path:
+    """Write the stand-in for the trusted interpreter that runs the _pip child.
 
-    @POSIX_ONLY
-    def test_sigterm_during_popen_stops_the_child_and_exits_143(self):
-        module = load_module()
-        root = isolate_temp_dir(self)
-        real_popen = subprocess.Popen
-        children = []
+    It runs under -ISB as the real child does, loads environment_install.py and runs the
+    real main(), whose `_pip` branch starts the lifeline watcher when isolated_pip passes
+    --lifeline. Only pip itself is replaced, by a sleep.
+    """
+    stand_in = root / "stand_in_pip_child"
+    stand_in.write_text(
+        f"#!{sys.executable} -ISB\n"
+        "import importlib.util, sys, time\n"
+        "spec = importlib.util.spec_from_file_location("
+        f"'child_under_test', {str(SCRIPT)!r})\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "module.pip_adapter = lambda candidate, arguments: time.sleep(60)\n"
+        "sys.exit(module.main(sys.argv[sys.argv.index('_pip'):]))\n",
+        encoding="utf-8",
+    )
+    stand_in.chmod(0o700)
+    return stand_in
 
-        def popen_signalled_after_fork(*args, **kwargs):
-            # The child exists when SIGTERM lands during Popen's construction: start a
-            # real sleeper, then run the handler _run_handling_termination installed.
-            child = real_popen(
-                ["sleep", "30"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            children.append(child)
-            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
-            return child
 
-        def reap_children():
-            for child in children:
-                if child.poll() is None:
-                    child.kill()
-                child.wait()
+def _child_gone(pid: int) -> bool:
+    """True once pid has exited or is a zombie. Uses ps, which exists on every POSIX host."""
+    result = subprocess.run(
+        ["ps", "-o", "stat=", "-p", str(pid)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        raise RuntimeError(f"ps could not report pid {pid}: {result.stderr!r}")
+    state = result.stdout.strip()
+    return state == "" or state.startswith(("Z", "X"))
 
-        self.addCleanup(reap_children)
+
+def _gone_within(pid: int, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while not _child_gone(pid):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _reap(pid: int) -> None:
+    """Kill a test child if it still runs, then collect it when this process owns it."""
+    with contextlib.suppress(ProcessLookupError):
+        os.kill(pid, signal.SIGKILL)
+    with contextlib.suppress(ChildProcessError):
+        os.waitpid(pid, 0)
+
+
+def _pip_child_fixture(test: unittest.TestCase):
+    """Load the module with a stand-in child, and reap every child the test starts."""
+    module = load_module()
+    root = isolate_temp_dir(test)
+    stand_in = _lifeline_stand_in(root)
+    children: list[int] = []
+
+    def reap_children():
+        for pid in children:
+            _reap(pid)
+
+    test.addCleanup(reap_children)
+    return module, root, stand_in, children
+
+
+def _recording_fork_exec(children: list[int], after_fork=None):
+    """Stand in for subprocess._fork_exec: record each child pid, then run after_fork."""
+    real_fork_exec = subprocess._fork_exec
+
+    def fork_exec(*args, **kwargs):
+        pid = real_fork_exec(*args, **kwargs)
+        children.append(pid)
+        if after_fork is not None:
+            after_fork()
+        return pid
+
+    return fork_exec
+
+
+@POSIX_ONLY
+class PipChildOutlivesParentTests(unittest.TestCase):
+    """The pip child must not outlive isolated_pip however the parent's Python stops."""
+
+    def test_sigint_after_fork_before_popen_returns_stops_the_child(self):
+        module, root, stand_in, children = _pip_child_fixture(self)
         with (
             mock.patch.object(
-                module.subprocess, "Popen", side_effect=popen_signalled_after_fork
+                subprocess,
+                "_fork_exec",
+                _recording_fork_exec(
+                    children, after_fork=lambda: os.kill(os.getpid(), signal.SIGINT)
+                ),
             ),
+            mock.patch.object(module.ENV, "trusted_interpreter", return_value=stand_in),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            module.isolated_pip(
+                Path("/nonexistent/candidate"),
+                ["install", "x"],
+                root,
+                changes_environment=True,
+            )
+        self.assertEqual(len(children), 1)
+        self.assertTrue(
+            _gone_within(children[0], 2),
+            "pip child outlived isolated_pip after SIGINT during Popen",
+        )
+
+    def test_sigterm_after_fork_before_popen_returns_stops_the_child(self):
+        module, root, stand_in, children = _pip_child_fixture(self)
+        with (
             mock.patch.object(
-                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+                subprocess,
+                "_fork_exec",
+                _recording_fork_exec(
+                    children,
+                    after_fork=lambda: os.kill(os.getpid(), signal.SIGTERM),
+                ),
             ),
+            mock.patch.object(module.ENV, "trusted_interpreter", return_value=stand_in),
             self.assertRaises(SystemExit) as raised,
         ):
             module._run_handling_termination(
                 lambda _options: module.isolated_pip(
-                    Path("/tmp/candidate"),
+                    Path("/nonexistent/candidate"),
                     ["install", "x"],
                     root,
                     changes_environment=True,
@@ -2689,8 +2779,127 @@ class PopenCreationSignalTests(unittest.TestCase):
             )
         self.assertEqual(raised.exception.code, 143)
         self.assertEqual(len(children), 1)
-        self.assertIsNotNone(
-            children[0].poll(), "pip child kept running after SIGTERM during creation"
+        self.assertTrue(
+            _gone_within(children[0], 2),
+            "pip child outlived isolated_pip after SIGTERM during Popen",
+        )
+
+    def test_sigterm_at_kill_entry_on_timeout_still_stops_the_child(self):
+        module, root, stand_in, children = _pip_child_fixture(self)
+        real_kill = subprocess.Popen.kill
+
+        def kill_signalled(process):
+            # The TimeoutExpired handler's kill() receives SIGTERM before it sends SIGKILL.
+            os.kill(os.getpid(), signal.SIGTERM)
+            return real_kill(process)
+
+        with (
+            mock.patch.object(subprocess, "_fork_exec", _recording_fork_exec(children)),
+            mock.patch.object(subprocess.Popen, "kill", kill_signalled),
+            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 1),
+            mock.patch.object(module.ENV, "trusted_interpreter", return_value=stand_in),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            module._run_handling_termination(
+                lambda _options: module.isolated_pip(
+                    Path("/nonexistent/candidate"),
+                    ["install", "x"],
+                    root,
+                    changes_environment=True,
+                ),
+                None,
+            )
+        self.assertEqual(raised.exception.code, 143)
+        self.assertEqual(len(children), 1)
+        self.assertTrue(
+            _gone_within(children[0], 2),
+            "pip child outlived a SIGTERM at kill() after the timeout",
+        )
+
+    def test_second_sigterm_while_killing_still_stops_the_child(self):
+        module, root, stand_in, children = _pip_child_fixture(self)
+        real_kill = subprocess.Popen.kill
+
+        def kill_signalled(process):
+            # A second signal lands in the except BaseException handler's kill().
+            os.kill(os.getpid(), signal.SIGTERM)
+            return real_kill(process)
+
+        # The first SIGTERM interrupts communicate() while the child is still sleeping.
+        first = threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM))
+        self.addCleanup(first.cancel)
+        with (
+            mock.patch.object(subprocess, "_fork_exec", _recording_fork_exec(children)),
+            mock.patch.object(subprocess.Popen, "kill", kill_signalled),
+            mock.patch.object(module.ENV, "trusted_interpreter", return_value=stand_in),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            first.start()
+            module._run_handling_termination(
+                lambda _options: module.isolated_pip(
+                    Path("/nonexistent/candidate"),
+                    ["install", "x"],
+                    root,
+                    changes_environment=True,
+                ),
+                None,
+            )
+        self.assertEqual(raised.exception.code, 143)
+        self.assertEqual(len(children), 1)
+        self.assertTrue(
+            _gone_within(children[0], 2),
+            "pip child outlived a second SIGTERM while it was being killed",
+        )
+
+
+@POSIX_ONLY
+class PipChildOutlivesKilledParentTests(unittest.TestCase):
+    """An outer SIGKILL of the parent, which no Python code can intercept, stops the child."""
+
+    def test_sigkill_of_the_parent_stops_the_pip_child(self):
+        root = isolate_temp_dir(self)
+        stand_in = _lifeline_stand_in(root)
+        parent_code = "\n".join(
+            [
+                "import importlib.util, subprocess, sys",
+                "from pathlib import Path",
+                "from unittest import mock",
+                "spec = importlib.util.spec_from_file_location("
+                f"'parent_under_test', {str(SCRIPT)!r})",
+                "module = importlib.util.module_from_spec(spec)",
+                "spec.loader.exec_module(module)",
+                "real_fork_exec = subprocess._fork_exec",
+                "def fork_exec(*args, **kwargs):",
+                "    pid = real_fork_exec(*args, **kwargs)",
+                "    print(pid, flush=True)",
+                "    return pid",
+                "with mock.patch.object(subprocess, '_fork_exec', fork_exec), \\",
+                "        mock.patch.object(module.ENV, 'trusted_interpreter',",
+                f"                          return_value=Path({str(stand_in)!r})):",
+                "    module.isolated_pip(Path('/nonexistent/candidate'), ['install', 'x'],",
+                f"                        Path({str(root)!r}), changes_environment=True)",
+                "",
+            ]
+        )
+        parent = subprocess.Popen(
+            [sys.executable, "-c", parent_code],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=dict(os.environ, TMPDIR=str(root)),
+        )
+        self.addCleanup(parent.stdout.close)
+        self.addCleanup(parent.stderr.close)
+        self.addCleanup(parent.wait)
+        self.addCleanup(parent.kill)
+        child = int(parent.stdout.readline())
+        self.addCleanup(_reap, child)
+        time.sleep(1.0)  # the parent is now waiting in communicate()
+        self.assertFalse(_child_gone(child), "pip child should run while parent waits")
+        os.kill(parent.pid, signal.SIGKILL)
+        parent.wait(timeout=10)
+        self.assertTrue(
+            _gone_within(child, 2), "pip child outlived its parent's SIGKILL"
         )
 
 
