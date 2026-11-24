@@ -2789,7 +2789,7 @@ class PipChildOutlivesParentTests(unittest.TestCase):
         real_kill = subprocess.Popen.kill
 
         def kill_signalled(process):
-            # The TimeoutExpired handler's kill() receives SIGTERM before it sends SIGKILL.
+            # The stall stop's kill(), which runs after the TimeoutExpired handler, receives SIGTERM before it sends SIGKILL.
             os.kill(os.getpid(), signal.SIGTERM)
             return real_kill(process)
 
