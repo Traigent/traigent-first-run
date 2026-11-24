@@ -849,6 +849,51 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         self.assertNotIn("retry", message)
         self.assertNotIn("re-run", message)
 
+    def _pip_failure_message(self, changes_environment: bool) -> str:
+        isolate_temp_dir(self)
+        module = load_module()
+        failed = subprocess.CompletedProcess(args=["pip"], returncode=2, stdout="x")
+        with (
+            mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            mock.patch.object(module.time, "monotonic", side_effect=[100.0, 142.4]),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    Path("/tmp"),
+                    changes_environment=changes_environment,
+                )
+        return str(raised.exception)
+
+    def test_apply_failure_warns_of_partial_change_without_inviting_retry(self):
+        message = self._pip_failure_message(changes_environment=True)
+        self.assertTrue(
+            message.startswith(
+                "Isolated pip failed with exit code 2 during apply after 42s; the "
+                "environment may be partly changed. Stop and inspect it before any "
+                "further change. "
+            ),
+            message,
+        )
+        self.assertNotIn("retry", message)
+        self.assertNotIn("nothing was installed", message)
+
+    def test_plan_failure_says_nothing_was_changed(self):
+        message = self._pip_failure_message(changes_environment=False)
+        self.assertTrue(
+            message.startswith(
+                "Isolated pip failed with exit code 2 after 42s; nothing was installed "
+                "or changed. "
+            ),
+            message,
+        )
+        self.assertNotIn("partly changed", message)
+        self.assertNotIn("retry", message)
+
 
 class PipOutputFileTests(unittest.TestCase):
     def setUp(self):
@@ -977,7 +1022,8 @@ class PipOutputFileTests(unittest.TestCase):
         cases = (
             (expired, False, "(stopped after 42s)"),
             (expired, True, "during apply (stopped after 42s)"),
-            (failed, True, "failed with exit code 1 after 42s;"),
+            (failed, True, "failed with exit code 1 during apply after 42s;"),
+            (failed, False, "failed with exit code 1 after 42s; nothing was installed"),
         )
         for outcome, changes, expected in cases:
             with self.subTest(expected=expected):
@@ -2267,32 +2313,103 @@ class InterruptedApplyWarningTests(unittest.TestCase):
     """A SIGTERM during apply says the environment may be partly changed; plan does not."""
 
     APPLY_STOPPED = (
-        "Installer stopped by signal during apply; the environment may be partly "
+        "Installer stopped by an interrupt during apply; the environment may be partly "
         "changed. Stop and inspect it before any further change."
     )
+
+    def _pip_child_interrupted_by(self, module, interrupt, changes_environment):
+        """Run isolated_pip with subprocess.run raising interrupt; return stderr text."""
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(module.subprocess, "run", side_effect=interrupt),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            contextlib.redirect_stderr(stderr),
+        ):
+            with self.assertRaises(type(interrupt)):
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    Path("/tmp"),
+                    changes_environment=changes_environment,
+                )
+        return stderr.getvalue()
 
     @POSIX_ONLY
     def test_sigterm_during_apply_exits_143_and_warns_on_stderr(self):
         module = load_module()
+        root = isolate_temp_dir(self)
+        # A real pip child stands in for the trusted interpreter: it sleeps as a slow
+        # install would, so SIGTERM lands while isolated_pip is waiting on it.
+        fake = root / "fake_interpreter.sh"
+        fake.write_text("#!/bin/sh\nsleep 4\n", encoding="utf-8")
+        fake.chmod(0o700)
 
-        def apply_is_signalled(options):
+        def apply_runs_pip(options):
             threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM)).start()
-            time.sleep(5)
+            module.isolated_pip(
+                Path("/nonexistent/candidate"),
+                ["install"],
+                root,
+                changes_environment=True,
+            )
             return {}
 
         stderr = io.StringIO()
         started = time.monotonic()
         with (
             mock.patch.object(module, "require_isolation"),
-            mock.patch.object(module, "apply", side_effect=apply_is_signalled),
+            mock.patch.object(module, "apply", side_effect=apply_runs_pip),
+            mock.patch.object(module.ENV, "trusted_interpreter", return_value=fake),
             contextlib.redirect_stderr(stderr),
             self.assertRaises(SystemExit) as raised,
         ):
             module.main(["apply", "--plan", "p", "--approved-plan-sha256", "x"])
         self.assertLess(time.monotonic() - started, 3, "SIGTERM did not stop apply")
         self.assertEqual(raised.exception.code, 143)
-        self.assertIn("may be partly changed", stderr.getvalue())
         self.assertEqual(json.loads(stderr.getvalue()), {"error": self.APPLY_STOPPED})
+
+    def test_keyboard_interrupt_in_pip_during_apply_warns_and_propagates(self):
+        module = load_module()
+        isolate_temp_dir(self)
+        stderr = self._pip_child_interrupted_by(
+            module, KeyboardInterrupt(), changes_environment=True
+        )
+        self.assertEqual(json.loads(stderr), {"error": self.APPLY_STOPPED})
+
+    def test_keyboard_interrupt_in_pip_during_plan_is_silent_and_propagates(self):
+        module = load_module()
+        isolate_temp_dir(self)
+        stderr = self._pip_child_interrupted_by(
+            module, KeyboardInterrupt(), changes_environment=False
+        )
+        self.assertEqual(stderr, "")
+
+    def test_interrupt_before_pip_starts_during_apply_prints_no_warning(self):
+        module = load_module()
+        root = isolate_temp_dir(self)
+        plan = root / "plan.json"
+        plan.write_text(
+            json.dumps({"schema": 1, "candidate": "/nonexistent/candidate"}),
+            encoding="utf-8",
+        )
+        digest = module.ENV.file_digest(plan)
+        stderr = io.StringIO()
+        # snapshot runs before any pip child exists, so nothing was touched yet.
+        with (
+            mock.patch.object(module, "require_isolation"),
+            mock.patch.object(module, "snapshot", side_effect=SystemExit(143)),
+            mock.patch.object(module, "isolated_pip") as pip,
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            module.main(
+                ["apply", "--plan", str(plan), "--approved-plan-sha256", digest]
+            )
+        self.assertEqual(raised.exception.code, 143)
+        pip.assert_not_called()
+        self.assertEqual(stderr.getvalue(), "")
 
     @POSIX_ONLY
     def test_sigterm_during_plan_prints_no_apply_warning(self):
@@ -2387,6 +2504,45 @@ class InterruptedPipOutputSaveTests(unittest.TestCase):
                     [],
                     "an interrupted save must remove its partial log and directory",
                 )
+
+    def test_failed_removal_after_interrupt_still_propagates_the_interrupt(self):
+        module = load_module()
+        real_fdopen = os.fdopen
+
+        class InterruptedOnSecondWrite:
+            def __init__(self, stream):
+                self.stream = stream
+                self.writes = 0
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc_info):
+                self.stream.close()
+                return False
+
+            def write(self, data):
+                self.writes += 1
+                if self.writes == 2:
+                    raise KeyboardInterrupt()
+                return self.stream.write(data)
+
+        with (
+            mock.patch.object(
+                module.os,
+                "fdopen",
+                side_effect=lambda fd, mode: InterruptedOnSecondWrite(
+                    real_fdopen(fd, mode)
+                ),
+            ),
+            mock.patch.object(
+                module.shutil, "rmtree", side_effect=OSError(errno.EBUSY, "busy")
+            ),
+        ):
+            with self.assertRaises(KeyboardInterrupt) as raised:
+                module._save_pip_output(b"out", b"err")
+        self.assertNotIsInstance(raised.exception.__context__, OSError)
+        self.assertNotIn("busy", repr(raised.exception.__context__))
 
 
 class DownloadWorkerDaemonTests(unittest.TestCase):

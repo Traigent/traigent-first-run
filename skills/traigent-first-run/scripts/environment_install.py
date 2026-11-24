@@ -204,11 +204,16 @@ def _save_pip_output(stdout, stderr) -> str:
     Never printed or chained: pip output can carry index or proxy addresses. The
     directory is a fresh mkdtemp in the temp dir Python's tempfile picks (TMPDIR/TEMP/TMP
     if set, else the system default), never the plan's directory; and the message tells
-    the user to delete it when done. A save that fails or is interrupted after the
-    directory exists removes that directory; if even that fails, the message names it
-    so the user can delete it.
+    the user to delete it when done. A failed or interrupted save removes its directory.
+    If that removal fails after an OSError, the message names the directory. If an
+    interrupt arrives during the removal itself, the directory can remain (owner-only,
+    0700 with a 0600 log) and is not named, because the interrupt is what propagates.
     """
     directory = None
+    path = None
+    saved = False
+    failure = None
+    leftover = False
     try:
         directory = Path(tempfile.mkdtemp(prefix="first-run-pip-"))
         path = directory / "pip-output.log"
@@ -225,29 +230,26 @@ def _save_pip_output(stdout, stderr) -> str:
                         if isinstance(part, bytes)
                         else part.encode("utf-8", "replace")
                     )
+        saved = True
     except OSError as error:
-        kind = type(error).__name__
-        if directory is None:
-            return f"pip's output could not be saved ({kind})"
-        try:
-            shutil.rmtree(directory)
-        except OSError:
-            # Not chained: the removal error's text may name the same paths.
-            return (
-                f"pip's output could not be saved ({kind}); a partial copy may remain "
-                f"in {directory}: delete it"
-            )
-        return f"pip's output could not be saved ({kind})"
-    except BaseException:
-        # An interrupt (Ctrl-C, or the SIGTERM handler's SystemExit) mid-write must not
-        # leave the unredacted log behind. The re-raised interrupt is the failure the
-        # user sees, so a removal error here is dropped rather than replacing it.
-        if directory is not None:
+        failure = type(error).__name__
+    finally:
+        # One cleanup path for every exit: an OSError or an interrupt (Ctrl-C, or the
+        # SIGTERM handler's SystemExit) both leave no unredacted log behind. A removal
+        # error is recorded, not raised, so the original exception still propagates.
+        if not saved and directory is not None:
             try:
                 shutil.rmtree(directory)
             except OSError:
-                pass
-        raise
+                # Not chained: the removal error's text may name the same paths.
+                leftover = True
+    if failure is not None:
+        if leftover:
+            return (
+                f"pip's output could not be saved ({failure}); a partial copy may remain "
+                f"in {directory}: delete it"
+            )
+        return f"pip's output could not be saved ({failure})"
     return (
         f"pip's full output is saved, unredacted, in {path} (readable only by you). "
         "Read it for the cause and quote only the lines that show it: it can contain "
@@ -296,6 +298,24 @@ def isolated_pip(
     except subprocess.TimeoutExpired as expired:
         saved = _save_pip_output(expired.stdout, expired.stderr)
         stalled = True
+    except (KeyboardInterrupt, SystemExit):
+        # subprocess.run has already stopped the pip child by the time this runs. Only
+        # an interrupt that stops an apply's pip child says the environment may be
+        # partly changed; one that lands before pip starts touched nothing.
+        if changes_environment:
+            print(
+                json.dumps(
+                    {
+                        "error": (
+                            "Installer stopped by an interrupt during apply; the "
+                            "environment may be partly changed. Stop and inspect it "
+                            "before any further change."
+                        )
+                    }
+                ),
+                file=sys.stderr,
+            )
+        raise
     elapsed = round(time.monotonic() - started)
     # The raises sit outside the except so no __context__ holds TimeoutExpired, whose
     # output can carry index credentials.
@@ -313,9 +333,16 @@ def isolated_pip(
         )
     if result.returncode:
         saved = _save_pip_output(result.stdout, result.stderr)
+        if changes_environment:
+            # pip rolls back only the wheel that failed; earlier wheels may be installed.
+            raise ValueError(
+                f"Isolated pip failed with exit code {result.returncode} during apply "
+                f"after {elapsed}s; the environment may be partly changed. Stop and "
+                "inspect it before any further change. " + saved
+            )
         raise ValueError(
             f"Isolated pip failed with exit code {result.returncode} after {elapsed}s; "
-            "inspect the target before retrying. " + saved
+            "nothing was installed or changed. " + saved
         )
 
 
@@ -952,24 +979,7 @@ def main(argv=None) -> int:
         if options.command == "plan":
             result = _run_handling_termination(plan, options)
         else:
-            try:
-                result = _run_handling_termination(apply, options)
-            except SystemExit:
-                # The pip child was stopped mid-install, so the environment may hold a
-                # partial change. Say so on stderr, then keep the 128+signum status.
-                print(
-                    json.dumps(
-                        {
-                            "error": (
-                                "Installer stopped by signal during apply; the "
-                                "environment may be partly changed. Stop and inspect "
-                                "it before any further change."
-                            )
-                        }
-                    ),
-                    file=sys.stderr,
-                )
-                raise
+            result = _run_handling_termination(apply, options)
     except (OSError, ValueError, KeyError, RuntimeError) as error:
         print(json.dumps({"error": str(error)}), file=sys.stderr)
         return 1
