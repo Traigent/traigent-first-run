@@ -2790,7 +2790,7 @@ class _FormatRaisesInterrupt:
         self._interrupt = interrupt
 
     def __format__(self, spec):
-        raise self._interrupt()
+        raise self._interrupt
 
 
 class StallPathInterruptTests(unittest.TestCase):
@@ -2838,36 +2838,72 @@ class StallPathInterruptTests(unittest.TestCase):
         expired = subprocess.TimeoutExpired(
             cmd=["pip"], timeout=0.1, output=self.MARKER
         )
-        with (
-            mock.patch.object(
-                module,
-                "PIP_TIMEOUT_SECONDS",
-                _FormatRaisesInterrupt(KeyboardInterrupt),
-            ),
-            mock.patch.object(module.subprocess, "run", side_effect=expired),
-            mock.patch.object(
-                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
-            ),
-            self.assertRaises(KeyboardInterrupt),
-        ):
-            module.isolated_pip(
-                Path("/tmp/candidate"),
-                ["install", "x"],
-                Path("/tmp"),
-                changes_environment=True,
-            )
-        self.assertEqual(
-            list(temp_root.glob("first-run-pip-*")),
-            [],
-            "an interrupt after the save must remove the saved log",
-        )
+        for interrupt in (KeyboardInterrupt(), SystemExit(143)):
+            with self.subTest(interrupt=type(interrupt).__name__):
+                with (
+                    mock.patch.object(
+                        module,
+                        "PIP_TIMEOUT_SECONDS",
+                        _FormatRaisesInterrupt(interrupt),
+                    ),
+                    mock.patch.object(module.subprocess, "run", side_effect=expired),
+                    mock.patch.object(
+                        module.ENV,
+                        "trusted_interpreter",
+                        return_value=Path("/usr/bin/python3"),
+                    ),
+                    self.assertRaises(type(interrupt)),
+                ):
+                    module.isolated_pip(
+                        Path("/tmp/candidate"),
+                        ["install", "x"],
+                        Path("/tmp"),
+                        changes_environment=True,
+                    )
+                self.assertEqual(
+                    list(temp_root.glob("first-run-pip-*")),
+                    [],
+                    "an interrupt after the save must remove the saved log",
+                )
 
     def test_interrupt_after_failed_save_removes_the_log(self):
         module = load_module()
         temp_root = isolate_temp_dir(self)
+        for interrupt in (KeyboardInterrupt(), SystemExit(143)):
+            with self.subTest(interrupt=type(interrupt).__name__):
+                failed = subprocess.CompletedProcess(
+                    args=["pip"],
+                    returncode=_FormatRaisesInterrupt(interrupt),
+                    stdout=self.MARKER,
+                    stderr=self.MARKER,
+                )
+                with (
+                    mock.patch.object(module.subprocess, "run", return_value=failed),
+                    mock.patch.object(
+                        module.ENV,
+                        "trusted_interpreter",
+                        return_value=Path("/usr/bin/python3"),
+                    ),
+                    self.assertRaises(type(interrupt)),
+                ):
+                    module.isolated_pip(
+                        Path("/tmp/candidate"),
+                        ["install", "x"],
+                        Path("/tmp"),
+                        changes_environment=True,
+                    )
+                self.assertEqual(
+                    list(temp_root.glob("first-run-pip-*")),
+                    [],
+                    "an interrupt after the save must remove the saved log",
+                )
+
+    def test_failed_removal_after_interrupt_still_propagates_from_isolated_pip(self):
+        module = load_module()
+        isolate_temp_dir(self)
         failed = subprocess.CompletedProcess(
             args=["pip"],
-            returncode=_FormatRaisesInterrupt(KeyboardInterrupt),
+            returncode=_FormatRaisesInterrupt(KeyboardInterrupt()),
             stdout=self.MARKER,
             stderr=self.MARKER,
         )
@@ -2876,7 +2912,10 @@ class StallPathInterruptTests(unittest.TestCase):
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
-            self.assertRaises(KeyboardInterrupt),
+            mock.patch.object(
+                module.shutil, "rmtree", side_effect=OSError(errno.EBUSY, "busy")
+            ),
+            self.assertRaises(KeyboardInterrupt) as raised,
         ):
             module.isolated_pip(
                 Path("/tmp/candidate"),
@@ -2884,11 +2923,8 @@ class StallPathInterruptTests(unittest.TestCase):
                 Path("/tmp"),
                 changes_environment=True,
             )
-        self.assertEqual(
-            list(temp_root.glob("first-run-pip-*")),
-            [],
-            "an interrupt after the save must remove the saved log",
-        )
+        self.assertNotIsInstance(raised.exception.__context__, OSError)
+        self.assertNotIn("busy", repr(raised.exception.__context__))
 
 
 class FlushFailsOnClose:

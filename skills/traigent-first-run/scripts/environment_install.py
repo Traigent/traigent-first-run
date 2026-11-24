@@ -207,12 +207,13 @@ def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
     addresses. The directory is a fresh mkdtemp in the temp dir Python's tempfile picks
     (TMPDIR/TEMP/TMP if set, else the system default), never the plan's directory
     (0700/0600 on POSIX; on Windows the per-user %TEMP% location applies), and the
-    message tells the user to delete it when done. Cleanup is best effort: a failed or
-    interrupted save removes its directory, and when an interrupt arrives after a
-    successful save its caller removes that directory. Only when an OSError ended the
-    save and that removal also failed does the message name the leftover directory;
-    after an interrupt the interrupt propagates and a directory that could not be
-    removed is not named.
+    message tells the user to delete it when done. Cleanup is best effort. A failed or
+    interrupted save removes its directory, and isolated_pip removes it if an interrupt
+    arrives while it builds the error message. Only when an OSError ended the save and
+    that removal also failed does the message name the leftover directory. An interrupt
+    in the short windows outside those (at the save's return, or after the error has
+    left isolated_pip and before it is printed) can leave the owner-only
+    first-run-pip-* directory behind unnamed.
     """
     directory = None
     path = None
@@ -314,7 +315,8 @@ def isolated_pip(
     if output is None:
         output = (result.stdout, result.stderr)
     # No __context__ holds TimeoutExpired on any path, because nothing below runs inside
-    # an except handler. An interrupt after the save removes the log before it propagates.
+    # an except handler. An interrupt while the message is built removes the saved log
+    # before it propagates (best effort: see _save_pip_output).
     directory = None
     try:
         saved, directory = _save_pip_output(*output)
