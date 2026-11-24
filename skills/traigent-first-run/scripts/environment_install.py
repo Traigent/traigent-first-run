@@ -557,25 +557,6 @@ def _open_url(url: str, timeout: float):
     return _OPENER.open(url, timeout=timeout)
 
 
-def _declared_length(value: str | None) -> int | None:
-    """Return Content-Length as an int, or None when absent, malformed or negative.
-
-    This follows http.client's own int() parsing, so a header that http.client counts
-    as the body length is counted here too and the two never disagree about a short
-    body. A malformed or negative value is ignored, and its text is never echoed; the
-    streamed byte count still enforces MAX_WHEEL_BYTES regardless.
-    """
-    if value is None:
-        return None
-    text = value.strip()
-    # int() raises ValueError above CPython's 4300-digit limit, the same as http.client's.
-    try:
-        length = int(text)
-    except ValueError:
-        return None
-    return length if length >= 0 else None
-
-
 def _download(url: str, target: Path, read_timeout: float, deadline: float) -> None:
     """Stream url into a new target file within deadline seconds of total wall time.
 
@@ -624,16 +605,10 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     def transfer() -> None:
         try:
             with _open_url(url, read_timeout) as response:
-                headers = getattr(response, "headers", None)
-                # RFC 9112 6.3: chunked framing wins, so a Content-Length sent with a
-                # chunked body is ignored rather than trusted.
-                declared = (
-                    None
-                    if getattr(response, "chunked", False)
-                    else _declared_length(
-                        headers.get("Content-Length") if headers is not None else None
-                    )
-                )
+                # The length comes from http.client itself, read before the body, so
+                # the two can never disagree: it is None for chunked or absent framing
+                # and 0 for a 204, 304 or HEAD response. Non-HTTP responses have none.
+                declared = getattr(response, "length", None)
                 if declared is not None and declared > MAX_WHEEL_BYTES:
                     raise _WheelTooLarge()
                 received = 0

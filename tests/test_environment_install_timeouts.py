@@ -400,6 +400,33 @@ class NonNumericLengthHandler(MalformedLengthHandler):
     declared_length = "abc"
 
 
+class NoContentWithLengthHandler(BaseHTTPRequestHandler):
+    """Answers 204 No Content but still sends a Content-Length: http.client reads no body."""
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(204)
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+class CutShortHandler(BaseHTTPRequestHandler):
+    """Declares 100 bytes, sends 10, then closes the connection."""
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", "100")
+        self.end_headers()
+        self.wfile.write(b"x" * 10)
+        self.wfile.flush()
+
+    def log_message(self, *args):
+        pass
+
+
 class BlockingResponse:
     """Fake response: one block, then blocks until released (or 5 s)."""
 
@@ -470,14 +497,36 @@ class DownloadHardeningTests(ServerFixture):
                     module._download(url, target, read_timeout=5, deadline=5)
                     self.assertEqual(target.read_bytes(), b"wheel-bytes")
 
+    def test_no_content_with_content_length_is_not_cut_short(self):
+        # http.client reads no body for a 204, so a Content-Length on it is not a short body.
+        module = load_module()
+        url = self.start_server(NoContentWithLengthHandler)
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        module._download(url, target, read_timeout=5, deadline=5)
+        self.assertEqual(target.read_bytes(), b"")
+
+    def test_real_body_cut_short_of_content_length_is_refused(self):
+        module = load_module()
+        url = self.start_server(CutShortHandler)
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        with self.assertRaises(ValueError) as raised:
+            module._download(url, target, read_timeout=5, deadline=5)
+        self.assertIn("cut short", str(raised.exception))
+        self.assertFalse(target.exists(), "partial wheel was left behind")
+
 
 class _FakeResponse:
-    """Stands in for the opener's response: a body, a headers mapping and framing."""
+    """Stands in for the opener's response: a body and the length http.client parsed.
 
-    def __init__(self, body, headers=None, chunked=False):
+    length mirrors http.client.HTTPResponse.length: the body length, or None when
+    chunked, absent or unknown.
+    """
+
+    def __init__(self, body, length=None):
         self._body = io.BytesIO(body)
-        self.headers = headers or {}
-        self.chunked = chunked
+        self.length = length
 
     def __enter__(self):
         return self
@@ -492,15 +541,14 @@ class _FakeResponse:
 class SizeCapBoundaryTests(unittest.TestCase):
     CAP = 1024
 
-    def _download(self, body, headers=None):
+    def _download(self, body, length=None):
         module = load_module()
-        target_dir = tempfile.TemporaryDirectory()
-        self.addCleanup(target_dir.cleanup)
-        target = Path(target_dir.name) / "pkg-1.0-py3-none-any.whl"
+        target_dir = isolate_temp_dir(self)
+        target = target_dir / "pkg-1.0-py3-none-any.whl"
         with (
             mock.patch.object(module, "MAX_WHEEL_BYTES", self.CAP),
             mock.patch.object(
-                module, "_open_url", return_value=_FakeResponse(body, headers)
+                module, "_open_url", return_value=_FakeResponse(body, length)
             ),
         ):
             module._download(
@@ -516,7 +564,7 @@ class SizeCapBoundaryTests(unittest.TestCase):
         self.assertEqual(target.stat().st_size, self.CAP)
 
     def test_declared_length_of_exactly_the_cap_is_accepted(self):
-        target = self._download(b"x" * self.CAP, {"Content-Length": str(self.CAP)})
+        target = self._download(b"x" * self.CAP, length=self.CAP)
         self.assertEqual(target.stat().st_size, self.CAP)
 
     def test_body_one_byte_over_the_cap_is_refused(self):
@@ -526,48 +574,8 @@ class SizeCapBoundaryTests(unittest.TestCase):
 
     def test_declared_length_one_byte_over_the_cap_is_refused(self):
         with self.assertRaises(ValueError) as raised:
-            self._download(b"x" * (self.CAP + 1), {"Content-Length": str(self.CAP + 1)})
+            self._download(b"x" * (self.CAP + 1), length=self.CAP + 1)
         self.assertIn("exceeded", str(raised.exception))
-
-
-class DeclaredLengthParsingTests(unittest.TestCase):
-    def test_plain_decimal_with_surrounding_space_is_its_value(self):
-        module = load_module()
-        self.assertEqual(module._declared_length(" 12 "), 12)
-        self.assertEqual(module._declared_length("0"), 0)
-
-    def test_values_http_client_parses_are_parsed_the_same_way(self):
-        # http.client sets the body length with int(value), so a header it accepts
-        # must still be counted here: "+100" as 100 and "1_00" as 100.
-        module = load_module()
-        self.assertEqual(module._declared_length("+100"), 100)
-        self.assertEqual(module._declared_length("1_00"), 100)
-        self.assertEqual(module._declared_length("١٢"), 12)
-
-    def test_absent_negative_or_non_numeric_values_are_none(self):
-        module = load_module()
-        # int() raises on these, and http.client then leaves the length unknown.
-        # A negative length is ignored the same way.
-        for value in (None, "", "abc", "1.5", "-5", "1,2", "1e3", "12abc", "²"):
-            with self.subTest(value=value):
-                self.assertIsNone(module._declared_length(value))
-
-    def test_over_long_digit_string_is_ignored_not_an_error(self):
-        # int() refuses more than 4300 digits with ValueError; the header is advisory,
-        # so an over-long all-digit value must be ignored like any other malformed one.
-        module = load_module()
-        self.assertIsNone(module._declared_length("9" * 5000))
-
-    def test_thirty_three_char_values_parse_as_http_client_does(self):
-        # A long value with leading zeros is a real length, not malformed: the
-        # digit-limit ValueError alone decides, so this matches http.client's int().
-        module = load_module()
-        self.assertEqual(module._declared_length("0" * 30 + "100"), 100)
-        self.assertEqual(module._declared_length("1" * 33), int("1" * 33))
-
-    def test_nineteen_digit_value_is_its_value(self):
-        module = load_module()
-        self.assertEqual(module._declared_length("1" * 19), 1111111111111111111)
 
 
 class DownloadRefusalAndInterruptTests(unittest.TestCase):
@@ -3340,7 +3348,7 @@ class TruncatedWheelBodyTests(unittest.TestCase):
         root = isolate_temp_dir(self)
         target = root / "pkg-1.0-py3-none-any.whl"
         # The server declares 1000 bytes, sends 10, then closes the connection.
-        response = _FakeResponse(b"x" * 10, {"Content-Length": "1000"})
+        response = _FakeResponse(b"x" * 10, length=1000)
         with mock.patch.object(module, "_open_url", return_value=response):
             with self.assertRaises(ValueError) as raised:
                 module._download(
@@ -3358,7 +3366,7 @@ class TruncatedWheelBodyTests(unittest.TestCase):
         module = load_module()
         root = isolate_temp_dir(self)
         target = root / "pkg-1.0-py3-none-any.whl"
-        response = _FakeResponse(b"x" * 999, {"Content-Length": "1000"})
+        response = _FakeResponse(b"x" * 999, length=1000)
         with mock.patch.object(module, "_open_url", return_value=response):
             with self.assertRaises(ValueError) as raised:
                 module._download(
@@ -3370,14 +3378,12 @@ class TruncatedWheelBodyTests(unittest.TestCase):
         self.assertIn("cut short", str(raised.exception))
         self.assertFalse(target.exists(), "partial wheel was left behind")
 
-    def test_chunked_body_ignores_content_length_and_succeeds(self):
-        # RFC 9112 6.3: chunked framing wins, so a stale Content-Length is not a cut-short.
+    def test_chunked_body_has_no_length_and_succeeds(self):
+        # http.client leaves length None for chunked framing, so nothing is cut short.
         module = load_module()
         root = isolate_temp_dir(self)
         target = root / "pkg-1.0-py3-none-any.whl"
-        response = _FakeResponse(
-            b"wheel-body", {"Content-Length": "1000"}, chunked=True
-        )
+        response = _FakeResponse(b"wheel-body", length=None)
         with mock.patch.object(module, "_open_url", return_value=response):
             module._download(
                 "https://files.example.invalid/pkg-1.0-py3-none-any.whl",
