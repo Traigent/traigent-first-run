@@ -87,7 +87,7 @@ class IsolatedInstallerTests(unittest.TestCase):
     def pip_output(self, result) -> str:
         """Return pip's saved output, which the failed run's error names (never printed)."""
         message = json.loads(result.stderr)["error"]
-        match = re.search(r" in (.+?pip-output\.log) \(readable", message)
+        match = re.search(r" in (.+?pip-output\.log)\. Read it", message)
         assert match is not None, message
         return Path(match.group(1)).read_text(encoding="utf-8")
 

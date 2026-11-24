@@ -203,11 +203,12 @@ def _save_pip_output(stdout, stderr) -> str:
 
     Never printed or chained: pip output can carry index or proxy addresses. The
     directory is a fresh mkdtemp in the temp dir Python's tempfile picks (TMPDIR/TEMP/TMP
-    if set, else the system default), never the plan's directory; and the message tells
-    the user to delete it when done. A failed or interrupted save removes its directory.
-    If that removal fails after an OSError, the message names the directory. If an
-    interrupt arrives during the removal itself, the directory can remain (owner-only,
-    0700 with a 0600 log) and is not named, because the interrupt is what propagates.
+    if set, else the system default), never the plan's directory (0700/0600 on POSIX;
+    on Windows the per-user %TEMP% location applies), and the message tells the user to
+    delete it when done. Cleanup is best effort: a failed or interrupted save removes its
+    directory. Only when an OSError ended the save and that removal also failed does the
+    message name the leftover directory; after an interrupt the interrupt propagates and a
+    directory that could not be removed is not named.
     """
     directory = None
     path = None
@@ -251,7 +252,7 @@ def _save_pip_output(stdout, stderr) -> str:
             )
         return f"pip's output could not be saved ({failure})"
     return (
-        f"pip's full output is saved, unredacted, in {path} (readable only by you). "
+        f"pip's full output is saved, unredacted, in {path}. "
         "Read it for the cause and quote only the lines that show it: it can contain "
         "index or proxy addresses. Delete it when done."
     )
@@ -290,7 +291,6 @@ def isolated_pip(
             ],
             cwd=working,
             env=environment,
-            text=True,
             capture_output=True,
             check=False,
             timeout=PIP_TIMEOUT_SECONDS,
@@ -298,24 +298,6 @@ def isolated_pip(
     except subprocess.TimeoutExpired as expired:
         saved = _save_pip_output(expired.stdout, expired.stderr)
         stalled = True
-    except (KeyboardInterrupt, SystemExit):
-        # subprocess.run has already stopped the pip child by the time this runs. Only
-        # an interrupt that stops an apply's pip child says the environment may be
-        # partly changed; one that lands before pip starts touched nothing.
-        if changes_environment:
-            print(
-                json.dumps(
-                    {
-                        "error": (
-                            "Installer stopped by an interrupt during apply; the "
-                            "environment may be partly changed. Stop and inspect it "
-                            "before any further change."
-                        )
-                    }
-                ),
-                file=sys.stderr,
-            )
-        raise
     elapsed = round(time.monotonic() - started)
     # The raises sit outside the except so no __context__ holds TimeoutExpired, whose
     # output can carry index credentials.
@@ -663,7 +645,10 @@ def _is_same_file(path: Path, staged: Path) -> bool:
         ours = os.stat(staged)
     except OSError:
         return False
-    if not stat.S_ISREG(entry.st_mode):  # symlink, FIFO, directory, device: never ours
+    # Symlink, FIFO, directory, or device: never ours. This is defence in depth: the size
+    # check, the O_NOFOLLOW/O_NONBLOCK open, and the fstat S_ISREG check below also refuse
+    # these, because a staged plan is never empty.
+    if not stat.S_ISREG(entry.st_mode):
         return False
     if os.path.samestat(entry, ours):  # the hard link this call published
         return True
@@ -671,8 +656,8 @@ def _is_same_file(path: Path, staged: Path) -> bool:
     if entry.st_size != ours.st_size:
         return False
     # Re-open with no-follow and non-blocking flags, then verify the descriptor is the
-    # entry checked above. A FIFO or symlink swapped in after the lstat is refused here
-    # and never read.
+    # entry checked above. A FIFO, symlink, or other file swapped in after the lstat is
+    # refused here and never read: the samestat check pins the opened file to the entry.
     flags = (
         os.O_RDONLY
         | getattr(os, "O_NOFOLLOW", 0)
@@ -868,6 +853,12 @@ def plan(options) -> dict:
     return result
 
 
+APPLY_STOPPED_MESSAGE = (
+    "Installer stopped by an interrupt during apply; the environment may be partly "
+    "changed. Stop and inspect it before any further change."
+)
+
+
 def apply(options) -> dict:
     if ENV.file_digest(options.plan) != options.approved_plan_sha256:
         raise ValueError("Plan differs from the approved SHA256")
@@ -888,30 +879,43 @@ def apply(options) -> dict:
     for artifact in document["artifacts"]:
         if ENV.file_digest(Path(artifact["path"])) != artifact["sha256"]:
             raise ValueError("Cached wheel differs from the approved SHA256")
-    if document["artifacts"]:
-        with tempfile.TemporaryDirectory(prefix="first-run-install-") as temporary:
-            isolated_pip(
-                candidate,
-                [
-                    "install",
-                    "--no-index",
-                    "--only-binary=:all:",
-                    "--no-deps",
-                    "--no-compile",
-                    "--prefix",
-                    str(candidate),
-                    *[item["path"] for item in document["artifacts"]],
-                ],
-                Path(temporary),
-                changes_environment=True,
-            )
-    after = snapshot(candidate)
-    expected = dict(before["installed"])
-    expected.update({item["name"]: item["version"] for item in document["artifacts"]})
-    if after["installed"] != expected:
-        raise ValueError(
-            "Installed metadata differs from the approved plan; stop and inspect the environment"
+    # pip may change the environment from the moment it starts until this function has
+    # verified the result, so an interrupt anywhere in that span (during pip, while its
+    # log is saved, or during the post-install snapshot) says the environment may be
+    # partly changed. An interrupt before pip starts touched nothing and stays silent.
+    pip_started = False
+    try:
+        if document["artifacts"]:
+            with tempfile.TemporaryDirectory(prefix="first-run-install-") as temporary:
+                pip_started = True
+                isolated_pip(
+                    candidate,
+                    [
+                        "install",
+                        "--no-index",
+                        "--only-binary=:all:",
+                        "--no-deps",
+                        "--no-compile",
+                        "--prefix",
+                        str(candidate),
+                        *[item["path"] for item in document["artifacts"]],
+                    ],
+                    Path(temporary),
+                    changes_environment=True,
+                )
+        after = snapshot(candidate)
+        expected = dict(before["installed"])
+        expected.update(
+            {item["name"]: item["version"] for item in document["artifacts"]}
         )
+        if after["installed"] != expected:
+            raise ValueError(
+                "Installed metadata differs from the approved plan; stop and inspect the environment"
+            )
+    except (KeyboardInterrupt, SystemExit):
+        if pip_started:
+            print(json.dumps({"error": APPLY_STOPPED_MESSAGE}), file=sys.stderr)
+        raise
     return {
         "status": "installed" if document["artifacts"] else "already-satisfied",
         "candidate": str(candidate),

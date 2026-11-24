@@ -76,7 +76,7 @@ def isolate_temp_dir(test: unittest.TestCase) -> Path:
 
 def saved_output_path(message: str) -> Path:
     """Return the pip-output.log path that a pip failure message names."""
-    match = re.search(r" in (\S+pip-output\.log) \(", message)
+    match = re.search(r" in (.+?pip-output\.log)\. Read it", message)
     if match is None:
         raise AssertionError(f"message names no saved pip output: {message!r}")
     return Path(match.group(1))
@@ -893,6 +893,109 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         )
         self.assertNotIn("partly changed", message)
         self.assertNotIn("retry", message)
+
+
+class PipOutputBytesTests(unittest.TestCase):
+    """pip's output is captured as bytes: a non-UTF-8 byte is not a decode error.
+
+    Real pip prints `Processing <path>`, and a path can hold \\xe9 under LC_ALL=C.
+    With text=True that byte raised UnicodeDecodeError, which main() printed with
+    the child's byte and offset, and no log was saved.
+    """
+
+    NON_UTF8_LINE = b"Processing /x/\xe9\xff"
+
+    def setUp(self):
+        self.temp_root = isolate_temp_dir(self)
+        self.module = load_module()
+
+    def _pip_child(self, exit_code):
+        """A real child that prints NON_UTF8_LINE bytes and exits with exit_code."""
+        fake = self.temp_root / f"fake_pip_{exit_code}.sh"
+        fake.write_bytes(
+            b"#!/bin/sh\nprintf 'Processing /x/\\351\\377'\nexit %d\n" % exit_code
+        )
+        fake.chmod(0o700)
+        return fake
+
+    def _run_isolated_pip(self, interpreter):
+        with mock.patch.object(
+            self.module.ENV, "trusted_interpreter", return_value=interpreter
+        ):
+            self.module.isolated_pip(
+                Path("/tmp/candidate"),
+                ["install", "x"],
+                self.temp_root,
+                changes_environment=True,
+            )
+
+    def test_pip_is_run_in_bytes_mode(self):
+        completed = subprocess.CompletedProcess(
+            args=["pip"], returncode=0, stdout=b"", stderr=b""
+        )
+        with (
+            mock.patch.object(
+                self.module.subprocess, "run", return_value=completed
+            ) as run,
+            mock.patch.object(
+                self.module.ENV,
+                "trusted_interpreter",
+                return_value=Path("/usr/bin/python3"),
+            ),
+        ):
+            self.module.isolated_pip(
+                Path("/tmp/candidate"),
+                ["install", "x"],
+                self.temp_root,
+                changes_environment=True,
+            )
+        self.assertFalse(run.call_args.kwargs.get("text", False))
+        self.assertFalse(run.call_args.kwargs.get("universal_newlines", False))
+
+    @POSIX_ONLY
+    def test_non_utf8_output_from_a_successful_pip_is_not_an_error(self):
+        self._run_isolated_pip(self._pip_child(0))
+        self.assertEqual(list(self.temp_root.glob("first-run-pip-*")), [])
+
+    @POSIX_ONLY
+    def test_non_utf8_output_from_a_failed_pip_is_saved_byte_exact(self):
+        with self.assertRaises(ValueError) as raised:
+            self._run_isolated_pip(self._pip_child(1))
+        message = str(raised.exception)
+        self.assertIn("exit code 1", message)
+        for fragment in ("codec", "0xff", "position"):
+            self.assertNotIn(fragment, message)
+        self.assertIsNone(raised.exception.__cause__)
+        self.assertIsNone(raised.exception.__context__)
+        self.assertEqual(
+            saved_output_path(message).read_bytes(),
+            b"--- stdout ---\n" + self.NON_UTF8_LINE + b"\n--- stderr ---\n",
+        )
+
+    def test_timeout_carrying_non_utf8_bytes_is_saved_byte_exact(self):
+        expired = subprocess.TimeoutExpired(
+            cmd=["pip"], timeout=0.1, output=self.NON_UTF8_LINE
+        )
+        with (
+            mock.patch.object(self.module, "PIP_TIMEOUT_SECONDS", 0.1),
+            mock.patch.object(self.module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                self.module.ENV,
+                "trusted_interpreter",
+                return_value=Path("/usr/bin/python3"),
+            ),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                self.module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    self.temp_root,
+                    changes_environment=True,
+                )
+        message = str(raised.exception)
+        self.assertIn("Installer stalled", message)
+        self.assertNotIn("codec", message)
+        self.assertIn(self.NON_UTF8_LINE, saved_output_path(message).read_bytes())
 
 
 class PipOutputFileTests(unittest.TestCase):
@@ -2214,6 +2317,25 @@ class IsSameFileCheckedEntryTests(unittest.TestCase):
         self.plan = self.root / "plan.json"
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "POSIX FIFOs are required")
+    def test_entry_swapped_for_other_identical_file_before_open_is_not_this_plan(self):
+        # Pins samestat(opened, entry): the swap has the same size and bytes but is a
+        # different inode, so only the descriptor-to-entry identity check refuses it.
+        self.plan.write_bytes(b"plan-bytes")
+        swap = self.root / "swap.json"
+        swap.write_bytes(b"plan-bytes")
+        real_open = os.open
+        swapped = []
+
+        def open_after_swap(path, *args, **kwargs):
+            if Path(path) == self.plan and not swapped:
+                swapped.append(True)
+                os.replace(swap, self.plan)
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch.object(self.module.os, "open", side_effect=open_after_swap):
+            self.assertFalse(self.module._is_same_file(self.plan, self.staged))
+        self.assertEqual(swapped, [True])
+
     def test_entry_swapped_for_fifo_after_lstat_is_not_read(self):
         # Regression: _is_same_file used to read the path after os.lstat, so a FIFO
         # swapped in between blocked the read forever. The guard turns a hang into a
@@ -2336,47 +2458,131 @@ class InterruptedApplyWarningTests(unittest.TestCase):
                 )
         return stderr.getvalue()
 
+    def _approved_plan(self, module, root):
+        """Write a plan with one wheel, as plan() would, and return (path, sha256)."""
+        wheel = root / "pkg-1.0-py3-none-any.whl"
+        wheel.write_bytes(b"wheel")
+        requirements = root / "requirements.txt"
+        requirements.write_bytes(b"pkg==1.0\n")
+        plan = root / "plan.json"
+        plan.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "candidate": str(root / "candidate"),
+                    "identity": "unchanged",
+                    "requirements": str(requirements),
+                    "requirements_sha256": module.ENV.file_digest(requirements),
+                    "artifacts": [
+                        {
+                            "path": str(wheel),
+                            "sha256": module.ENV.file_digest(wheel),
+                            "name": "pkg",
+                            "version": "1.0",
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return plan, module.ENV.file_digest(plan)
+
+    def _apply_expecting(self, interrupt_type, *, pip_run, snapshot_calls, save=None):
+        """Run the real apply() to its pip step and assert it propagates interrupt_type.
+
+        snapshot_calls feeds the snapshot() calls apply() makes in order; an exception
+        item is raised at that call. Returns what apply() printed to stderr.
+        """
+        module = load_module()
+        root = isolate_temp_dir(self)
+        plan, digest = self._approved_plan(module, root)
+        stderr = io.StringIO()
+        with (
+            mock.patch.object(module, "snapshot", side_effect=snapshot_calls),
+            mock.patch.object(module.subprocess, "run", side_effect=pip_run),
+            mock.patch.object(module, "_save_pip_output", side_effect=save),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(interrupt_type),
+        ):
+            module.apply(argparse.Namespace(plan=plan, approved_plan_sha256=digest))
+        return stderr.getvalue()
+
     @POSIX_ONLY
     def test_sigterm_during_apply_exits_143_and_warns_on_stderr(self):
         module = load_module()
         root = isolate_temp_dir(self)
-        # A real pip child stands in for the trusted interpreter: it sleeps as a slow
-        # install would, so SIGTERM lands while isolated_pip is waiting on it.
+        plan, digest = self._approved_plan(module, root)
+        # A real child stands in for the trusted interpreter: it sleeps as a slow
+        # install would, so SIGTERM lands while apply() is waiting on pip.
         fake = root / "fake_interpreter.sh"
         fake.write_text("#!/bin/sh\nsleep 4\n", encoding="utf-8")
         fake.chmod(0o700)
-
-        def apply_runs_pip(options):
-            threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM)).start()
-            module.isolated_pip(
-                Path("/nonexistent/candidate"),
-                ["install"],
-                root,
-                changes_environment=True,
-            )
-            return {}
+        threading.Timer(0.5, os.kill, (os.getpid(), signal.SIGTERM)).start()
 
         stderr = io.StringIO()
         started = time.monotonic()
         with (
             mock.patch.object(module, "require_isolation"),
-            mock.patch.object(module, "apply", side_effect=apply_runs_pip),
+            mock.patch.object(
+                module,
+                "snapshot",
+                return_value={"identity": "unchanged", "installed": {}},
+            ),
             mock.patch.object(module.ENV, "trusted_interpreter", return_value=fake),
             contextlib.redirect_stderr(stderr),
             self.assertRaises(SystemExit) as raised,
         ):
-            module.main(["apply", "--plan", "p", "--approved-plan-sha256", "x"])
+            module.main(
+                ["apply", "--plan", str(plan), "--approved-plan-sha256", digest]
+            )
         self.assertLess(time.monotonic() - started, 3, "SIGTERM did not stop apply")
         self.assertEqual(raised.exception.code, 143)
         self.assertEqual(json.loads(stderr.getvalue()), {"error": self.APPLY_STOPPED})
 
     def test_keyboard_interrupt_in_pip_during_apply_warns_and_propagates(self):
-        module = load_module()
-        isolate_temp_dir(self)
-        stderr = self._pip_child_interrupted_by(
-            module, KeyboardInterrupt(), changes_environment=True
+        stderr = self._apply_expecting(
+            KeyboardInterrupt,
+            pip_run=KeyboardInterrupt(),
+            snapshot_calls=[{"identity": "unchanged", "installed": {}}],
         )
         self.assertEqual(json.loads(stderr), {"error": self.APPLY_STOPPED})
+
+    def test_interrupt_saving_pip_output_after_failed_apply_warns_and_propagates(self):
+        # pip has started and may have changed the environment; the log save is after
+        # its exit, so the interrupt must still get the warning.
+        stderr = self._apply_expecting(
+            KeyboardInterrupt,
+            pip_run=lambda *a, **k: subprocess.CompletedProcess(a, 1, b"", b""),
+            snapshot_calls=[{"identity": "unchanged", "installed": {}}],
+            save=KeyboardInterrupt(),
+        )
+        self.assertEqual(json.loads(stderr), {"error": self.APPLY_STOPPED})
+
+    def test_interrupt_in_post_install_snapshot_after_clean_pip_warns_and_propagates(
+        self,
+    ):
+        # pip exited 0 and may have written files; the interrupt lands before the
+        # installed metadata is verified.
+        stderr = self._apply_expecting(
+            KeyboardInterrupt,
+            pip_run=lambda *a, **k: subprocess.CompletedProcess(a, 0, b"", b""),
+            snapshot_calls=[
+                {"identity": "unchanged", "installed": {}},
+                KeyboardInterrupt(),
+            ],
+        )
+        self.assertEqual(json.loads(stderr), {"error": self.APPLY_STOPPED})
+
+    def test_interrupt_in_snapshot_before_pip_starts_prints_no_warning(self):
+        stderr = self._apply_expecting(
+            SystemExit,
+            pip_run=AssertionError("pip must not start"),
+            snapshot_calls=[SystemExit(143)],
+        )
+        self.assertEqual(stderr, "")
 
     def test_keyboard_interrupt_in_pip_during_plan_is_silent_and_propagates(self):
         module = load_module()
