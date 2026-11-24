@@ -419,11 +419,12 @@ class DownloadHardeningTests(ServerFixture):
 
 
 class _FakeResponse:
-    """Stands in for the opener's response: a body and a headers mapping."""
+    """Stands in for the opener's response: a body, a headers mapping and framing."""
 
-    def __init__(self, body, headers=None):
+    def __init__(self, body, headers=None, chunked=False):
         self._body = io.BytesIO(body)
         self.headers = headers or {}
+        self.chunked = chunked
 
     def __enter__(self):
         return self
@@ -855,6 +856,43 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         failed = subprocess.CompletedProcess(args=["pip"], returncode=2, stdout="x")
         with (
             mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            mock.patch.object(module.time, "monotonic", side_effect=[100.0, 142.4]),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    Path("/tmp"),
+                    changes_environment=changes_environment,
+                )
+        return str(raised.exception)
+
+    def test_refused_apply_says_nothing_was_changed_not_partly_changed(self):
+        # Exit 65 is the adapter's pre-install refusal: pip's main() never ran.
+        message = self._pip_refused_message(changes_environment=True)
+        self.assertIn("refused the install before changing anything", message)
+        self.assertIn("nothing was installed or changed", message)
+        self.assertNotIn("partly changed", message)
+        self.assertNotIn("Isolated pip failed", message)
+
+    def test_refused_plan_says_nothing_was_changed(self):
+        message = self._pip_refused_message(changes_environment=False)
+        self.assertIn("refused the install before changing anything", message)
+        self.assertIn("nothing was installed or changed", message)
+        self.assertNotIn("partly changed", message)
+
+    def _pip_refused_message(self, changes_environment: bool) -> str:
+        isolate_temp_dir(self)
+        module = load_module()
+        # Literal 65: the adapter's refusal code, pinned here as the contract.
+        refused = subprocess.CompletedProcess(
+            args=["pip"], returncode=65, stdout=b"", stderr=b'{"error": "x"}'
+        )
+        with (
+            mock.patch.object(module.subprocess, "run", return_value=refused),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
@@ -2676,6 +2714,32 @@ class InterruptedApplyWarningTests(unittest.TestCase):
             module.apply(argparse.Namespace(plan=plan, approved_plan_sha256=digest))
         self.assertNotIn("partly changed", stderr.getvalue())
 
+    def test_missing_stderr_skips_the_warning_and_keeps_stdout_clean(self):
+        # fd 2 closed at startup leaves sys.stderr None. The warning must not fall back
+        # to stdout, which carries the JSON result; the interrupt still propagates.
+        module = load_module()
+        root = isolate_temp_dir(self)
+        plan, digest = self._approved_plan(module, root)
+        stdout = io.StringIO()
+        with (
+            mock.patch.object(
+                module,
+                "snapshot",
+                return_value={"identity": "unchanged", "installed": {}},
+            ),
+            mock.patch.object(
+                module.subprocess, "run", side_effect=KeyboardInterrupt()
+            ),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            mock.patch.object(sys, "stderr", None),
+            contextlib.redirect_stdout(stdout),
+            self.assertRaises(KeyboardInterrupt),
+        ):
+            module.apply(argparse.Namespace(plan=plan, approved_plan_sha256=digest))
+        self.assertEqual(stdout.getvalue(), "")
+
     def test_keyboard_interrupt_in_pip_during_plan_is_silent_and_propagates(self):
         module = load_module()
         isolate_temp_dir(self)
@@ -3104,6 +3168,40 @@ class TruncatedWheelBodyTests(unittest.TestCase):
         self.assertIn("cut short", str(raised.exception))
         self.assertIsNone(raised.exception.__cause__)
         self.assertFalse(target.exists(), "partial wheel was left behind")
+
+    def test_body_one_byte_short_of_declared_length_is_cut_short(self):
+        # Pins the boundary: received == declared is complete, received < declared is not.
+        module = load_module()
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        response = _FakeResponse(b"x" * 999, {"Content-Length": "1000"})
+        with mock.patch.object(module, "_open_url", return_value=response):
+            with self.assertRaises(ValueError) as raised:
+                module._download(
+                    "https://files.example.invalid/pkg-1.0-py3-none-any.whl",
+                    target,
+                    read_timeout=5,
+                    deadline=5,
+                )
+        self.assertIn("cut short", str(raised.exception))
+        self.assertFalse(target.exists(), "partial wheel was left behind")
+
+    def test_chunked_body_ignores_content_length_and_succeeds(self):
+        # RFC 9112 6.3: chunked framing wins, so a stale Content-Length is not a cut-short.
+        module = load_module()
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        response = _FakeResponse(
+            b"wheel-body", {"Content-Length": "1000"}, chunked=True
+        )
+        with mock.patch.object(module, "_open_url", return_value=response):
+            module._download(
+                "https://files.example.invalid/pkg-1.0-py3-none-any.whl",
+                target,
+                read_timeout=5,
+                deadline=5,
+            )
+        self.assertEqual(target.read_bytes(), b"wheel-body")
 
 
 CHILD_APPLY_SCRIPT = """

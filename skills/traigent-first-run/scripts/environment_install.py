@@ -50,6 +50,10 @@ PLAN_DOWNLOAD_DEADLINE_SECONDS = 600
 # apply, leaving margin for slow disks or antivirus. A kill here can leave a partial
 # install, which the apply error says.
 PIP_TIMEOUT_SECONDS = 900
+# Exit status of pip_adapter when it refuses before pip's main() runs (snapshot identity,
+# unsupported pip API, wheel destination checks): nothing was changed. Pip's own codes
+# are 0-4 and 23, so 65 never collides with one.
+PIP_REFUSED_EXIT = 65
 # Largest accepted wheel body: locked wheels are tens of MB; 1 GiB leaves room for a
 # large --change preview.
 MAX_WHEEL_BYTES = 1024 * 1024 * 1024
@@ -211,9 +215,10 @@ def _save_pip_output(stdout, stderr) -> tuple[str, Path | None]:
     interrupted save removes its directory, and isolated_pip removes it if an interrupt
     arrives while it builds the error message. Only when an OSError ended the save and
     that removal also failed does the message name the leftover directory. An interrupt
-    in the short windows outside those (at the save's return, or after the error has
-    left isolated_pip and before it is printed) can leave the owner-only
-    first-run-pip-* directory behind unnamed.
+    in the short windows outside those (at the save's return, after the error has left
+    isolated_pip and before it is printed, or between mkdtemp creating the directory and
+    its assignment, which leaves it empty) can leave the owner-only first-run-pip-*
+    directory behind unnamed.
     """
     directory = None
     path = None
@@ -314,8 +319,10 @@ def isolated_pip(
         return
     if output is None:
         output = (result.stdout, result.stderr)
-    # No __context__ holds TimeoutExpired on any path, because nothing below runs inside
-    # an except handler. An interrupt while the message is built removes the saved log
+    # Our own raises sit outside any except handler, so no ValueError here chains
+    # TimeoutExpired. (An interrupt during subprocess.run's own kill-and-reap can still
+    # carry it as __context__; its text is the command line, and the raw bytes it holds
+    # are never printed.) An interrupt while the message is built removes the saved log
     # before it propagates (best effort: see _save_pip_output).
     directory = None
     try:
@@ -335,6 +342,12 @@ def isolated_pip(
                     f"bound (stopped after {elapsed}s); nothing was installed or changed. "
                     "The network or dependency resolution stalled. " + saved
                 )
+        elif result.returncode == PIP_REFUSED_EXIT:
+            message = (
+                "Isolated pip refused the install before changing anything (exit code "
+                f"{PIP_REFUSED_EXIT}) after {elapsed}s; nothing was installed or changed. "
+                + saved
+            )
         elif changes_environment:
             # pip rolls back only the wheel that failed; earlier wheels may be installed.
             message = (
@@ -422,45 +435,54 @@ def pip_adapter(candidate: Path, arguments: list[str]) -> int:
     sys.path contains only trusted stdlib plus the trusted pip wheel. No customer
     module, site startup hook, backend or interpreter subprocess is permitted.
     """
-    state = snapshot(candidate)
-    sys.path.insert(0, str(ENV.trusted_pip_wheel()))
-    sys.prefix = sys.exec_prefix = state["prefix"]
-    sys.executable = state["interpreter"]
-    import pip
-    from pip._internal import metadata
+    try:
+        state = snapshot(candidate)
+        sys.path.insert(0, str(ENV.trusted_pip_wheel()))
+        sys.prefix = sys.exec_prefix = state["prefix"]
+        sys.executable = state["interpreter"]
+        import pip
+        from pip._internal import metadata
 
-    metadata.get_default_environment = lambda: metadata.get_environment(state["sites"])
-    from pip._internal.exceptions import InstallationError
-    from pip._internal.network import session
-    from pip._internal.operations.prepare import RequirementPreparer
-
-    if not callable(getattr(metadata, "get_environment", None)) or not callable(
-        getattr(RequirementPreparer, "prepare_linked_requirement", None)
-    ):
-        raise ValueError(
-            "Unsupported bundled pip metadata/preparer API; choose another trusted Python"
+        metadata.get_default_environment = lambda: metadata.get_environment(
+            state["sites"]
         )
-    session.user_agent = lambda: "pip/" + pip.__version__ + " first-run-isolated"
-    original_prepare = RequirementPreparer.prepare_linked_requirement
+        from pip._internal.exceptions import InstallationError
+        from pip._internal.network import session
+        from pip._internal.operations.prepare import RequirementPreparer
 
-    def wheel_only(self, requirement, *args, **kwargs):
-        if requirement.link is None or not requirement.link.is_wheel:
-            raise InstallationError("Only wheel artifacts may be resolved or installed")
-        return original_prepare(self, requirement, *args, **kwargs)
+        if not callable(getattr(metadata, "get_environment", None)) or not callable(
+            getattr(RequirementPreparer, "prepare_linked_requirement", None)
+        ):
+            raise ValueError(
+                "Unsupported bundled pip metadata/preparer API; choose another trusted Python"
+            )
+        session.user_agent = lambda: "pip/" + pip.__version__ + " first-run-isolated"
+        original_prepare = RequirementPreparer.prepare_linked_requirement
 
-    def no_subprocess(*args, **kwargs):
-        raise RuntimeError("Package build/interpreter subprocesses are forbidden")
+        def wheel_only(self, requirement, *args, **kwargs):
+            if requirement.link is None or not requirement.link.is_wheel:
+                raise InstallationError(
+                    "Only wheel artifacts may be resolved or installed"
+                )
+            return original_prepare(self, requirement, *args, **kwargs)
 
-    RequirementPreparer.prepare_linked_requirement = wheel_only
-    subprocess.Popen = no_subprocess
-    from pip._internal.cli.main import main
-    from pip._internal.locations import get_scheme
+        def no_subprocess(*args, **kwargs):
+            raise RuntimeError("Package build/interpreter subprocesses are forbidden")
 
-    if "--dry-run" not in arguments:
-        for argument in arguments:
-            artifact = Path(argument)
-            if argument.endswith(".whl") and artifact.is_file():
-                validate_wheel_paths(artifact, Path(state["prefix"]), get_scheme)
+        RequirementPreparer.prepare_linked_requirement = wheel_only
+        subprocess.Popen = no_subprocess
+        from pip._internal.cli.main import main
+        from pip._internal.locations import get_scheme
+
+        if "--dry-run" not in arguments:
+            for argument in arguments:
+                artifact = Path(argument)
+                if argument.endswith(".whl") and artifact.is_file():
+                    validate_wheel_paths(artifact, Path(state["prefix"]), get_scheme)
+    except (OSError, ValueError, RuntimeError) as error:
+        # Child stderr only: the parent saves it to the log and never prints it.
+        print(json.dumps({"error": str(error)}), file=sys.stderr)
+        return PIP_REFUSED_EXIT
     return main(["--isolated", "--disable-pip-version-check", "--no-input", *arguments])
 
 
@@ -566,8 +588,14 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         try:
             with _open_url(url, read_timeout) as response:
                 headers = getattr(response, "headers", None)
-                declared = _declared_length(
-                    headers.get("Content-Length") if headers is not None else None
+                # RFC 9112 6.3: chunked framing wins, so a Content-Length sent with a
+                # chunked body is ignored rather than trusted.
+                declared = (
+                    None
+                    if getattr(response, "chunked", False)
+                    else _declared_length(
+                        headers.get("Content-Length") if headers is not None else None
+                    )
                 )
                 if declared is not None and declared > MAX_WHEEL_BYTES:
                     raise _WheelTooLarge()
@@ -962,7 +990,9 @@ def apply(options) -> dict:
                 "Installed metadata differs from the approved plan; stop and inspect the environment"
             )
     except (KeyboardInterrupt, SystemExit):
-        if pip_started:
+        # sys.stderr is None when fd 2 was closed at startup: skip the warning, because
+        # the print fallback below would write it to stdout, which carries the JSON result.
+        if pip_started and sys.stderr is not None:
             # Best effort, as in _download: a dead stderr must not replace the interrupt.
             # Written unbuffered: a buffered print on a dead stderr fails again at
             # shutdown and turns the exit status into 120.
