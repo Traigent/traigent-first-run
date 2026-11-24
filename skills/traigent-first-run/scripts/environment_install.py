@@ -284,6 +284,20 @@ def _signal_name(number: int) -> str:
         return f"signal {number}"
 
 
+# Set while isolated_pip is inside subprocess.Popen. A SIGTERM/SIGHUP that lands in
+# that window is recorded in pending rather than raised, so the child exists only
+# under isolated_pip's kill-on-exception block. Read and written on the main thread.
+_SIGNAL_DEFERRAL = {"active": False, "pending": None}
+
+
+def _raise_deferred_signal() -> None:
+    """Raise the SystemExit for a signal recorded while the child was being created."""
+    pending = _SIGNAL_DEFERRAL["pending"]
+    if pending is not None:
+        _SIGNAL_DEFERRAL["pending"] = None
+        raise SystemExit(128 + pending)
+
+
 def isolated_pip(
     candidate: Path, arguments: list[str], working: Path, *, changes_environment: bool
 ) -> None:
@@ -301,8 +315,9 @@ def isolated_pip(
     stalled = False
     output = None
     started = time.monotonic()
+    _SIGNAL_DEFERRAL["active"] = True
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             [
                 str(ENV.trusted_interpreter()),
                 "-I",
@@ -317,25 +332,44 @@ def isolated_pip(
             ],
             cwd=working,
             env=environment,
-            capture_output=True,
-            check=False,
-            timeout=PIP_TIMEOUT_SECONDS,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
-    except subprocess.TimeoutExpired as expired:
+    except BaseException:
+        _SIGNAL_DEFERRAL["active"] = False
+        _raise_deferred_signal()
+        raise
+    try:
+        # Clearing the flag here, inside the protected block, leaves no window where a
+        # signal raises with the child running and nothing to stop it. A signal recorded
+        # during Popen is raised now, and the except below kills the child.
+        _SIGNAL_DEFERRAL["active"] = False
+        _raise_deferred_signal()
+        stdout, stderr = process.communicate(timeout=PIP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        # The bound is ours to enforce now: kill, then collect what the pipes hold.
         # Only copy the output here: the save runs after this handler, so no __context__
         # of a later interrupt can hold TimeoutExpired and its raw bytes.
-        output = (expired.stdout, expired.stderr)
+        process.kill()
+        stdout, stderr = process.communicate()
+        output = (stdout, stderr)
         stalled = True
+    except BaseException:
+        # A signal or interrupt while pip runs: stop the child before it propagates.
+        process.kill()
+        process.wait()
+        raise
     elapsed = round(time.monotonic() - started)
-    if not stalled and result.returncode == 0:
+    if not stalled and process.returncode == 0:
         return
     if output is None:
-        output = (result.stdout, result.stderr)
+        output = (stdout, stderr)
     # Our own raises sit outside any except handler, so no ValueError here chains
-    # TimeoutExpired. (An interrupt during subprocess.run's own kill-and-reap can still
-    # carry it as __context__; its text is the command line, and the raw bytes it holds
-    # are never printed.) An interrupt while the message is built removes the saved log
-    # before it propagates (best effort: see _save_pip_output).
+    # TimeoutExpired. The TimeoutExpired is caught above and nothing raised from this
+    # code chains it. Only an interrupt during the kill-and-collect communicate, inside
+    # that handler, carries it as __context__: its text is the command line, and the raw
+    # bytes it holds are never printed. An interrupt while the message is built removes
+    # the saved log before it propagates (best effort: see _save_pip_output).
     directory = None
     try:
         saved, directory = _save_pip_output(*output)
@@ -354,10 +388,10 @@ def isolated_pip(
                     f"bound (stopped after {elapsed}s); nothing was installed or changed. "
                     "The network or dependency resolution stalled. " + saved
                 )
-        elif result.returncode < 0:
+        elif process.returncode < 0:
             # A negative code is the signal that killed pip (e.g. -9, the OOM killer).
             # pip writes nothing when killed, so name the signal rather than an exit code.
-            name = _signal_name(-result.returncode)
+            name = _signal_name(-process.returncode)
             if changes_environment:
                 message = (
                     f"Isolated pip was killed by {name} during apply after {elapsed}s; "
@@ -369,7 +403,7 @@ def isolated_pip(
                     f"Isolated pip was killed by {name} after {elapsed}s; nothing was "
                     "installed or changed. " + saved
                 )
-        elif result.returncode == PIP_REFUSED_EXIT:
+        elif process.returncode == PIP_REFUSED_EXIT:
             message = (
                 "Isolated pip refused the install before changing anything (exit code "
                 f"{PIP_REFUSED_EXIT}) after {elapsed}s; nothing was installed or changed. "
@@ -378,13 +412,13 @@ def isolated_pip(
         elif changes_environment:
             # pip rolls back only the wheel that failed; earlier wheels may be installed.
             message = (
-                f"Isolated pip failed with exit code {result.returncode} during apply "
+                f"Isolated pip failed with exit code {process.returncode} during apply "
                 f"after {elapsed}s; the environment may be partly changed. Stop and "
                 "inspect it before any further change. " + saved
             )
         else:
             message = (
-                f"Isolated pip failed with exit code {result.returncode} after {elapsed}s; "
+                f"Isolated pip failed with exit code {process.returncode} after {elapsed}s; "
                 "nothing was installed or changed. " + saved
             )
         raise ValueError(message)
@@ -568,7 +602,8 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
     The body is capped at MAX_WHEEL_BYTES whatever Content-Length says, and an
     https URL may not redirect to a non-https one. Each failure raises a ValueError
     that names the error type and status only, with no chained exception, and removes
-    the partial file. On
+    the partial file; a removal that fails is ignored so the error still names the
+    cause. On
     timeout the worker is abandoned. A worker stuck inside a call that ignores
     timeouts (such as DNS) is left running on purpose: it is a daemon, the caller
     closes its stream when it abandons it so it writes nothing once abandoned, and
@@ -642,7 +677,8 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         # A failing close must not replace the deadline message or skip the removal.
         with contextlib.suppress(OSError):
             stream.close()
-        target.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
         raise ValueError(deadline_message)
     try:
         # The final flush can fail (full disk, EIO): report it as the labelled failure
@@ -652,7 +688,9 @@ def _download(url: str, target: Path, read_timeout: float, deadline: float) -> N
         failures.append(error)
     if not failures:
         return
-    target.unlink(missing_ok=True)
+    # As on the deadline path: a locked partial file must not replace the labelled error.
+    with contextlib.suppress(OSError):
+        target.unlink(missing_ok=True)
     error = failures[0]
     if isinstance(error, _WheelTooLarge):
         raise ValueError(size_message) from None
@@ -1043,11 +1081,22 @@ def _run_handling_termination(command, options) -> dict:
 
     A signal whose disposition is already SIG_IGN is left alone: `nohup` starts the
     process with SIGHUP ignored, and that choice must survive the command.
+
+    Deferral window: while isolated_pip is inside subprocess.Popen, the child may
+    already exist before its kill-on-exception block is active. A signal in that window
+    is recorded in _SIGNAL_DEFERRAL and returned from the handler, and isolated_pip
+    raises it as soon as the block is active, so the child is stopped, not orphaned.
     """
     if threading.current_thread() is not threading.main_thread():
         return command(options)
 
     def terminate(signum, frame):
+        if _SIGNAL_DEFERRAL["active"]:
+            # Inside Popen: keep the first signal for isolated_pip to raise once the
+            # child is under its kill-on-exception block.
+            if _SIGNAL_DEFERRAL["pending"] is None:
+                _SIGNAL_DEFERRAL["pending"] = signum
+            return
         raise SystemExit(128 + signum)
 
     signums = [signal.SIGTERM, getattr(signal, "SIGHUP", None)]

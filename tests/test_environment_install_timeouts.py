@@ -82,6 +82,43 @@ def saved_output_path(message: str) -> Path:
     return Path(match.group(1))
 
 
+class FakePipChild:
+    """Stands in for the subprocess.Popen child that isolated_pip creates.
+
+    communicate() returns the outcome's output and returncode, or raises the outcome
+    when it is an exception. A TimeoutExpired is raised on the bounded call only; after
+    kill() the next communicate() returns its partial output, as real pipes do.
+    timeouts records the timeout each communicate() call was given.
+    """
+
+    def __init__(self, outcome):
+        self.outcome = outcome
+        self.timeouts = []
+        self.killed = False
+        self.returncode = (
+            outcome.returncode
+            if isinstance(outcome, subprocess.CompletedProcess)
+            else None
+        )
+
+    def communicate(self, timeout=None):
+        self.timeouts.append(timeout)
+        if isinstance(self.outcome, subprocess.TimeoutExpired):
+            if not self.killed:
+                raise self.outcome
+            return self.outcome.output, self.outcome.stderr
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return self.outcome.stdout, self.outcome.stderr
+
+    def kill(self):
+        self.killed = True
+        self.returncode = -9
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+
 class ServerFixture(unittest.TestCase):
     def start_server(self, handler_class) -> str:
         server = ThreadingHTTPServer(("127.0.0.1", 0), handler_class)
@@ -413,14 +450,37 @@ class NoContentWithLengthHandler(BaseHTTPRequestHandler):
 
 
 class CutShortHandler(BaseHTTPRequestHandler):
-    """Declares 100 bytes, sends 10, then closes the connection."""
+    """Declares 100 bytes, sends SENT, then closes the connection."""
+
+    SENT = 10
 
     def do_GET(self):  # noqa: N802
         self.send_response(200)
         self.send_header("Content-Type", "application/octet-stream")
         self.send_header("Content-Length", "100")
         self.end_headers()
-        self.wfile.write(b"x" * 10)
+        self.wfile.write(b"x" * self.SENT)
+        self.wfile.flush()
+
+    def log_message(self, *args):
+        pass
+
+
+class NearlyCutShortHandler(CutShortHandler):
+    """Declares 100 bytes and sends 99: one byte short of the declared length."""
+
+    SENT = 99
+
+
+class ChunkedWithContradictingLengthHandler(BaseHTTPRequestHandler):
+    """Sends a complete 10-byte chunked body under a Content-Length it contradicts."""
+
+    def do_GET(self):  # noqa: N802
+        self.send_response(200)
+        self.send_header("Transfer-Encoding", "chunked")
+        self.send_header("Content-Length", "1000")
+        self.end_headers()
+        self.wfile.write(b"a\r\n0123456789\r\n0\r\n\r\n")
         self.wfile.flush()
 
     def log_message(self, *args):
@@ -515,6 +575,90 @@ class DownloadHardeningTests(ServerFixture):
             module._download(url, target, read_timeout=5, deadline=5)
         self.assertIn("cut short", str(raised.exception))
         self.assertFalse(target.exists(), "partial wheel was left behind")
+
+    def test_real_body_one_byte_short_of_content_length_is_refused(self):
+        module = load_module()
+        url = self.start_server(NearlyCutShortHandler)
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        with self.assertRaises(ValueError) as raised:
+            module._download(url, target, read_timeout=5, deadline=5)
+        self.assertIn("cut short", str(raised.exception))
+        self.assertFalse(target.exists(), "partial wheel was left behind")
+
+    def test_chunked_body_with_contradicting_content_length_downloads_in_full(self):
+        # http.client sets length to None for chunked framing and ignores the header;
+        # the body is complete, so the contradicting Content-Length must not cut it short.
+        module = load_module()
+        url = self.start_server(ChunkedWithContradictingLengthHandler)
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        module._download(url, target, read_timeout=5, deadline=5)
+        self.assertEqual(target.read_bytes(), b"0123456789")
+
+
+class UnlinkFailureKeepsLabelledErrorTests(unittest.TestCase):
+    """A failing unlink of the partial wheel must not replace the download's error."""
+
+    def _unlink_of_target_fails(self, target):
+        real_unlink = Path.unlink
+
+        def unlink(path, *args, **kwargs):
+            if path == target:
+                raise PermissionError(errno.EACCES, "locked by another process")
+            return real_unlink(path, *args, **kwargs)
+
+        return mock.patch.object(Path, "unlink", unlink)
+
+    def test_deadline_message_survives_a_failing_unlink(self):
+        module = load_module()
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        release = threading.Event()
+        self.addCleanup(release.set)
+        with (
+            mock.patch.object(
+                module, "_open_url", return_value=BlockingResponse(release)
+            ),
+            self._unlink_of_target_fails(target),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module._download(
+                    "https://example.invalid/pkg-1.0-py3-none-any.whl",
+                    target,
+                    read_timeout=5,
+                    deadline=0.2,
+                )
+        self.assertIn("did not finish", str(raised.exception))
+        self.assertNotIsInstance(raised.exception, PermissionError)
+
+    def test_labelled_failure_survives_a_failing_unlink(self):
+        module = load_module()
+        root = isolate_temp_dir(self)
+        target = root / "pkg-1.0-py3-none-any.whl"
+        error = urllib_error.HTTPError(
+            "https://example.invalid/pkg-1.0-py3-none-any.whl",
+            500,
+            "Server Error",
+            None,
+            None,
+        )
+        with (
+            mock.patch.object(module, "_open_url", side_effect=error),
+            self._unlink_of_target_fails(target),
+        ):
+            with self.assertRaises(ValueError) as raised:
+                module._download(
+                    "https://example.invalid/pkg-1.0-py3-none-any.whl",
+                    target,
+                    read_timeout=5,
+                    deadline=5,
+                )
+        self.assertEqual(
+            str(raised.exception),
+            "Wheel download failed: HTTPError (HTTP 500); nothing was installed or changed.",
+        )
+        self.assertNotIsInstance(raised.exception, PermissionError)
 
 
 class _FakeResponse:
@@ -871,7 +1015,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         )
         with (
             mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
-            mock.patch.object(module.subprocess, "run", side_effect=expired) as run,
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(expired)
+            ) as popen,
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
@@ -883,7 +1029,8 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
                     Path("/tmp"),
                     changes_environment=True,
                 )
-        self.assertEqual(run.call_args.kwargs.get("timeout"), 0.1)
+        # The first communicate is the bounded one; the call after kill() is unbounded.
+        self.assertEqual(popen.return_value.timeouts[0], 0.1)
         message = str(raised.exception)
         self.assertIn("0.1", message)
         self.assertIn("pip-output.log", message)
@@ -903,7 +1050,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
             args=["pip"], returncode=2, stdout="MARKER-7f3a out", stderr="ERROR: S3CRET"
         )
         with (
-            mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(failed)
+            ),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
@@ -931,7 +1080,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
         )
         with (
             mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
-            mock.patch.object(module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(expired)
+            ),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
@@ -974,7 +1125,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
             args=["pip"], returncode=returncode, stdout="x"
         )
         with (
-            mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(failed)
+            ),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
@@ -1011,7 +1164,9 @@ class IsolatedPipTimeoutTests(unittest.TestCase):
             args=["pip"], returncode=65, stdout=b"", stderr=b'{"error": "x"}'
         )
         with (
-            mock.patch.object(module.subprocess, "run", return_value=refused),
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(refused)
+            ),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
@@ -1122,7 +1277,7 @@ class PipOutputBytesTests(unittest.TestCase):
         )
         with (
             mock.patch.object(
-                self.module.subprocess, "run", return_value=completed
+                self.module.subprocess, "Popen", return_value=FakePipChild(completed)
             ) as run,
             mock.patch.object(
                 self.module.ENV,
@@ -1165,7 +1320,9 @@ class PipOutputBytesTests(unittest.TestCase):
         )
         with (
             mock.patch.object(self.module, "PIP_TIMEOUT_SECONDS", 0.1),
-            mock.patch.object(self.module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                self.module.subprocess, "Popen", return_value=FakePipChild(expired)
+            ),
             mock.patch.object(
                 self.module.ENV,
                 "trusted_interpreter",
@@ -1191,10 +1348,9 @@ class PipOutputFileTests(unittest.TestCase):
 
     def pip_error(self, module, outcome, changes_environment=True):
         """Run isolated_pip with pip replaced by outcome (an exception or a result)."""
-        if isinstance(outcome, BaseException):
-            run = mock.patch.object(module.subprocess, "run", side_effect=outcome)
-        else:
-            run = mock.patch.object(module.subprocess, "run", return_value=outcome)
+        run = mock.patch.object(
+            module.subprocess, "Popen", return_value=FakePipChild(outcome)
+        )
         with (
             mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
             run,
@@ -2486,6 +2642,58 @@ class ApplySignalExitTests(unittest.TestCase):
         self.assertFalse(marker.exists(), "pip child kept running after SIGTERM")
 
 
+class PopenCreationSignalTests(unittest.TestCase):
+    """SIGTERM while subprocess.Popen is still creating the pip child must not orphan it."""
+
+    @POSIX_ONLY
+    def test_sigterm_during_popen_stops_the_child_and_exits_143(self):
+        module = load_module()
+        root = isolate_temp_dir(self)
+        real_popen = subprocess.Popen
+        children = []
+
+        def popen_signalled_after_fork(*args, **kwargs):
+            # The child exists when SIGTERM lands during Popen's construction: start a
+            # real sleeper, then run the handler _run_handling_termination installed.
+            child = real_popen(
+                ["sleep", "30"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            children.append(child)
+            signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+            return child
+
+        def reap_children():
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                child.wait()
+
+        self.addCleanup(reap_children)
+        with (
+            mock.patch.object(
+                module.subprocess, "Popen", side_effect=popen_signalled_after_fork
+            ),
+            mock.patch.object(
+                module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
+            ),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            module._run_handling_termination(
+                lambda _options: module.isolated_pip(
+                    Path("/tmp/candidate"),
+                    ["install", "x"],
+                    root,
+                    changes_environment=True,
+                ),
+                None,
+            )
+        self.assertEqual(raised.exception.code, 143)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(
+            children[0].poll(), "pip child kept running after SIGTERM during creation"
+        )
+
+
 class PlanOffMainThreadTests(unittest.TestCase):
     """_run_handling_termination must not touch signal handlers off the main thread."""
 
@@ -2653,10 +2861,12 @@ class InterruptedApplyWarningTests(unittest.TestCase):
     )
 
     def _pip_child_interrupted_by(self, module, interrupt, changes_environment):
-        """Run isolated_pip with subprocess.run raising interrupt; return stderr text."""
+        """Run isolated_pip with the pip child raising interrupt; return stderr text."""
         stderr = io.StringIO()
         with (
-            mock.patch.object(module.subprocess, "run", side_effect=interrupt),
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(interrupt)
+            ),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
@@ -2712,7 +2922,7 @@ class InterruptedApplyWarningTests(unittest.TestCase):
         stderr = io.StringIO()
         with (
             mock.patch.object(module, "snapshot", side_effect=snapshot_calls),
-            mock.patch.object(module.subprocess, "run", side_effect=pip_run),
+            mock.patch.object(module.subprocess, "Popen", side_effect=pip_run),
             mock.patch.object(module, "_save_pip_output", side_effect=save),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
@@ -2812,7 +3022,9 @@ class InterruptedApplyWarningTests(unittest.TestCase):
                             return_value={"identity": "unchanged", "installed": {}},
                         ),
                         mock.patch.object(
-                            module.subprocess, "run", side_effect=interrupt_raiser(make)
+                            module.subprocess,
+                            "Popen",
+                            side_effect=interrupt_raiser(make),
                         ),
                         mock.patch.object(
                             module.ENV,
@@ -2840,7 +3052,9 @@ class InterruptedApplyWarningTests(unittest.TestCase):
         # its exit, so the interrupt must still get the warning.
         stderr = self._apply_expecting(
             KeyboardInterrupt,
-            pip_run=lambda *a, **k: subprocess.CompletedProcess(a, 1, b"", b""),
+            pip_run=lambda *a, **k: FakePipChild(
+                subprocess.CompletedProcess(a, 1, b"", b"")
+            ),
             snapshot_calls=[{"identity": "unchanged", "installed": {}}],
             save=KeyboardInterrupt(),
         )
@@ -2853,7 +3067,9 @@ class InterruptedApplyWarningTests(unittest.TestCase):
         # installed metadata is verified.
         stderr = self._apply_expecting(
             KeyboardInterrupt,
-            pip_run=lambda *a, **k: subprocess.CompletedProcess(a, 0, b"", b""),
+            pip_run=lambda *a, **k: FakePipChild(
+                subprocess.CompletedProcess(a, 0, b"", b"")
+            ),
             snapshot_calls=[
                 {"identity": "unchanged", "installed": {}},
                 KeyboardInterrupt(),
@@ -2892,7 +3108,7 @@ class InterruptedApplyWarningTests(unittest.TestCase):
             ),
             mock.patch.object(
                 module.subprocess,
-                "run",
+                "Popen",
                 side_effect=AssertionError("pip must not start"),
             ),
             contextlib.redirect_stderr(stderr),
@@ -2915,7 +3131,9 @@ class InterruptedApplyWarningTests(unittest.TestCase):
                 return_value={"identity": "unchanged", "installed": {}},
             ),
             mock.patch.object(
-                module.subprocess, "run", side_effect=KeyboardInterrupt()
+                module.subprocess,
+                "Popen",
+                return_value=FakePipChild(KeyboardInterrupt()),
             ),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
@@ -3122,7 +3340,9 @@ class StallPathInterruptTests(unittest.TestCase):
         )
         with (
             mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
-            mock.patch.object(module.subprocess, "run", side_effect=expired),
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(expired)
+            ),
             mock.patch.object(
                 module, "_save_pip_output", side_effect=KeyboardInterrupt()
             ),
@@ -3162,7 +3382,9 @@ class StallPathInterruptTests(unittest.TestCase):
                         "PIP_TIMEOUT_SECONDS",
                         _FormatRaisesInterrupt(interrupt),
                     ),
-                    mock.patch.object(module.subprocess, "run", side_effect=expired),
+                    mock.patch.object(
+                        module.subprocess, "Popen", return_value=FakePipChild(expired)
+                    ),
                     mock.patch.object(
                         module.ENV,
                         "trusted_interpreter",
@@ -3194,7 +3416,9 @@ class StallPathInterruptTests(unittest.TestCase):
                     stderr=self.MARKER,
                 )
                 with (
-                    mock.patch.object(module.subprocess, "run", return_value=failed),
+                    mock.patch.object(
+                        module.subprocess, "Popen", return_value=FakePipChild(failed)
+                    ),
                     mock.patch.object(
                         module.ENV,
                         "trusted_interpreter",
@@ -3224,7 +3448,9 @@ class StallPathInterruptTests(unittest.TestCase):
             stderr=self.MARKER,
         )
         with (
-            mock.patch.object(module.subprocess, "run", return_value=failed),
+            mock.patch.object(
+                module.subprocess, "Popen", return_value=FakePipChild(failed)
+            ),
             mock.patch.object(
                 module.ENV, "trusted_interpreter", return_value=Path("/usr/bin/python3")
             ),
