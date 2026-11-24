@@ -3632,6 +3632,63 @@ class _FormatRaisesInterrupt:
         return False
 
 
+STALL_MARKER = b"MARKER-r53-pip-bytes"
+STALL_COMMAND_MARKER = "CMDMARKER-r53-candidate"
+
+
+class _InterruptedStop(FakePipChild):
+    """A stalled pip whose stop is interrupted: at the first kill(), or at the collect after it."""
+
+    def __init__(self, outcome, interrupt, at):
+        super().__init__(outcome)
+        self.interrupt, self.at = interrupt, at
+
+    def kill(self):
+        first = not self.killed
+        super().kill()
+        if first and self.at == "kill":
+            raise self.interrupt
+
+    def communicate(self, timeout=None):
+        if self.killed and self.at == "collect" and timeout is None:
+            self.at = None
+            raise self.interrupt
+        return super().communicate(timeout)
+
+
+def _assert_no_pip_output_in_chain(test, error, marker: bytes, command_marker: str):
+    """Fail if any link of error's __context__ or __cause__ chain is a TimeoutExpired,
+    holds pip's bytes, or the formatted traceback names the command line."""
+    pending, seen = [error], set()
+    while pending:
+        link = pending.pop()
+        if link is None or id(link) in seen:
+            continue
+        seen.add(id(link))
+        test.assertNotIsInstance(link, subprocess.TimeoutExpired)
+        for attribute in ("output", "stdout", "stderr"):
+            value = getattr(link, attribute, None)
+            test.assertFalse(
+                isinstance(value, bytes) and marker in value,
+                f"{attribute} of {type(link).__name__} in the chain holds pip output",
+            )
+        pending += [link.__cause__, link.__context__]
+    text = "".join(traceback.format_exception(error))
+    test.assertNotIn(command_marker, text)
+    test.assertNotIn(marker.decode(), text)
+
+
+def _stand_in_printing_marker(root: Path) -> Path:
+    """A POSIX stand-in for the interpreter: it prints pip-like bytes, then stalls."""
+    stand_in = root / "python"
+    stand_in.write_text(
+        "#!/bin/sh\nprintf '%s' '" + STALL_MARKER.decode() + "'\nexec sleep 30\n",
+        encoding="utf-8",
+    )
+    stand_in.chmod(0o700)
+    return stand_in
+
+
 class StallPathInterruptTests(unittest.TestCase):
     """An interrupt on the pip stall or failure path never chains pip output or keeps the log."""
 
@@ -3772,6 +3829,102 @@ class StallPathInterruptTests(unittest.TestCase):
             )
         self.assertNotIsInstance(raised.exception.__context__, OSError)
         self.assertNotIn("busy", repr(raised.exception.__context__))
+
+    def test_interrupt_at_stall_kill_or_collect_chains_no_timeout_and_stops_child(self):
+        module = load_module()
+        isolate_temp_dir(self)
+        interrupts = (
+            ("KeyboardInterrupt", KeyboardInterrupt),
+            ("SystemExit(143)", lambda: SystemExit(143)),
+        )
+        for at in ("kill", "collect"):
+            for name, make in interrupts:
+                for changes in (True, False):
+                    with self.subTest(at=at, interrupt=name, changes=changes):
+                        expired = subprocess.TimeoutExpired(
+                            cmd=["pip", STALL_COMMAND_MARKER],
+                            timeout=0.1,
+                            output=STALL_MARKER,
+                            stderr=STALL_MARKER,
+                        )
+                        interrupt = make()
+                        child = _InterruptedStop(expired, interrupt, at)
+                        with (
+                            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 0.1),
+                            mock.patch.object(
+                                module.subprocess, "Popen", return_value=child
+                            ),
+                            mock.patch.object(
+                                module.ENV,
+                                "trusted_interpreter",
+                                return_value=Path("/usr/bin/python3"),
+                            ),
+                            self.assertRaises(type(interrupt)) as raised,
+                        ):
+                            module.isolated_pip(
+                                Path("/tmp/" + STALL_COMMAND_MARKER),
+                                ["install", "x"],
+                                Path("/tmp"),
+                                changes_environment=changes,
+                            )
+                        _assert_no_pip_output_in_chain(
+                            self, raised.exception, STALL_MARKER, STALL_COMMAND_MARKER
+                        )
+                        self.assertTrue(child.killed, "the stalled pip was not killed")
+
+
+@POSIX_ONLY
+class StallStopSignalTests(unittest.TestCase):
+    """A real signal at the stall kill: the chain stays clean and the real child is gone."""
+
+    def run_stall_stopped_by(self, signum: int, through_termination: bool):
+        module, root, _stand_in, children = _pip_child_fixture(self)
+        stand_in = _stand_in_printing_marker(root)
+        real_kill = subprocess.Popen.kill
+        sent = []
+
+        def kill_signalled(process):
+            if not sent:
+                sent.append(True)
+                os.kill(os.getpid(), signum)
+            return real_kill(process)
+
+        def run_pip():
+            return module.isolated_pip(
+                Path("/nonexistent/" + STALL_COMMAND_MARKER),
+                ["install", "x"],
+                root,
+                changes_environment=True,
+            )
+
+        with (
+            mock.patch.object(subprocess, "_fork_exec", _recording_fork_exec(children)),
+            mock.patch.object(subprocess.Popen, "kill", kill_signalled),
+            mock.patch.object(module, "PIP_TIMEOUT_SECONDS", 1),
+            mock.patch.object(module.ENV, "trusted_interpreter", return_value=stand_in),
+        ):
+            if through_termination:
+                with self.assertRaises(SystemExit) as raised:
+                    module._run_handling_termination(lambda _options: run_pip(), None)
+            else:
+                with self.assertRaises(KeyboardInterrupt) as raised:
+                    run_pip()
+        _assert_no_pip_output_in_chain(
+            self, raised.exception, STALL_MARKER, STALL_COMMAND_MARKER
+        )
+        self.assertEqual(len(children), 1)
+        self.assertTrue(
+            _gone_within(children[0], 2),
+            "pip child outlived isolated_pip after a signal at the stall kill",
+        )
+        return raised.exception
+
+    def test_sigint_at_stall_kill_stops_child_and_chains_no_timeout(self):
+        self.run_stall_stopped_by(signal.SIGINT, through_termination=False)
+
+    def test_sigterm_at_stall_kill_exits_143_chains_no_timeout_and_stops_child(self):
+        error = self.run_stall_stopped_by(signal.SIGTERM, through_termination=True)
+        self.assertEqual(error.code, 143)
 
 
 class FlushFailsOnClose:

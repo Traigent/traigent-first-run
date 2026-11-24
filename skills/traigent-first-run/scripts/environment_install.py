@@ -346,7 +346,6 @@ def isolated_pip(
     }
     environment["PIP_CONFIG_FILE"] = os.devnull
     stalled = False
-    output = None
     started = time.monotonic()
     # Lifeline (POSIX; Windows has no pass_fds, so it is skipped there). The child holds
     # the read end and SIGKILLs itself when every copy of the write end is closed. Both
@@ -383,17 +382,21 @@ def isolated_pip(
             if lifeline is not None:
                 os.close(lifeline[0])  # the child has its own copy; we never read it
         try:
-            stdout, stderr = process.communicate(timeout=PIP_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            # The bound is ours to enforce now: kill, then collect what the pipes hold.
-            # Only copy the output here: the save runs after this handler, so no __context__
-            # of a later interrupt can hold TimeoutExpired and its raw bytes.
-            process.kill()
-            stdout, stderr = process.communicate()
-            output = (stdout, stderr)
-            stalled = True
+            try:
+                stdout, stderr = process.communicate(timeout=PIP_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                # Record the stall and nothing else. The kill and the collect below run
+                # after this handler has finished, so an interrupt during them is raised
+                # with no exception being handled and does not take TimeoutExpired as
+                # its __context__.
+                stalled = True
+            if stalled:
+                # The bound is ours to enforce now: kill, then collect what the pipes hold.
+                process.kill()
+                stdout, stderr = process.communicate()
         except BaseException:
-            # A signal or interrupt while pip runs: stop the child before it propagates.
+            # A signal or interrupt while pip runs, or during the kill and collect above:
+            # stop the child before it propagates.
             process.kill()
             process.wait()
             raise
@@ -403,18 +406,16 @@ def isolated_pip(
     elapsed = round(time.monotonic() - started)
     if not stalled and process.returncode == 0:
         return
-    if output is None:
-        output = (stdout, stderr)
-    # Our own raises sit outside any except handler, so no ValueError here chains
-    # TimeoutExpired. The TimeoutExpired is caught above and nothing raised from this
-    # code chains it. Only an interrupt during the kill-and-collect communicate, inside
-    # that handler, carries it as __context__: its text is the command line, and the raw
-    # bytes it holds are never printed. An interrupt while the message is built removes
-    # the saved log before it propagates (best effort: see _save_pip_output).
+    # Nothing below runs while the TimeoutExpired of the bounded wait is being handled, so
+    # no raise here chains it. Its text is the command line and its .output and
+    # .stderr hold pip's raw bytes; neither reaches a message. One residual window is
+    # inside CPython: a signal handled within communicate() while TimeoutExpired is still
+    # unwinding out of it (microseconds) can still carry it as __context__. An interrupt
+    # while the message is built removes the saved log before it propagates (best effort:
+    # see _save_pip_output).
     directory = None
     try:
-        saved, directory = _save_pip_output(*output)
-        output = None
+        saved, directory = _save_pip_output(stdout, stderr)
         if stalled:
             if changes_environment:
                 message = (
