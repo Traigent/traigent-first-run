@@ -607,7 +607,7 @@ def seam_probe_outcome(
 
 def literal_or_file(value: str) -> Any:
     if value.startswith("@"):
-        return json.loads(Path(value[1:]).read_text())
+        return json.loads(Path(value[1:]).read_text(encoding="utf-8-sig"))
     try:
         return json.loads(value)
     except json.JSONDecodeError:

@@ -772,7 +772,22 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
     # legal variable name is a setting spelled wrong.
     unparsed_lines: list[int] = []
     invalid_name_lines: list[int] = []
-    for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        # python-dotenv reads .env as UTF-8 and raises on any other byte, so the
+        # runtime wrapper would fail at import. No value is read from a file
+        # that the runtime cannot read, so no credential is reported available.
+        line = path.read_bytes()[: error.start].count(b"\n") + 1
+        emit(
+            "env-file",
+            FAIL,
+            f"{path} is not valid UTF-8 (first bad byte at line {line}); "
+            "python-dotenv reads .env as UTF-8 - re-save it as UTF-8. "
+            "No values were read from it.",
+        )
+        return {}
+    for line_number, raw_line in enumerate(text.splitlines(), 1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -875,7 +890,11 @@ def env_is_blank_template(path: Path) -> bool:
         r"(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*"
         r"(?:''|\"\")?(?:[ \t]+#.*)?"
     )
-    for raw in path.read_text().splitlines():
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False
+    for raw in text.splitlines():
         line = raw.strip()
         if line and not line.startswith("#") and not empty_assignment.fullmatch(line):
             return False
@@ -4582,6 +4601,19 @@ def check_dataset(
     if not path.exists():
         emit("dataset-shape", FAIL, f"{path} does not exist")
         return None
+    # The SDK opens datasets as UTF-8 and refuses any other byte, so a file that
+    # is not UTF-8 cannot be measured at all: a named FAIL, not a traceback.
+    try:
+        dataset_text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        line = path.read_bytes()[: error.start].count(b"\n") + 1
+        emit(
+            "dataset-shape",
+            FAIL,
+            f"{path} is not valid UTF-8 (first bad byte at line {line}); the SDK "
+            "reads datasets as UTF-8 - re-save it as UTF-8",
+        )
+        return None
 
     reference_free = evaluator_method in REFERENCE_FREE_METHODS
     sql_comparator = None
@@ -4629,7 +4661,7 @@ def check_dataset(
     unreadable_gold_present = 0
     unreadable_gold_ids: list[Any] = []
     candidate_count = 0
-    for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
+    for line_number, raw_line in enumerate(dataset_text.splitlines(), 1):
         if not raw_line.strip():
             continue
         candidate_count += 1

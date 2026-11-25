@@ -1,0 +1,178 @@
+"""Customer files are read as UTF-8 whatever the platform locale says (#617).
+
+The SDK opens datasets with ``encoding="utf-8"`` and python-dotenv defaults to
+the same, so preflight and readiness must read the same bytes the same way. A
+file the SDK would refuse is a named finding, never an internal error.
+
+These tests run the scripts as subprocesses under a C locale with UTF-8 mode
+disabled: that is the interpreter a Windows code page or a bare ``LC_ALL=C``
+customer gets, and it is stricter than cp1252, which mojibakes instead of
+raising.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "skills" / "traigent-first-run" / "scripts"
+PREFLIGHT = SCRIPTS / "preflight.py"
+READINESS = SCRIPTS / "readiness.py"
+
+UTF8_ROW = '{"input": "café 日本", "output": "b"}\n{"input": "c", "output": "d"}\n'
+LATIN1_ROW = '{"input": "café", "output": "b"}\n{"input": "c", "output": "d"}\n'
+# A key the SDK would accept; the value is a placeholder, never a real secret.
+ENV_LINE = "OPENAI_API_KEY=sk-placeholder-not-a-secret\n"
+
+
+def c_locale_run(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    """Run a script the way a non-UTF-8 default-encoding customer runs it."""
+    env = {
+        "PATH": os.environ.get("PATH", ""),
+        "LC_ALL": "C",
+        "PYTHONCOERCECLOCALE": "0",
+    }
+    return subprocess.run(
+        [sys.executable, "-X", "utf8=0", "-I", "-S", "-B", *args],
+        cwd=cwd,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+class PreflightReadsCustomerFilesAsUtf8Tests(unittest.TestCase):
+    def preflight(
+        self, directory: Path, dataset_bytes: bytes, env_bytes: bytes
+    ) -> tuple[subprocess.CompletedProcess[str], list[dict]]:
+        dataset = directory / "data.jsonl"
+        dataset.write_bytes(dataset_bytes)
+        env_path = directory / ".env"
+        env_path.write_bytes(env_bytes)
+        env_path.chmod(0o600)
+        result = c_locale_run(
+            [
+                str(PREFLIGHT),
+                "--project-root",
+                str(directory),
+                "--env",
+                str(env_path),
+                "--dataset",
+                str(dataset),
+                "--offline",
+                "--defer-missing-sdk",
+                "--json",
+            ],
+            cwd=directory,
+        )
+        payload = json.loads(result.stdout) if result.stdout.strip() else []
+        return result, payload
+
+    @staticmethod
+    def record(payload: list[dict], check: str) -> dict:
+        return next(item for item in payload if item["check"] == check)
+
+    def test_utf8_dataset_and_env_read_identically_under_c_locale(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result, payload = self.preflight(
+                Path(directory), UTF8_ROW.encode("utf-8"), ENV_LINE.encode("utf-8")
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.record(payload, "dataset-shape")["status"], "PASS")
+
+    def test_latin1_dataset_is_a_named_fail_not_an_internal_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result, payload = self.preflight(
+                Path(directory), LATIN1_ROW.encode("latin-1"), ENV_LINE.encode("utf-8")
+            )
+        self.assertNotIn("internal error", result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        record = self.record(payload, "dataset-shape")
+        self.assertEqual(record["status"], "FAIL")
+        self.assertRegex(record["detail"], r"not valid UTF-8 .*line 1")
+        # The detail names the problem without echoing any customer bytes.
+        self.assertNotIn("caf", record["detail"])
+
+    def test_latin1_env_is_a_named_fail_and_no_credential_is_read(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result, payload = self.preflight(
+                Path(directory),
+                UTF8_ROW.encode("utf-8"),
+                "# café\nOPENAI_API_KEY=sk-placeholder\n".encode("latin-1"),
+            )
+        self.assertNotIn("internal error", result.stdout + result.stderr)
+        self.assertEqual(self.record(payload, "env-file")["status"], "FAIL")
+        self.assertNotEqual(
+            self.record(payload, "provider-credentials")["status"], "PASS"
+        )
+
+    def test_bom_env_is_not_read_as_a_credential(self) -> None:
+        # python-dotenv keeps a byte-order mark in the first key, so the SDK
+        # runtime never sees OPENAI_API_KEY. Preflight must agree with that.
+        with tempfile.TemporaryDirectory() as directory:
+            result, payload = self.preflight(
+                Path(directory),
+                UTF8_ROW.encode("utf-8"),
+                b"\xef\xbb\xbf" + ENV_LINE.encode("utf-8"),
+            )
+        self.assertNotIn("internal error", result.stdout + result.stderr)
+        self.assertNotEqual(
+            self.record(payload, "provider-credentials")["status"], "PASS"
+        )
+
+
+class ReadinessPreflightInputEncodingTests(unittest.TestCase):
+    def test_utf8_preflight_document_loads_under_c_locale(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dataset = root / "data.jsonl"
+            dataset.write_bytes(UTF8_ROW.encode("utf-8"))
+            env_path = root / ".env"
+            env_path.write_bytes(ENV_LINE.encode("utf-8"))
+            env_path.chmod(0o600)
+            produced = c_locale_run(
+                [
+                    str(PREFLIGHT),
+                    "--project-root",
+                    str(root),
+                    "--env",
+                    str(env_path),
+                    "--dataset",
+                    str(dataset),
+                    "--offline",
+                    "--defer-missing-sdk",
+                    "--json",
+                ],
+                cwd=root,
+            )
+            self.assertEqual(produced.returncode, 0, produced.stdout + produced.stderr)
+            report = root / "preflight.json"
+            report.write_bytes(produced.stdout.encode("utf-8"))
+            result = c_locale_run(
+                [str(READINESS), "--preflight", str(report)], cwd=root
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("internal error", result.stdout + result.stderr)
+
+    def test_latin1_preflight_document_is_a_named_input_error(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "preflight.json"
+            report.write_bytes('[{"check": "café"}]'.encode("latin-1"))
+            result = c_locale_run(
+                [str(READINESS), "--preflight", str(report)], cwd=root
+            )
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn(str(report), result.stderr)
+        self.assertNotIn("internal error", result.stdout + result.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

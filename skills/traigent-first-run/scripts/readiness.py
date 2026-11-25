@@ -21165,7 +21165,17 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
 def load_json(reference: str) -> Any:
     if reference == "-":
         return json.loads(sys.stdin.read())
-    return json.loads(Path(reference).read_text())
+    # utf-8-sig: these documents are assistant-authored, and PowerShell 5.1's
+    # `Out-File -Encoding utf8` writes a byte-order mark that is not JSON.
+    try:
+        text = Path(reference).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as error:
+        # Name the file: the decode error carries only a byte offset, and the
+        # caller's report has no other way to say which document to re-save.
+        raise OSError(
+            f"{reference} is not valid UTF-8 ({error.reason}); re-save it as UTF-8"
+        ) from error
+    return json.loads(text)
 
 
 def parse_weights(raw: str) -> dict[str, float]:
@@ -21806,6 +21816,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
     except (
         OSError,
+        UnicodeDecodeError,
         json.JSONDecodeError,
         PreflightInputError,
         CalibrationInputError,
