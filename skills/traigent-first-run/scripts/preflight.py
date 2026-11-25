@@ -510,21 +510,32 @@ def value_fingerprint(value: str) -> str:
     return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()[:8]
 
 
+# An AWS region name (`us-east-1`, `us-gov-west-1`): the one non-URL route value
+# that is printed as it stands, because naming it is the finding.
+AWS_REGION_SHAPE = re.compile(r"[a-z]{2}(?:-[a-z]+)+-\d+")
+
+
 def route_display(value: str) -> str:
     """A route value in the clear, minus anything credential-shaped.
 
-    Route values are printed because naming them is the finding. A URL,
-    however, can carry a token in its userinfo or its query string, so only the
-    part that answers "which host am I reaching" survives: scheme, host, port.
-    A value that is not a URL - a region name - is printed as it stands.
+    Route values are printed because naming them is the finding, but a route
+    value is not always a route: `${NAME}` interpolation resolves against the
+    process environment, so `TRAIGENT_BACKEND_URL=${TRAIGENT_API_KEY}` carries
+    a key, and a scheme-less `host/path?token=...` carries a token. Only two
+    shapes are printed: a URL, reduced to its scheme, host and port (userinfo,
+    path and query are dropped), and an AWS region name. Anything else is
+    replaced by its fingerprint, so a reader can still compare it with
+    `FINGERPRINT_RECIPE` but the value itself never reaches the report.
 
     The sibling `backend-url` check names the VARIABLE and never its value;
-    this is the one place a route value is printed, and it is printed reduced.
+    this is the one place a route value is printed.
     """
     stripped = value.strip()
     parsed = urllib.parse.urlsplit(stripped)
     if not parsed.scheme or not parsed.netloc:
-        return stripped
+        if AWS_REGION_SHAPE.fullmatch(stripped):
+            return stripped
+        return f"a value that is neither a URL nor a region (sha256:{value_fingerprint(stripped)})"
     try:
         host, port = parsed.hostname, parsed.port
     except ValueError:  # a malformed port; the host is not trustworthy either
@@ -758,6 +769,7 @@ PYTHON_DOTENV_GRAMMAR_VERSION = "1.2.2"
 # check runs with `-I -S` and must not import the package or run its code.
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DOTENV_NEWLINE = re.compile(r"(?:\r\n|\n|\r)")
+_BYTES_NEWLINE = re.compile(rb"(?:\r\n|\n|\r)")
 _DOTENV_MULTILINE_WHITESPACE = re.compile(r"\s*", re.MULTILINE)
 _DOTENV_EXPORT = re.compile(r"(?:export[^\S\r\n]+)?")
 _DOTENV_SINGLE_QUOTED_KEY = re.compile(r"'([^']+)'")
@@ -773,6 +785,17 @@ _DOTENV_REST_OF_LINE = re.compile(r"[^\r\n]*(?:\r|\n|\r\n)?")
 _DOTENV_DOUBLE_QUOTE_ESCAPES = re.compile(r"\\[\\'\"abfnrtv]")
 _DOTENV_SINGLE_QUOTE_ESCAPES = re.compile(r"\\[\\']")
 _DOTENV_VARIABLE = re.compile(r"\$\{(?P<name>[^\}:]*)(?::-(?P<default>[^\}]*))?\}")
+
+
+def decode_error_line(raw: bytes, error: UnicodeDecodeError) -> int:
+    """The 1-based line a UTF-8 decode failure sits on.
+
+    Counts the breaks `_DOTENV_NEWLINE` counts - CRLF, LF and a lone CR - so
+    the line named here is the line every other line number in this report
+    gives for the same file. Counting `\\n` alone put a CR-only file's bad
+    byte on line 1.
+    """
+    return len(_BYTES_NEWLINE.findall(raw[: error.start])) + 1
 
 
 class _DotenvSyntaxError(Exception):
@@ -925,51 +948,36 @@ def dropped_statement_clause(spans: list[tuple[int, int]]) -> str:
     )
 
 
-def parse_env_file(path: Path) -> dict[str, str | None]:
-    """Parse `.env` as python-dotenv reads it, and record what it cannot read.
+class DotenvParse(NamedTuple):
+    """What python-dotenv's reader made of one text, and what it could not use.
 
-    The grammar is python-dotenv's (`PYTHON_DOTENV_GRAMMAR_VERSION`), so the
-    keys and values here are the ones `load_dotenv` sets. A bare `KEY` is
-    `None`, as python-dotenv keeps it: it erases an earlier assignment of the
-    same key.
+    `values` is what `load_dotenv` would set, a bare key being `None`. The
+    three line populations are the ones `parse_env_file` reports; they are
+    returned rather than emitted so a caller that is not preflight can read the
+    same grammar without writing a preflight record.
+    """
 
-    Every line this parser cannot use is collected and reported in ONE
-    `env-file` record after the walk. Emitting inside the loop made a second
-    unreadable line trip the registry, which used to cost the customer the
-    entire report and now costs the second warning and an exit saying we broke
-    (`DuplicateCheckName`). That file is the one thing this guide asks a
-    first-run customer to write by hand, and two stray lines is an ordinary
-    way to write one: a pasted note without a `#`, a wrapped value, two bare
-    `export FOO`.
+    values: dict[str, str | None]
+    unparsed_lines: list[int]
+    invalid_name_lines: list[int]
+    dropped_spans: list[tuple[int, int]]
 
-    So this is a parser that also RECORDS, and `read_env` is its one caller
-    for that reason: a second call in the same run would record `env-file` a
-    second time.
+
+def parse_dotenv_text(text: str) -> DotenvParse:
+    """python-dotenv's reader over `text`, recording what it cannot use.
+
+    Pure: it emits nothing and reads nothing but `os.environ`, which python-dotenv
+    also reads when it interpolates `${NAME}` (the process wins, as with
+    `override=False`). `parse_env_file` reports the lines, and `calibrate_evaluator`
+    reads its values through here so the two readers cannot drift apart.
     """
     values: dict[str, str | None] = {}
-    if not path.exists():
-        return values
     # Two populations, kept apart, because they are two different mistakes and
     # a reader fixing them does two different things: a line with no `=` at all
     # is prose where a setting was expected, while a line whose key is not a
     # legal variable name is a setting spelled wrong.
     unparsed_lines: list[int] = []
     invalid_name_lines: list[int] = []
-    try:
-        text = path.read_text(encoding="utf-8")
-    except UnicodeDecodeError as error:
-        # python-dotenv reads .env as UTF-8 and raises on any other byte, so the
-        # runtime wrapper would fail at import. No value is read from a file
-        # that the runtime cannot read, so no credential is reported available.
-        line = path.read_bytes()[: error.start].count(b"\n") + 1
-        emit(
-            "env-file",
-            FAIL,
-            f"{path} is not valid UTF-8 (first bad byte at line {line}); "
-            "python-dotenv reads .env as UTF-8 - re-save it as UTF-8. "
-            "No values were read from it.",
-        )
-        return {}
     # The lines python-dotenv's statements start on, split as it counts them.
     lines = _DOTENV_NEWLINE.split(text)
     # Statements python-dotenv drops, as (first, last) source lines.
@@ -1002,23 +1010,72 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
         # one and then the process environment, which wins.
         expansion_env = {**values, **os.environ}
         values[statement.key] = _expand_dotenv_variables(statement.value, expansion_env)
+    return DotenvParse(values, unparsed_lines, invalid_name_lines, dropped_spans)
+
+
+def parse_env_file(path: Path) -> dict[str, str | None]:
+    """Parse `.env` as python-dotenv reads it, and record what it cannot read.
+
+    The grammar is python-dotenv's (`PYTHON_DOTENV_GRAMMAR_VERSION`), so the
+    keys and values here are the ones `load_dotenv` sets. A bare `KEY` is
+    `None`, as python-dotenv keeps it: it erases an earlier assignment of the
+    same key.
+
+    Every line this parser cannot use is collected and reported in ONE
+    `env-file` record after the walk. Emitting inside the loop made a second
+    unreadable line trip the registry, which used to cost the customer the
+    entire report and now costs the second warning and an exit saying we broke
+    (`DuplicateCheckName`). That file is the one thing this guide asks a
+    first-run customer to write by hand, and two stray lines is an ordinary
+    way to write one: a pasted note without a `#`, a wrapped value, two bare
+    `export FOO`.
+
+    So this is a parser that also RECORDS, and `read_env` is its one caller
+    for that reason: a second call in the same run would record `env-file` a
+    second time.
+    """
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        # python-dotenv reads .env as UTF-8 and raises on any other byte, so the
+        # runtime wrapper would fail at import. No value is read from a file
+        # that the runtime cannot read, so no credential is reported available.
+        line = decode_error_line(path.read_bytes(), error)
+        emit(
+            "env-file",
+            FAIL,
+            f"{path} is not valid UTF-8 (first bad byte at line {line}); "
+            "python-dotenv reads .env as UTF-8 - re-save it as UTF-8. "
+            "No values were read from it.",
+        )
+        return {}
+    parsed = parse_dotenv_text(text)
     findings = [
         clause
         for lines, singular, plural in (
             (
-                unparsed_lines,
+                parsed.unparsed_lines,
                 "is not KEY=VALUE and was ignored",
                 "are not KEY=VALUE and were ignored",
             ),
             (
-                invalid_name_lines,
+                parsed.invalid_name_lines,
                 "has an invalid environment variable name and was ignored",
                 "have an invalid environment variable name and were ignored",
             ),
         )
         if (clause := env_line_clause(lines, singular, plural))
     ]
-    if dropped_clause := dropped_statement_clause(dropped_spans):
+    # A mark at the start of the file becomes part of the first name, so the
+    # name looks legal to a reader and the cause is the invisible character.
+    if text.startswith("\ufeff") and 1 in parsed.invalid_name_lines:
+        findings.append(
+            "the file starts with a UTF-8 byte-order mark, which becomes part of "
+            "the first name; re-save the file without it"
+        )
+    if dropped_clause := dropped_statement_clause(parsed.dropped_spans):
         findings.append(dropped_clause)
     if findings:
         emit(
@@ -1034,15 +1091,15 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
             # and the population is bounded by an `.env`, which is the smallest
             # file this run reads.
             {
-                "ignored_lines": len(unparsed_lines)
-                + len(invalid_name_lines)
-                + sum(end - start + 1 for start, end in dropped_spans),
-                "unparsed_lines": unparsed_lines,
-                "invalid_name_lines": invalid_name_lines,
-                "dropped_statements": [list(span) for span in dropped_spans],
+                "ignored_lines": len(parsed.unparsed_lines)
+                + len(parsed.invalid_name_lines)
+                + sum(end - start + 1 for start, end in parsed.dropped_spans),
+                "unparsed_lines": parsed.unparsed_lines,
+                "invalid_name_lines": parsed.invalid_name_lines,
+                "dropped_statements": [list(span) for span in parsed.dropped_spans],
             },
         )
-    return values
+    return parsed.values
 
 
 def read_env(
@@ -4816,7 +4873,7 @@ def check_dataset(
     try:
         dataset_text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
-        line = path.read_bytes()[: error.start].count(b"\n") + 1
+        line = decode_error_line(path.read_bytes(), error)
         emit(
             "dataset-shape",
             FAIL,

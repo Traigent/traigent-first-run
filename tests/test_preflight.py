@@ -5295,10 +5295,16 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             ("https://dev.example.invalid:8443/x", "https://dev.example.invalid:8443"),
             ("eu-west-1", "eu-west-1"),
             ("  us-east-1  ", "us-east-1"),
-            ("not a url at all", "not a url at all"),
         ):
             with self.subTest(value=value):
                 self.assertEqual(MODULE.route_display(value), expected)
+        # A value that is neither a URL nor a region is never printed: it may be
+        # `${NAME}` expanded to a credential, so only its fingerprint shows.
+        for value in ("not a url at all", "uk_SECRETVALUE999", "api.x/y?token=T"):
+            with self.subTest(value=value):
+                shown = MODULE.route_display(value)
+                self.assertNotIn(value, shown)
+                self.assertIn(MODULE.value_fingerprint(value), shown)
 
     def test_the_shadow_check_is_reached_through_main(self) -> None:
         """The views are computed and were handed to one caller only.
@@ -8520,3 +8526,159 @@ class EngineConstructorCallsTests(unittest.TestCase):
         for label, (source, expected) in cases.items():
             with self.subTest(source=label):
                 self.assertEqual(self.lines(source), expected)
+
+
+class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
+    """A printed route value is never a credential (#fix-r1a, F1/S1).
+
+    `${NAME}` interpolation resolves against the process environment, so a
+    route variable can hold a secret the customer never wrote into the file.
+    `route_display` used to print any value that was not a URL verbatim, which
+    put that secret on the card and in the assistant's context. Only
+    route-shaped values are printed now; anything else is fingerprinted.
+    """
+
+    def run_preflight(self, env_text: str, process_env: dict[str, str]) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(env_text, encoding="utf-8")
+            env_path.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--project-root",
+                    directory,
+                    "--models",
+                    "gpt-4o-mini",
+                ],
+                cwd=directory,
+                env=process_env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertNotIn("Traceback", completed.stderr, completed.stderr)
+        return completed.stdout + completed.stderr
+
+    def test_an_interpolated_secret_in_a_route_variable_is_not_printed(self) -> None:
+        output = self.run_preflight(
+            "TRAIGENT_BACKEND_URL=${TRAIGENT_API_KEY}\nAWS_REGION=${OPENAI_API_KEY}\n",
+            {
+                "PATH": os.environ.get("PATH", ""),
+                "TRAIGENT_API_KEY": "uk_SECRETVALUE999",
+                "OPENAI_API_KEY": "sk-SECRETOPENAI777",
+                "AWS_REGION": "us-east-1",
+            },
+        )
+        self.assertNotIn("SECRETVALUE999", output)
+        self.assertNotIn("SECRETOPENAI777", output)
+        # A plain region is route-shaped, so it is still printed as it stands.
+        self.assertIn("AWS_REGION is us-east-1 in the process", output)
+
+    def test_a_scheme_less_route_value_with_a_token_is_not_printed(self) -> None:
+        output = self.run_preflight(
+            "TRAIGENT_BACKEND_URL=api.example.com/v1?token=SECRETTOKEN999\n",
+            {
+                "PATH": os.environ.get("PATH", ""),
+                "TRAIGENT_API_KEY": "uk_placeholder",
+            },
+        )
+        self.assertNotIn("SECRETTOKEN999", output)
+        self.assertIn("traigent-key", output)
+
+
+class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
+    """Each branch of the `.env` reader is pinned by a test (#fix-r1a, F3/S2).
+
+    Every case here was a surviving mutant of the touched branches: the test
+    that kills each one is named after the behaviour the mutant changes.
+    """
+
+    def parse(self, contents: str | bytes) -> tuple[dict, list]:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            if isinstance(contents, bytes):
+                env_path.write_bytes(contents)
+            else:
+                env_path.write_text(contents, encoding="utf-8")
+            MODULE.RESULTS.clear()
+            values = MODULE.parse_env_file(env_path)
+            records = [r for r in MODULE.RESULTS if r.check == "env-file"]
+        return values, records
+
+    def test_export_is_stripped_before_an_unparseable_statement_is_classified(
+        self,
+    ) -> None:
+        _, records = self.parse('export K="abc\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [])
+
+    def test_export_prose_is_an_unparsed_line(self) -> None:
+        _, records = self.parse("export prose\n")
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1])
+
+    def test_an_unparseable_statement_with_a_bad_name_is_an_invalid_name(self) -> None:
+        _, records = self.parse('1BAD="abc\n')
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [1])
+        self.assertEqual(records[0].metrics["dropped_statements"], [])
+
+    def test_a_bare_key_is_recorded_as_unparsed(self) -> None:
+        values, records = self.parse("BARE\n")
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1])
+        self.assertIsNone(values["BARE"])
+
+    def test_the_process_environment_wins_over_the_file_when_interpolating(
+        self,
+    ) -> None:
+        # python-dotenv runs with override=False, so the process value of B is
+        # the one `${B}` resolves to, not the empty value the file gives it.
+        with mock.patch.dict(os.environ, {"B": "x"}, clear=True):
+            values, _ = self.parse("B=\nOPENAI_API_KEY=${B}\n")
+        self.assertEqual(values["OPENAI_API_KEY"], "x")
+
+    def test_ignored_lines_counts_every_line_of_a_dropped_span(self) -> None:
+        # The second statement spans lines 2-3: a quote closes on line 3 with
+        # text after it, so python-dotenv drops both lines.
+        _, records = self.parse('BARE\nA="x\n"y\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[2, 3]])
+        self.assertEqual(records[0].metrics["ignored_lines"], 3)
+
+    def test_a_long_list_of_dropped_statements_says_it_is_truncated(self) -> None:
+        contents = "".join(f'K{index}="x" junk\n' for index in range(11))
+        _, records = self.parse(contents)
+        self.assertIn("(first 10 shown)", records[0].detail)
+        self.assertEqual(len(records[0].metrics["dropped_statements"]), 11)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX mode bits")
+    def test_a_world_readable_non_utf8_env_with_a_key_stays_a_failure(self) -> None:
+        # A mode-0644 file the runtime cannot read still holds a key. It must
+        # not be recognised as a blank template and downgraded to a warning.
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_bytes(b"OPENAI_API_KEY=sk-real\xff\n")
+            env_path.chmod(0o644)
+            MODULE.RESULTS.clear()
+            MODULE.check_env_permissions(env_path)
+        record = next(r for r in MODULE.RESULTS if r.check == "env-permissions")
+        self.assertEqual(record.status, MODULE.FAIL, record.detail)
+
+    def test_a_blank_input_is_not_an_unlabelled_row(self) -> None:
+        rows = [
+            {"id": "blank", "input": "   "},
+            {"id": "real", "input": "a real question"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.jsonl"
+            dataset.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        integrity = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+        self.assertEqual(integrity.metrics["unlabelled_rows"], 1)

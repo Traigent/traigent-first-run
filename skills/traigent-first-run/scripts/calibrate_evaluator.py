@@ -714,22 +714,26 @@ def read_target_from_env_file(path: Path, name: str) -> str:
             f"{path} is readable by more than its owner (mode {mode:04o}); "
             "the target belongs in an owner-only file"
         )
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
-        key, separator, value = line.partition("=")
-        if not separator or key.strip() != name:
-            continue
-        value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
-        if not value:
-            raise ValueError(f"{name} is set to nothing in {path}")
-        return value
-    raise ValueError(f"{name} is not set in {path}")
+    values = dotenv_values_of(path)
+    if name not in values:
+        raise ValueError(f"{name} is not set in {path}")
+    value = values[name]
+    # `None` is a bare key, which python-dotenv keeps as "no value".
+    if not value:
+        raise ValueError(f"{name} is set to nothing in {path}")
+    return value
+
+
+def dotenv_values_of(path: Path) -> dict[str, str | None]:
+    """The values python-dotenv sets from `path`, read through preflight's port.
+
+    One grammar for both checks: a second hand-written reader here kept inline
+    comments, took the first of a duplicated name and returned quoted names
+    verbatim, so the child could be handed a different value, or a name the
+    strip below did not remove. The port is preflight's, and its records are
+    not emitted here - this check reports through its own refusals.
+    """
+    return preflight_module().parse_dotenv_text(path.read_text(encoding="utf-8")).values
 
 
 # Target names must have shell-compatible spelling and must not configure the
@@ -1322,18 +1326,17 @@ def engine_target_refusal(tree: ast.Module, target_name: str) -> str | None:
 
 
 def env_file_names(path: Path) -> set[str]:
-    """Every variable name the project's `.env` defines, for the child's strip."""
-    names: set[str] = set()
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line[len("export ") :].lstrip()
-        key, separator, _ = line.partition("=")
-        if separator and key.strip():
-            names.add(key.strip())
-    return names
+    """Every variable name the project's `.env` defines, for the child's strip.
+
+    Every identifier python-dotenv keys, a bare key included. A key that is not
+    an identifier (a byte-order mark stuck to one) is not a name any child reads,
+    so it is not stripped.
+    """
+    return {name for name in dotenv_values_of(path) if _is_identifier_name(name)}
+
+
+def _is_identifier_name(name: str) -> bool:
+    return re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is not None
 
 
 def self_contained_import_refusal(tree: ast.Module, project_root: Path) -> str | None:

@@ -123,9 +123,53 @@ class PreflightReadsCustomerFilesAsUtf8Tests(unittest.TestCase):
                 b"\xef\xbb\xbf" + ENV_LINE.encode("utf-8"),
             )
         self.assertNotIn("internal error", result.stdout + result.stderr)
+        record = self.record(payload, "env-file")
+        self.assertEqual(record["status"], "WARN")
+        # The cause is the mark, not the name: the name is a legal one.
+        self.assertRegex(record["detail"], r"byte-order mark")
+        self.assertRegex(record["detail"], r"re-save .*without it")
         self.assertNotEqual(
             self.record(payload, "provider-credentials")["status"], "PASS"
         )
+
+    def test_the_decode_error_line_agrees_with_the_line_numbers_elsewhere(
+        self,
+    ) -> None:
+        # The bad byte is on line 3 under LF, CRLF and CR-only line endings. The
+        # `.env` grammar and `splitlines` count a lone CR as a break, so the
+        # named line must too.
+        bad_env = {
+            "lf": b"A=1\nB=2\nC=\xff\n",
+            "crlf": b"A=1\r\nB=2\r\nC=\xff\r\n",
+            "cr": b"A=1\rB=2\rC=\xff\r",
+        }
+        for label, env_bytes in bad_env.items():
+            with self.subTest(env=label), tempfile.TemporaryDirectory() as directory:
+                result, payload = self.preflight(
+                    Path(directory), UTF8_ROW.encode("utf-8"), env_bytes
+                )
+                self.assertNotIn("internal error", result.stdout + result.stderr)
+                record = self.record(payload, "env-file")
+                self.assertEqual(record["status"], "FAIL")
+                self.assertRegex(record["detail"], r"bad byte at line 3\b")
+        row_3 = b'{"input": "c", "output": "d"}'
+        row_3_bad = b'{"input": "caf\xe9", "output": "d"}'
+        bad_dataset = {
+            "lf": b"\n".join([row_3, row_3, row_3_bad]) + b"\n",
+            "crlf": b"\r\n".join([row_3, row_3, row_3_bad]) + b"\r\n",
+            "cr": b"\r".join([row_3, row_3, row_3_bad]) + b"\r",
+        }
+        for label, dataset_bytes in bad_dataset.items():
+            with self.subTest(
+                dataset=label
+            ), tempfile.TemporaryDirectory() as directory:
+                result, payload = self.preflight(
+                    Path(directory), dataset_bytes, ENV_LINE.encode("utf-8")
+                )
+                self.assertNotIn("internal error", result.stdout + result.stderr)
+                record = self.record(payload, "dataset-shape")
+                self.assertEqual(record["status"], "FAIL")
+                self.assertRegex(record["detail"], r"bad byte at line 3\b")
 
 
 class ReadinessPreflightInputEncodingTests(unittest.TestCase):

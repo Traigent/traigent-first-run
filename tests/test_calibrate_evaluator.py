@@ -6170,3 +6170,94 @@ class CopiedActorWorkerOutputTests(unittest.TestCase):
             self.assertNotIn(target, stream)
             self.assertNotIn(repr(target)[1:-1], stream)
             self.assertIn("[redacted calibration target]", stream)
+
+
+class CalibrateReadsEnvLikePythonDotenvTests(unittest.TestCase):
+    """calibrate's two `.env` readers follow python-dotenv (#fix-r1a, QA-5).
+
+    #623 moved preflight onto python-dotenv's grammar. calibrate kept two
+    hand-written readers of the same file: they kept inline comments and
+    backslash escapes, took the first of a duplicated name, and returned quoted
+    or tab-exported names verbatim, so a name could escape the child's strip.
+    Both now read through preflight's port and are compared with `dotenv_values`
+    over the corpus that test pins preflight against.
+    """
+
+    @staticmethod
+    def _module():
+        spec = importlib.util.spec_from_file_location("first_run_calibrate", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+
+    @staticmethod
+    def _write(path: Path, text: str) -> None:
+        path.write_text(text, encoding="utf-8")
+        path.chmod(0o600)
+
+    def test_both_readers_match_python_dotenv_over_the_preflight_corpus(self) -> None:
+        from test_preflight import (
+            ADMITTED_ENV_NAME,
+            DOTENV_CORPUS_FILES,
+            DOTENV_CORPUS_LINES,
+            python_dotenv_values,
+        )
+
+        dotenv_values = python_dotenv_values()
+        if dotenv_values is None:
+            self.skipTest("python-dotenv is not importable; the pinned CI image has it")
+        module = self._module()
+        forms = [line + "\n" for line in DOTENV_CORPUS_LINES] + list(
+            DOTENV_CORPUS_FILES
+        )
+        # Cleared, so both readers interpolate against the same environment.
+        with unittest.mock.patch.dict(
+            os.environ, {"SET": "from-process"}, clear=True
+        ), tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / ".env"
+            for contents in forms:
+                with self.subTest(contents=contents):
+                    self._write(env, contents)
+                    theirs = dotenv_values(env)
+                    self.assertEqual(
+                        module.env_file_names(env),
+                        {name for name in theirs if ADMITTED_ENV_NAME.fullmatch(name)},
+                    )
+                    for name, expected in theirs.items():
+                        if not ADMITTED_ENV_NAME.fullmatch(name):
+                            continue
+                        if expected:
+                            self.assertEqual(
+                                module.read_target_from_env_file(env, name), expected
+                            )
+                        else:
+                            with self.assertRaises(ValueError):
+                                module.read_target_from_env_file(env, name)
+
+    def test_the_named_cases_read_as_python_dotenv_reads_them(self) -> None:
+        module = self._module()
+        cases = {
+            "inline comment": ("NAME=/abs/copy.db # c\n", "/abs/copy.db"),
+            "quoted then comment": ('NAME="/abs/copy.db" # c\n', "/abs/copy.db"),
+            "duplicate, last wins": (
+                "NAME=/abs/old.db\nNAME=/abs/new.db\n",
+                "/abs/new.db",
+            ),
+            "escaped quote": ('NAME="a\\"b"\n', 'a"b'),
+            "single-quoted name": ("'NAME'=x\n", "x"),
+            "tab-exported name": ("export\tNAME=x\n", "x"),
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / ".env"
+            for label, (contents, expected) in cases.items():
+                with self.subTest(case=label):
+                    self._write(env, contents)
+                    self.assertEqual(
+                        module.read_target_from_env_file(env, "NAME"), expected
+                    )
+                    self.assertEqual(module.env_file_names(env), {"NAME"})
+            self._write(env, "OTHER=x\n")
+            with self.assertRaises(ValueError):
+                module.read_target_from_env_file(env, "NAME")
