@@ -5427,7 +5427,11 @@ class SkillPackageTests(unittest.TestCase):
             # it compared, and the guidance sends the reader to the handoff
             # file, which need not be that name.
             PREFLIGHT.check_keys(
-                merged, file_values, process_values, Path("handoff.env")
+                merged,
+                file_values,
+                process_values,
+                Path("handoff.env"),
+                file_interpolated=frozenset(),
             )
             return next(
                 item for item in PREFLIGHT.RESULTS if item.check == "env-shadowed-key"

@@ -692,13 +692,17 @@ def preflight_walk() -> Any:
 def read_target_from_env_file(path: Path, name: str) -> str:
     """The one value the copied-actor route hands to the child, read by name.
 
-    A plain `KEY=VALUE` read - an optional `export `, surrounding quotes
-    stripped - over the owner-only `.env` the guide's handoff creates, so the
-    value never rides a command line or an environment this process
-    inherited. Refused rather than defaulted when the name is absent: a copy
-    repointed at a variable nobody set would open whatever its library opens
-    when handed an empty target, which is the unbounded connection this route
-    exists to avoid.
+    The value is read with python-dotenv's grammar (quotes, inline comments,
+    `export`, the last of a duplicated name), and never with interpolation.
+    Its one consumer is the child, which reads a single literal name from its
+    own environment and never expands a reference. So a target whose winning
+    statement holds `${...}` is REFUSED rather than expanded: expansion would
+    read this process's environment, or the `.env`'s own original target,
+    which is where the production target usually lives. The refusal names the
+    variable and the file, never a value. Refused rather than defaulted when
+    the name is absent: a copy repointed at a variable nobody set would open
+    whatever its library opens when handed an empty target, which is the
+    unbounded connection this route exists to avoid.
 
     The file's mode is checked first, on the same rule run-safety applies to
     the `.env` it creates (`0600`): a target the customer was told to paste
@@ -714,26 +718,32 @@ def read_target_from_env_file(path: Path, name: str) -> str:
             f"{path} is readable by more than its owner (mode {mode:04o}); "
             "the target belongs in an owner-only file"
         )
-    values = dotenv_values_of(path)
-    if name not in values:
+    parsed = dotenv_parse_of(path)
+    if name in parsed.interpolated:
+        raise ValueError(
+            f"{name} in {path} is built from a ${{...}} reference; write the target literally"
+        )
+    if name not in parsed.values:
         raise ValueError(f"{name} is not set in {path}")
-    value = values[name]
+    value = parsed.values[name]
     # `None` is a bare key, which python-dotenv keeps as "no value".
     if not value:
         raise ValueError(f"{name} is set to nothing in {path}")
     return value
 
 
-def dotenv_values_of(path: Path) -> dict[str, str | None]:
-    """The values python-dotenv sets from `path`, read through preflight's port.
+def dotenv_parse_of(path: Path) -> Any:
+    """python-dotenv's reader over `path`, read through preflight's port.
 
     One grammar for both checks: a second hand-written reader here kept inline
     comments, took the first of a duplicated name and returned quoted names
     verbatim, so the child could be handed a different value, or a name the
     strip below did not remove. The port is preflight's, and its records are
-    not emitted here - this check reports through its own refusals.
+    not emitted here - this check reports through its own refusals. The
+    result carries the names built from a `${NAME}` reference, which
+    `read_target_from_env_file` refuses.
     """
-    return preflight_module().parse_dotenv_text(path.read_text(encoding="utf-8")).values
+    return preflight_module().parse_dotenv_text(path.read_text(encoding="utf-8"))
 
 
 # Target names must have shell-compatible spelling and must not configure the
@@ -1325,14 +1335,43 @@ def engine_target_refusal(tree: ast.Module, target_name: str) -> str | None:
     return None
 
 
-def env_file_names(path: Path) -> set[str]:
-    """Every variable name the project's `.env` defines, for the child's strip.
+_ENV_LINE_NAME = re.compile(
+    r"[ \t]*(?:export[ \t]+)?([A-Za-z_][A-Za-z0-9_]*)[ \t]*(?:=|$)"
+)
 
-    Every identifier python-dotenv keys, a bare key included. A key that is not
-    an identifier (a byte-order mark stuck to one) is not a name any child reads,
-    so it is not stripped.
+
+def env_file_names(path: Path) -> set[str]:
+    """Every variable name the project's `.env` may define, for the child's strip.
+
+    A superset on purpose, and over-stripping is free: the child is handed
+    exactly one name, set after the strip, and popping an absent name is a
+    no-op. A missed name is what costs. A name reaches the child from whichever
+    loader inherited the file - a shell `source`, a container runtime's env
+    loader, an IDE - and none of those reads it with python-dotenv's grammar. So the union
+    of two reads:
+
+    - every identifier python-dotenv keys, a bare key included, which catches
+      the quoted key `'NAME'=`; and
+    - every physical line that starts with `[export ]NAME=` or a bare `NAME`,
+      which catches a name in a statement python-dotenv drops (an unterminated
+      quote swallows its name).
+
+    A key that is not an identifier (a byte-order mark stuck to one) is not a
+    name any child reads, so it is not stripped.
     """
-    return {name for name in dotenv_values_of(path) if _is_identifier_name(name)}
+    text = path.read_text(encoding="utf-8")
+    dotenv_names = {
+        name
+        for name in preflight_module().parse_dotenv_text(text).values
+        if _is_identifier_name(name)
+    }
+    lines = text.removeprefix("\ufeff").splitlines()
+    line_names = {
+        match.group(1)
+        for match in map(_ENV_LINE_NAME.match, lines)
+        if match is not None
+    }
+    return dotenv_names | line_names
 
 
 def _is_identifier_name(name: str) -> bool:

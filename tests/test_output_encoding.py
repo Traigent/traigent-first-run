@@ -94,7 +94,7 @@ class ReadinessPlanOutputTests(unittest.TestCase):
 
 
 class GlyphProbeCoversEveryRenderedGlyphTests(unittest.TestCase):
-    """QA-3 (#618): the probe must cover every glyph the renderers emit.
+    """The probe must cover every glyph the renderers emit (#618).
 
     The probe used to encode only the block glyph, which cp437, cp850, cp936
     and cp950 all carry, so those code pages passed it while the check marks

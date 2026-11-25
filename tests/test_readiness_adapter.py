@@ -7125,7 +7125,7 @@ class BlankInputRowsReachTheCardAsBlankTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             dataset = _write_jsonl(Path(raw), "blank.jsonl", self._rows(True))
             score = _score(dataset)
-        # QA-2: preflight counts these rows as unusable DATA (#620). The field
+        # Preflight counts these rows as unusable DATA (#620). The field
         # was found and is empty, so the reading is settled and this is the
         # repair-dataset cap, the one a partly blank file gets - not a
         # "describes the reading" cap that tells the assistant to re-map fields.
@@ -7142,9 +7142,22 @@ class BlankInputRowsReachTheCardAsBlankTests(unittest.TestCase):
             _cap(score, "dataset-integrity-fail")["action_kind"], "repair-dataset"
         )
 
+    def test_a_mixed_blank_and_missing_file_is_not_the_all_blank_remedy(self) -> None:
+        # No row usable, half blank and half without the field. The all-blank
+        # remedy applies only when every unusable row is blank, so the card
+        # must name the reading, not a defect in the data.
+        rows = [{"id": f"q-{i:03d}", "input": " ", "output": "a"} for i in range(60)]
+        rows += [{"id": f"q-{i:03d}", "output": "a"} for i in range(60, 120)]
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "mixed.jsonl", rows)
+            score = _score(dataset)
+        conditions = {cap["condition"] for cap in score["caps"]}
+        self.assertIn("dataset-shape-unrecognised", conditions)
+        self.assertNotIn("dataset-integrity-fail", conditions)
+
 
 class UndecodableDatasetRoutesToRepairTests(unittest.TestCase):
-    """QA-1 (#617): a supplied file that is not UTF-8 is repaired, never collected.
+    """A supplied file that is not UTF-8 is repaired, never collected (#617).
 
     Preflight reads the file as the SDK does, finds the bytes are not UTF-8,
     and FAILs `dataset-shape` with no provenance. The card used to read that as

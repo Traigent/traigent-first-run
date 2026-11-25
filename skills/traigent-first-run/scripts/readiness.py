@@ -7000,8 +7000,8 @@ def score_dataset(
         detail = facts.unreadable_detail
         # Both are data defects with the reading established, so both get the
         # integrity cap that `repair-dataset` belongs to, not a read-the-file
-        # route and not a collect-more one. QA-1 (#617): the file is not UTF-8,
-        # and the rows are fine until it is re-saved. QA-2 (#620): every row's
+        # route and not a collect-more one. #617: the file is not UTF-8,
+        # and the rows are fine until it is re-saved. #620: every row's
         # selected input is blank, so the field was found and the data is empty.
         blank_only = (
             bool(facts.blank_input_rows) and facts.blank_input_rows == unreadable

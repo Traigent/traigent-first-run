@@ -515,22 +515,32 @@ def value_fingerprint(value: str) -> str:
 AWS_REGION_SHAPE = re.compile(r"[a-z]{2}(?:-[a-z]+)+-\d+")
 
 
-def route_display(value: str) -> str:
+def route_display(value: str, *, interpolated: bool) -> str:
     """A route value in the clear, minus anything credential-shaped.
 
-    Route values are printed because naming them is the finding, but a route
-    value is not always a route: `${NAME}` interpolation resolves against the
-    process environment, so `TRAIGENT_BACKEND_URL=${TRAIGENT_API_KEY}` carries
-    a key, and a scheme-less `host/path?token=...` carries a token. Only two
-    shapes are printed: a URL, reduced to its scheme, host and port (userinfo,
-    path and query are dropped), and an AWS region name. Anything else is
-    replaced by its fingerprint, so a reader can still compare it with
-    `FINGERPRINT_RECIPE` but the value itself never reaches the report.
+    Route values are printed because naming them is the finding, but the text
+    the customer wrote decides what may be printed. `interpolated` says the
+    winning statement built the value from a `${NAME}` reference
+    (`DotenvParse.interpolated`), and such a value is never printed, whatever
+    its shape: its host, region or token is whatever the referenced variable
+    held, and `urlsplit` would happily read a secret as a host. It is replaced
+    by its fingerprint, so a reader can still compare it with
+    `FINGERPRINT_RECIPE`.
+
+    A literal value keeps its display. Only two shapes are printed: a URL,
+    reduced to its scheme, host and port (userinfo, path and query are
+    dropped), and an AWS region name. Any other literal is fingerprinted too,
+    because a scheme-less `host/path?token=...` written out carries a token.
 
     The sibling `backend-url` check names the VARIABLE and never its value;
     this is the one place a route value is printed.
     """
     stripped = value.strip()
+    if interpolated:
+        return (
+            "a value built by ${} interpolation "
+            f"(sha256:{value_fingerprint(stripped)})"
+        )
     parsed = urllib.parse.urlsplit(stripped)
     if not parsed.scheme or not parsed.netloc:
         if AWS_REGION_SHAPE.fullmatch(stripped):
@@ -961,6 +971,12 @@ class DotenvParse(NamedTuple):
     unparsed_lines: list[int]
     invalid_name_lines: list[int]
     dropped_spans: list[tuple[int, int]]
+    # The names whose LAST binding was written with a `${NAME}` reference, so
+    # the value was built from other variables. Decided from the text the
+    # customer wrote, not from the expanded value: a route value printed from
+    # the expansion could carry a secret, and a target read from it could be a
+    # production one. A later literal or bare key removes the name.
+    interpolated: frozenset[str]
 
 
 def parse_dotenv_text(text: str) -> DotenvParse:
@@ -972,6 +988,7 @@ def parse_dotenv_text(text: str) -> DotenvParse:
     reads its values through here so the two readers cannot drift apart.
     """
     values: dict[str, str | None] = {}
+    interpolated: set[str] = set()
     # Two populations, kept apart, because they are two different mistakes and
     # a reader fixing them does two different things: a line with no `=` at all
     # is prose where a setting was expected, while a line whose key is not a
@@ -1005,21 +1022,35 @@ def parse_dotenv_text(text: str) -> DotenvParse:
         if statement.value is None:
             unparsed_lines.append(statement.start_line)
             values[statement.key] = None
+            interpolated.discard(statement.key)
             continue
         # python-dotenv expands `${NAME}` against the statements before this
         # one and then the process environment, which wins.
         expansion_env = {**values, **os.environ}
         values[statement.key] = _expand_dotenv_variables(statement.value, expansion_env)
-    return DotenvParse(values, unparsed_lines, invalid_name_lines, dropped_spans)
+        # The same grammar as the expansion above, so "built from a reference"
+        # is exactly the set of values that were expanded.
+        if _DOTENV_VARIABLE.search(statement.value):
+            interpolated.add(statement.key)
+        else:
+            interpolated.discard(statement.key)
+    return DotenvParse(
+        values,
+        unparsed_lines,
+        invalid_name_lines,
+        dropped_spans,
+        frozenset(interpolated),
+    )
 
 
-def parse_env_file(path: Path) -> dict[str, str | None]:
+def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
     """Parse `.env` as python-dotenv reads it, and record what it cannot read.
 
     The grammar is python-dotenv's (`PYTHON_DOTENV_GRAMMAR_VERSION`), so the
     keys and values here are the ones `load_dotenv` sets. A bare `KEY` is
     `None`, as python-dotenv keeps it: it erases an earlier assignment of the
-    same key.
+    same key. Returned with the names built from a `${NAME}` reference, which
+    `route_display` must not print (`DotenvParse.interpolated`).
 
     Every line this parser cannot use is collected and reported in ONE
     `env-file` record after the walk. Emitting inside the loop made a second
@@ -1035,7 +1066,7 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
     second time.
     """
     if not path.exists():
-        return {}
+        return {}, frozenset()
     try:
         text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
@@ -1050,7 +1081,7 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
             "python-dotenv reads .env as UTF-8 - re-save it as UTF-8. "
             "No values were read from it.",
         )
-        return {}
+        return {}, frozenset()
     parsed = parse_dotenv_text(text)
     findings = [
         clause
@@ -1099,19 +1130,26 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
                 "dropped_statements": [list(span) for span in parsed.dropped_spans],
             },
         )
-    return parsed.values
+    return parsed.values, parsed.interpolated
 
 
 def read_env(
     path: Path,
-) -> tuple[dict[str, str | None], dict[str, str | None], dict[str, str | None]]:
+) -> tuple[
+    dict[str, str | None],
+    dict[str, str | None],
+    dict[str, str | None],
+    frozenset[str],
+]:
     """Mirror python-dotenv's default precedence: process environment wins.
 
     Three views, because the merged one cannot say where a value came from:
     the effective environment, the file's own values, and the process's own
-    values. A check that has to name the source reads the last two.
+    values. A check that has to name the source reads the last two. The
+    fourth is the names the file built from a `${NAME}` reference: the file
+    view alone cannot say whether a value was written literally.
     """
-    file_values = parse_env_file(path)
+    file_values, file_interpolated = parse_env_file(path)
     process_values: dict[str, str | None] = dict(os.environ)
     effective = dict(file_values)
     effective.update(process_values)
@@ -1125,7 +1163,7 @@ def read_env(
             WARN,
             f"{path} not found; create a minimal file before paid work",
         )
-    return effective, file_values, process_values
+    return effective, file_values, process_values, file_interpolated
 
 
 def env_is_blank_template(path: Path) -> bool:
@@ -1370,6 +1408,7 @@ def check_shadowed_credentials(
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
     env_path: Path,
+    file_interpolated: frozenset[str],
 ) -> None:
     """Name a credential the shell and .env set to different values.
 
@@ -1436,10 +1475,14 @@ def check_shadowed_credentials(
         }
         for name in secrets
     }
+    # The process side is never interpolated by this file: its value is what
+    # the shell handed over, and only the file's own text is read here.
     routes = {
         name: {
-            "process": route_display(process_values[name]),
-            "file": route_display(file_values[name]),
+            "process": route_display(process_values[name], interpolated=False),
+            "file": route_display(
+                file_values[name], interpolated=name in file_interpolated
+            ),
         }
         for name in shadowed
         if name not in SECRET_ENV_NAMES
@@ -1515,6 +1558,7 @@ def check_keys(
     process_values: dict[str, str | None],
     env_path: Path,
     *,
+    file_interpolated: frozenset[str],
     offline_inherited_key: bool | None = None,
 ) -> None:
     # `offline_inherited_key` is None on a connected run. On an offline audit
@@ -1524,7 +1568,7 @@ def check_keys(
     # rule `_row_count` states in readiness.py: a default here would let a
     # caller that forgot to thread them through report "nothing is shadowed"
     # instead of failing, and silence would again be the best-scoring input.
-    check_shadowed_credentials(file_values, process_values, env_path)
+    check_shadowed_credentials(file_values, process_values, env_path, file_interpolated)
     available = [
         vendor
         for vendor, names in VENDOR_KEYS.items()
@@ -1603,15 +1647,24 @@ def check_keys(
         # default ever moves. An override is reduced by `route_display` first:
         # this is the only place preflight prints an environment value, and a
         # backend URL can carry a token in its userinfo or query.
-        override = next(
-            (env[name] for name in BACKEND_URL_NAMES if key_present(env.get(name))),
+        override_name = next(
+            (name for name in BACKEND_URL_NAMES if key_present(env.get(name))),
             None,
         )
-        destination = (
-            f"{route_display(override)} (overridden)"
-            if override is not None
-            else "portal.traigent.ai, the SDK's default backend origin"
-        )
+        # The override is whichever name the effective environment carries, and
+        # the PROCESS wins over the file (`read_env`). So the file's own text
+        # decides how the value prints only when the process does not carry
+        # that name: an interpolated file route the shell overrode is printed.
+        if override_name is not None:
+            from_file_interpolation = override_name in file_interpolated and not (
+                key_present(process_values.get(override_name))
+            )
+            destination = (
+                f"{route_display(env[override_name], interpolated=from_file_interpolation)}"
+                " (overridden)"
+            )
+        else:
+            destination = "portal.traigent.ai, the SDK's default backend origin"
         identity = (
             f"; sha256:{value_fingerprint(traigent_key)}, to be sent to {destination}"
         )
@@ -6099,7 +6152,7 @@ def run() -> int:
     )
     args = parse_args()
     env_path = Path(args.env)
-    env, file_values, process_values = read_env(env_path)
+    env, file_values, process_values, file_interpolated = read_env(env_path)
     offline_inherited_key: bool | None = None
     if args.offline:
         enforce_offline_boundary()
@@ -6119,6 +6172,7 @@ def run() -> int:
         file_values,
         process_values,
         env_path,
+        file_interpolated=file_interpolated,
         offline_inherited_key=offline_inherited_key,
     )
     check_cost_settings(env, file_values, process_values, env_path)

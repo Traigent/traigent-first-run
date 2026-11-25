@@ -403,7 +403,7 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "7.00"}, clear=False
             ):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
             self.assertEqual(effective["TRAIGENT_RUN_COST_LIMIT"], "7.00")
             self.assertEqual(file_values["TRAIGENT_RUN_COST_LIMIT"], "2.00")
 
@@ -456,7 +456,7 @@ class StaticPreflightTests(unittest.TestCase):
             env_path = Path(directory) / ".env"
             env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
             with mock.patch.dict(os.environ, {}, clear=True):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
                     effective, file_values, process_values, Path(".env")
                 )
@@ -480,7 +480,7 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "3.75"}, clear=True
             ):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
                     effective, file_values, process_values, Path(".env")
                 )
@@ -686,7 +686,7 @@ class StaticPreflightTests(unittest.TestCase):
                 env_path.write_text(contents)
                 env_path.chmod(0o600)
                 self.assertEqual(
-                    MODULE.parse_env_file(env_path), {"OPENAI_API_KEY": expected}
+                    MODULE.parse_env_file(env_path)[0], {"OPENAI_API_KEY": expected}
                 )
                 completed = subprocess.run(
                     [
@@ -1079,6 +1079,7 @@ class StaticPreflightTests(unittest.TestCase):
             {},
             {},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
@@ -1105,7 +1106,7 @@ class StaticPreflightTests(unittest.TestCase):
         telling somebody to halt.
         """
         MODULE.RESULTS.clear()
-        MODULE.check_keys({}, {}, {}, ENV_PATH)
+        MODULE.check_keys({}, {}, {}, ENV_PATH, file_interpolated=frozenset())
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
         )
@@ -4956,6 +4957,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_API_KEY": dotenv},
             {"TRAIGENT_API_KEY": shell},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5039,6 +5041,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {name: pair[1] for name, pair in secrets.items()},
             {name: pair[0] for name, pair in secrets.items()},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5089,6 +5092,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"OPENROUTER_API_KEY": "sk-or-file", "OPENAI_API_KEY": "sk-file"},
             {"OPENROUTER_API_KEY": "sk-or-shell", "OPENAI_API_KEY": "sk-shell"},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(
@@ -5115,6 +5119,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
                     file_values,
                     process_values,
                     ENV_PATH,
+                    file_interpolated=frozenset(),
                 )
                 record = self._record("env-shadowed-key")
                 self.assertEqual(record.status, MODULE.PASS)
@@ -5128,6 +5133,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_API_KEY": file_key},
             {"TRAIGENT_API_KEY": ""},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5146,7 +5152,9 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         override needs approving.
         """
         key = "uk_local1234"
-        MODULE.check_keys({"TRAIGENT_API_KEY": key}, {}, {}, ENV_PATH)
+        MODULE.check_keys(
+            {"TRAIGENT_API_KEY": key}, {}, {}, ENV_PATH, file_interpolated=frozenset()
+        )
         record = self._record("traigent-key")
         self.assertEqual(record.status, MODULE.PASS)
         self.assertIn(f"sha256:{MODULE.value_fingerprint(key)}", record.detail)
@@ -5161,6 +5169,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {},
             {},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("traigent-key")
         self.assertIn("https://example.invalid (overridden)", record.detail)
@@ -5185,6 +5194,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"AWS_REGION": "eu-west-1"},
             {"AWS_REGION": "us-east-1"},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5211,6 +5221,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_BACKEND_URL": "https://dev.example.invalid/api?token=abcdef"},
             {"TRAIGENT_BACKEND_URL": "https://prod.example.invalid"},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5246,6 +5257,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
                     {"TRAIGENT_API_KEY": dotenv},
                     {"TRAIGENT_API_KEY": shell},
                     path,
+                    file_interpolated=frozenset(),
                 )
                 detail = self._record("env-shadowed-key").detail
                 self.assertIn(f"in {path}", detail)
@@ -5256,7 +5268,9 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         # The PASS arm names it too: "nothing disagreed" is a claim about one
         # file, and a reader who ran with the wrong `--env` needs to see which.
         MODULE.RESULTS.clear()
-        MODULE.check_keys({}, {}, {}, Path("secrets/local.env"))
+        MODULE.check_keys(
+            {}, {}, {}, Path("secrets/local.env"), file_interpolated=frozenset()
+        )
         self.assertIn("secrets/local.env", self._record("env-shadowed-key").detail)
 
     def test_the_unset_remedy_names_every_shadowed_variable(self) -> None:
@@ -5279,6 +5293,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {name: pair[1] for name, pair in shadowed.items()},
             {name: pair[0] for name, pair in shadowed.items()},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         for name in shadowed:
@@ -5297,12 +5312,14 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             ("  us-east-1  ", "us-east-1"),
         ):
             with self.subTest(value=value):
-                self.assertEqual(MODULE.route_display(value), expected)
+                self.assertEqual(
+                    MODULE.route_display(value, interpolated=False), expected
+                )
         # A value that is neither a URL nor a region is never printed: it may be
         # `${NAME}` expanded to a credential, so only its fingerprint shows.
         for value in ("not a url at all", "uk_SECRETVALUE999", "api.x/y?token=T"):
             with self.subTest(value=value):
-                shown = MODULE.route_display(value)
+                shown = MODULE.route_display(value, interpolated=False)
                 self.assertNotIn(value, shown)
                 self.assertIn(MODULE.value_fingerprint(value), shown)
 
@@ -7384,6 +7401,7 @@ class OneRecordPerCheckTests(unittest.TestCase):
             {},
             {},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
@@ -7394,7 +7412,9 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertIn("AWS credential chain", records[0].detail)
         # And with nothing else present, the absent-names warning carries it.
         MODULE.RESULTS.clear()
-        MODULE.check_keys({"AWS_REGION": "eu-west-1"}, {}, {}, ENV_PATH)
+        MODULE.check_keys(
+            {"AWS_REGION": "eu-west-1"}, {}, {}, ENV_PATH, file_interpolated=frozenset()
+        )
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].status, MODULE.WARN)
@@ -7671,7 +7691,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             env_path = Path(directory) / ".env"
             env_path.write_text("TRAIGENT_COST_APPROVED=1\n")
             with mock.patch.dict(os.environ, {}, clear=True):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 self.assertNotIn("TRAIGENT_COST_APPROVED", process_values)
                 MODULE.check_cost_settings(
                     effective, file_values, process_values, Path(".env")
@@ -7681,7 +7701,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_COST_APPROVED": "1"}, clear=True
             ):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
                     effective, file_values, process_values, Path(".env")
                 )
@@ -8007,7 +8027,7 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                 "another bad line here\n"
                 "1BAD=x\n"
             )
-            values = MODULE.parse_env_file(env_path)
+            values, _ = MODULE.parse_env_file(env_path)
         self.assertEqual(values, {"FIRST_RUN_NOTE": "kept"})
         records = [r for r in MODULE.RESULTS if r.check == "env-file"]
         self.assertEqual(len(records), 1)
@@ -8053,7 +8073,7 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text("# note\nFIRST_RUN_NOTE=kept\n\n")
-            values = MODULE.parse_env_file(env_path)
+            values, _ = MODULE.parse_env_file(env_path)
         self.assertEqual(values, {"FIRST_RUN_NOTE": "kept"})
         self.assertEqual([r for r in MODULE.RESULTS if r.check == "env-file"], [])
 
@@ -8252,7 +8272,7 @@ class EnvFileReadsWhatPythonDotenvReadsTests(unittest.TestCase):
                 with self.subTest(contents=contents):
                     env_path.write_text(contents, encoding="utf-8")
                     MODULE.RESULTS.clear()
-                    mine = MODULE.parse_env_file(env_path)
+                    mine, _ = MODULE.parse_env_file(env_path)
                     theirs = {
                         key: value
                         for key, value in dotenv_values(env_path).items()
@@ -8529,7 +8549,7 @@ class EngineConstructorCallsTests(unittest.TestCase):
 
 
 class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
-    """A printed route value is never a credential (#fix-r1a, F1/S1).
+    """A printed route value is never a credential (#623).
 
     `${NAME}` interpolation resolves against the process environment, so a
     route variable can hold a secret the customer never wrote into the file.
@@ -8538,7 +8558,9 @@ class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
     route-shaped values are printed now; anything else is fingerprinted.
     """
 
-    def run_preflight(self, env_text: str, process_env: dict[str, str]) -> str:
+    def run_preflight(
+        self, env_text: str, process_env: dict[str, str], *extra: str
+    ) -> str:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text(env_text, encoding="utf-8")
@@ -8556,6 +8578,7 @@ class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
                     directory,
                     "--models",
                     "gpt-4o-mini",
+                    *extra,
                 ],
                 cwd=directory,
                 env=process_env,
@@ -8566,20 +8589,119 @@ class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
         self.assertNotIn("Traceback", completed.stderr, completed.stderr)
         return completed.stdout + completed.stderr
 
+    def assert_nothing_leaks(self, output: str, *secrets: str) -> None:
+        """Compared case-insensitively: `urlsplit` lowercases a URL's host, so a
+        case-sensitive check passes on a host that carries the secret."""
+        lowered = output.lower()
+        for secret in secrets:
+            self.assertNotIn(secret.lower(), lowered)
+
     def test_an_interpolated_secret_in_a_route_variable_is_not_printed(self) -> None:
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(
+                    "TRAIGENT_BACKEND_URL=${TRAIGENT_API_KEY}\nAWS_REGION=${OPENAI_API_KEY}\n",
+                    {
+                        "PATH": os.environ.get("PATH", ""),
+                        "TRAIGENT_API_KEY": "uk_SECRETVALUE999",
+                        "OPENAI_API_KEY": "sk-SECRETOPENAI777",
+                        "AWS_REGION": "us-east-1",
+                    },
+                    *extra,
+                )
+                self.assert_nothing_leaks(output, "SECRETVALUE999", "SECRETOPENAI777")
+                # A plain region is route-shaped, so it is still printed as it stands.
+                self.assertIn("AWS_REGION is us-east-1 in the process", output)
+
+    def test_an_interpolated_url_is_not_printed_in_text_or_json(self) -> None:
+        process_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "TRAIGENT_API_KEY": "uk_placeholder",
+            "OPENAI_API_KEY": "sk-GG2SECRETGG2",
+        }
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(
+                    "TRAIGENT_BACKEND_URL=https://${OPENAI_API_KEY}\n",
+                    process_env,
+                    *extra,
+                )
+                self.assert_nothing_leaks(output, "gg2secret")
+                # The destination is named by fingerprint, because the file's
+                # own text built it.
+                self.assertIn("a value built by ${} interpolation", output)
+
+    def test_an_interpolated_host_part_is_not_printed_in_text_or_json(self) -> None:
+        process_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "TRAIGENT_API_KEY": "uk_placeholder",
+            "TOK": "GGGSECRETGGG",
+        }
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(
+                    "TRAIGENT_BACKEND_URL=https://${TOK}.example.com\n",
+                    process_env,
+                    *extra,
+                )
+                self.assert_nothing_leaks(output, "GGGSECRETGGG")
+
+    def test_a_process_route_wins_over_an_interpolated_file_route_without_a_leak(
+        self,
+    ) -> None:
+        process_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "TRAIGENT_API_KEY": "uk_placeholder",
+            "TRAIGENT_BACKEND_URL": "https://api.example",
+            "AWS_REGION": "eu-west-1",
+            "OPENAI_API_KEY": "sk-GG2SECRETGG2",
+            "S": "ab-cdefghsecret-12",
+        }
+        env_text = "TRAIGENT_BACKEND_URL=https://${OPENAI_API_KEY}\nAWS_REGION=${S}\n"
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(env_text, process_env, *extra)
+                self.assert_nothing_leaks(output, "gg2secret", "cdefghsecret")
+                # The process wins, so the destination is the process's literal
+                # route, and naming it is the finding.
+                self.assertIn("https://api.example (overridden)", output)
+                self.assertIn("eu-west-1", output)
+
+    def test_literal_routes_are_printed_with_their_host_and_region(self) -> None:
         output = self.run_preflight(
-            "TRAIGENT_BACKEND_URL=${TRAIGENT_API_KEY}\nAWS_REGION=${OPENAI_API_KEY}\n",
+            "TRAIGENT_BACKEND_URL=https://dev.example.invalid/x?t=1\nAWS_REGION=eu-west-1\n",
             {
                 "PATH": os.environ.get("PATH", ""),
-                "TRAIGENT_API_KEY": "uk_SECRETVALUE999",
-                "OPENAI_API_KEY": "sk-SECRETOPENAI777",
+                "TRAIGENT_API_KEY": "uk_placeholder",
+                "TRAIGENT_BACKEND_URL": "https://api.example",
                 "AWS_REGION": "us-east-1",
             },
         )
-        self.assertNotIn("SECRETVALUE999", output)
-        self.assertNotIn("SECRETOPENAI777", output)
-        # A plain region is route-shaped, so it is still printed as it stands.
-        self.assertIn("AWS_REGION is us-east-1 in the process", output)
+        self.assertIn("https://dev.example.invalid", output)
+        self.assertIn("https://api.example", output)
+        self.assertIn("eu-west-1", output)
+        self.assertIn("us-east-1", output)
+        self.assertNotIn("?t=1", output)
+
+    def test_a_region_is_printed_only_when_the_whole_value_is_one(self) -> None:
+        # `fullmatch`, not `search` or `match`: a region-shaped prefix or infix
+        # of a longer value is the secret's, not the region's.
+        for value in ("tok-us-east-1-SECRETX", "us-east-1-SECRETX"):
+            with self.subTest(value=value):
+                shown = MODULE.route_display(value, interpolated=False)
+                self.assertNotIn(value.lower(), shown.lower())
+                self.assertIn(MODULE.value_fingerprint(value), shown)
+        self.assertEqual(
+            MODULE.route_display("us-east-1", interpolated=False), "us-east-1"
+        )
+
+    def test_only_the_last_binding_decides_whether_a_name_is_interpolated(
+        self,
+    ) -> None:
+        parsed = MODULE.parse_dotenv_text(
+            "A=${X}\nB=lit\nA=lit\nC=lit\nC=${X}\nD=${X}\nD\n"
+        )
+        self.assertEqual(parsed.interpolated, frozenset({"C"}))
 
     def test_a_scheme_less_route_value_with_a_token_is_not_printed(self) -> None:
         output = self.run_preflight(
@@ -8589,12 +8711,12 @@ class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
                 "TRAIGENT_API_KEY": "uk_placeholder",
             },
         )
-        self.assertNotIn("SECRETTOKEN999", output)
+        self.assert_nothing_leaks(output, "SECRETTOKEN999")
         self.assertIn("traigent-key", output)
 
 
 class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
-    """Each branch of the `.env` reader is pinned by a test (#fix-r1a, F3/S2).
+    """Each branch of the `.env` reader is pinned by a test (#623).
 
     Every case here was a surviving mutant of the touched branches: the test
     that kills each one is named after the behaviour the mutant changes.
@@ -8608,9 +8730,17 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
             else:
                 env_path.write_text(contents, encoding="utf-8")
             MODULE.RESULTS.clear()
-            values = MODULE.parse_env_file(env_path)
+            values, _ = MODULE.parse_env_file(env_path)
             records = [r for r in MODULE.RESULTS if r.check == "env-file"]
         return values, records
+
+    def test_a_non_bom_invalid_name_is_not_blamed_on_a_byte_order_mark(self) -> None:
+        _, records = self.parse("BAD NAME=1\n")
+        self.assertNotIn("byte-order", records[0].detail)
+
+    def test_a_bom_that_breaks_the_first_name_is_named(self) -> None:
+        _, records = self.parse("﻿OK=1\n")
+        self.assertIn("byte-order mark", records[0].detail)
 
     def test_export_is_stripped_before_an_unparseable_statement_is_classified(
         self,
