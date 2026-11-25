@@ -1821,6 +1821,61 @@ class StaticPreflightTests(unittest.TestCase):
             with self.subTest(cause=cause):
                 self.assertIn(cause, detail)
 
+    def test_blank_inputs_are_rejected_as_rows_not_passed_as_clean(self) -> None:
+        """#620: a blank question is a row with no question, not a usable row.
+
+        The issue's reproduction: one valid 120-row file with a whitespace input,
+        an empty input and a JSON null input. Before the fix every check passed
+        and all 120 rows were counted usable and drawn for the paid baseline.
+        The blank cause must surface in the row-rejecting `dataset-integrity`
+        FAIL, by line, and leave `rows`, so duplicates and the usable count stop
+        seeing the blank rows at all. A container input (`{}`) is not blank: the
+        SDK-facing shape check grades it as a real input, so it stays usable.
+        """
+        rows = [
+            {"input": f"question {index}", "output": f"answer {index}"}
+            for index in range(120)
+        ]
+        rows[4]["input"] = "   "  # line 5
+        rows[8]["input"] = ""  # line 9
+        rows[11]["input"] = None  # line 12
+        rows[20]["input"] = {}  # a container is a real input, not blank
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "blank.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset, evaluator_method="normalized-exact")
+
+        results = {result.check: result for result in MODULE.RESULTS}
+        integrity = results["dataset-integrity"]
+        self.assertEqual(integrity.status, MODULE.FAIL, integrity.detail)
+        self.assertIn(
+            "3/120 rows (2.5%) are unusable; line 5 (+2 more): "
+            "selected input field 'input' is blank",
+            integrity.detail,
+        )
+        self.assertNotIn("missing selected input field", integrity.detail)
+        self.assertEqual(integrity.metrics["malformed_rows"], 3)
+        self.assertEqual(integrity.metrics["invalid_rows"], 3)
+        self.assertNotEqual(results["dataset-duplicates"].status, MODULE.WARN)
+
+    def test_all_blank_inputs_name_the_blank_cause_not_a_missing_field(self) -> None:
+        """#620 premortem: an all-blank file must not read as a missing field."""
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "blank.jsonl"
+            dataset.write_text(
+                "\n".join(json.dumps({"input": " ", "output": "a"}) for _ in range(3))
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        integrity = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        )
+        self.assertEqual(integrity.status, MODULE.FAIL)
+        self.assertIn("selected input field 'input' is blank", integrity.detail)
+        self.assertNotIn("missing", integrity.detail)
+
     def test_dataset_normalization_contract_violation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"

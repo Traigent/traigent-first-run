@@ -7089,3 +7089,42 @@ class PreflightPayloadVersionTests(unittest.TestCase):
             [{"check": "dataset-shape", "status": "PASS", "detail": "x"}]
         )
         self.READINESS_MODULE.refuse_unreadable_payload_version(self._records(1))
+
+
+class BlankInputRowsReachTheCardAsBlankTests(unittest.TestCase):
+    """#620 through both real scripts: a blank question is named as blank.
+
+    Preflight now rejects a blank input as an unusable row. The card must say
+    that cause, not "missing the input", on a partly blank file, and must not
+    describe an all-blank file as a missing field.
+    """
+
+    def _rows(self, blank_all: bool) -> list[dict]:
+        rows = [
+            {"id": f"q-{index:03d}", "input": f"question {index}", "output": "a"}
+            for index in range(1, 121)
+        ]
+        if blank_all:
+            for row in rows:
+                row["input"] = " "
+        else:
+            rows[4]["input"] = "   "
+            rows[8]["input"] = ""
+            rows[11]["input"] = None
+        return rows
+
+    def test_a_partly_blank_file_caps_on_the_blank_cause(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "blank.jsonl", self._rows(False))
+            score = _score(dataset)
+        reason = _cap(score, "dataset-integrity-fail")["reason"]
+        self.assertIn("an input that is missing or blank", reason)
+        self.assertNotIn("missing the input", reason)
+
+    def test_an_all_blank_file_names_the_blank_cause_not_a_missing_field(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = _write_jsonl(Path(raw), "blank.jsonl", self._rows(True))
+            score = _score(dataset)
+        reason = _cap(score, "dataset-shape-unrecognised")["reason"]
+        self.assertIn("selected input field 'input' is blank", reason)
+        self.assertNotIn("missing selected input field", reason)

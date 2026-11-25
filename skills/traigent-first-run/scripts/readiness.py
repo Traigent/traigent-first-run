@@ -7588,8 +7588,8 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     reasons: list[str] = []
     if facts.integrity_failed:
         reasons.append(
-            "some rows could not be read as data - malformed lines, or missing "
-            "the input or expected-answer field"
+            "some rows could not be read as data - malformed lines, an input "
+            "that is missing or blank, or a missing expected-answer field"
         )
     if facts.duplicate_ids:
         # "Rows share an id", not "rows are duplicated". Two rows can carry one

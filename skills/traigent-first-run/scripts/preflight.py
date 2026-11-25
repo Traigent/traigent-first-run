@@ -1818,6 +1818,14 @@ def normalize_dataset_row(
             None,
             f"missing selected input field '{input_field}'",
         )
+    # A blank question is the same defect as a missing one: the row has no
+    # question to score or to send to a paid baseline. The SDK accepts it, so
+    # this is the only guard. Containers are not blank - they are real inputs.
+    if dataset_value_is_blank(input_value):
+        return (
+            None,
+            f"selected input field '{input_field}' is blank",
+        )
 
     expected_found, expected_value = dataset_field_value(row, expected_field)
     if not expected_found and require_expected:
@@ -1832,6 +1840,18 @@ def normalize_dataset_row(
     normalized["input"] = input_value
     normalized["output"] = expected_value
     return normalized, None
+
+
+def dataset_value_is_blank(value: Any) -> bool:
+    """Whether a selected dataset value carries no content at all.
+
+    Blank is JSON `null`, or a string that is empty after stripping whitespace.
+    One definition, shared by the input rejection in `normalize_dataset_row` and
+    the expected-answer test in `dataset_row_is_labelled`, so "blank" has one
+    home. Non-string values are never blank: `{}`, `[]` and `0` are answers or
+    inputs the evaluator can read.
+    """
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 def dataset_row_is_labelled(
@@ -1863,9 +1883,7 @@ def dataset_row_is_labelled(
     """
 
     found, value = dataset_field_value(row, expected_field)
-    if not found or value is None:
-        return False
-    return str(value).strip() != ""
+    return found and not dataset_value_is_blank(value)
 
 
 def normalized_text(value: Any) -> str:
@@ -4685,9 +4703,10 @@ def check_dataset(
             # present-but-unlabelled data point, not malformed data. It is still
             # unusable for scoring, but tracking it lets the readiness adapter
             # tell "rows exist, none labelled" apart from "no dataset at all".
-            input_found, _ = dataset_field_value(row, input_field)
+            input_found, input_value = dataset_field_value(row, input_field)
             expected_found, _ = dataset_field_value(row, expected_field)
-            if input_found and not expected_found and input_field != expected_field:
+            has_input = input_found and not dataset_value_is_blank(input_value)
+            if has_input and not expected_found and input_field != expected_field:
                 present_rows.append(row)
                 present_row_records.append((line_number, row))
                 unlabelled_present += 1
