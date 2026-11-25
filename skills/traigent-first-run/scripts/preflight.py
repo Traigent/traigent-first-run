@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import codecs
 import hashlib
 import importlib.util
 import json
@@ -26,7 +27,7 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 from importlib.metadata import PackageNotFoundError, files, version
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, NamedTuple, Sequence
 
 # What each status is for, stated once because the file answers it in eighty
 # places: preflight MEASURES AND PUBLISHES, `readiness.py` PRICES, and
@@ -746,22 +747,204 @@ def env_line_clause(lines: list[int], singular: str, plural: str) -> str:
     return f"{len(lines)} lines at source lines {shown}{suffix} {plural}"
 
 
-def parse_env_file(path: Path) -> dict[str, str | None]:
-    """Parse the small KEY=VALUE subset used by the first-run environment.
+#: The python-dotenv release whose grammar `_dotenv_statements` ports. The
+#: runtime (`assets/run_wrapper.py`) loads `.env` with that package's
+#: `load_dotenv`, so a line this check calls available must be one it sets. The
+#: pin lives in `assets/requirements-first-run.txt`; a test asserts the two
+#: agree, so a bump cannot move the runtime without this port being re-read.
+PYTHON_DOTENV_GRAMMAR_VERSION = "1.2.2"
 
-    Every line this parser cannot read is collected and reported in ONE
+# python-dotenv's `parser.py` and `variables.py`, verbatim. Stdlib only: this
+# check runs with `-I -S` and must not import the package or run its code.
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_DOTENV_NEWLINE = re.compile(r"(?:\r\n|\n|\r)")
+_DOTENV_MULTILINE_WHITESPACE = re.compile(r"\s*", re.MULTILINE)
+_DOTENV_EXPORT = re.compile(r"(?:export[^\S\r\n]+)?")
+_DOTENV_SINGLE_QUOTED_KEY = re.compile(r"'([^']+)'")
+_DOTENV_UNQUOTED_KEY = re.compile(r"([^=\#\s]+)")
+_DOTENV_WHITESPACE = re.compile(r"[^\S\r\n]*")
+_DOTENV_EQUAL_SIGN = re.compile(r"(=[^\S\r\n]*)")
+_DOTENV_SINGLE_QUOTED_VALUE = re.compile(r"'((?:\\'|[^'])*)'")
+_DOTENV_DOUBLE_QUOTED_VALUE = re.compile(r'"((?:\\"|[^"])*)"')
+_DOTENV_UNQUOTED_VALUE = re.compile(r"([^\r\n]*)")
+_DOTENV_COMMENT = re.compile(r"(?:[^\S\r\n]*#[^\r\n]*)?")
+_DOTENV_END_OF_LINE = re.compile(r"[^\S\r\n]*(?:\r\n|\n|\r|$)")
+_DOTENV_REST_OF_LINE = re.compile(r"[^\r\n]*(?:\r|\n|\r\n)?")
+_DOTENV_DOUBLE_QUOTE_ESCAPES = re.compile(r"\\[\\'\"abfnrtv]")
+_DOTENV_SINGLE_QUOTE_ESCAPES = re.compile(r"\\[\\']")
+_DOTENV_VARIABLE = re.compile(r"\$\{(?P<name>[^\}:]*)(?::-(?P<default>[^\}]*))?\}")
+
+
+class _DotenvSyntaxError(Exception):
+    """python-dotenv's `Error`: the statement at the cursor does not parse."""
+
+
+class _DotenvStatement(NamedTuple):
+    key: str | None
+    value: str | None
+    start_line: int
+    end_line: int
+    error: bool
+
+
+class _DotenvReader:
+    """python-dotenv's `Reader`: a cursor over the whole text that counts lines."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.pos = 0
+        self.line = 1
+
+    def has_next(self) -> bool:
+        return self.pos < len(self.text)
+
+    def peek(self) -> str:
+        return self.text[self.pos : self.pos + 1]
+
+    def read(self, pattern: re.Pattern[str]) -> tuple[str, ...]:
+        match = pattern.match(self.text, self.pos)
+        if match is None:
+            raise _DotenvSyntaxError
+        self.pos = match.end()
+        self.line += len(_DOTENV_NEWLINE.findall(match.group(0)))
+        return match.groups()
+
+
+def _dotenv_key(reader: _DotenvReader) -> str | None:
+    if reader.peek() == "#":
+        return None
+    pattern = (
+        _DOTENV_SINGLE_QUOTED_KEY if reader.peek() == "'" else _DOTENV_UNQUOTED_KEY
+    )
+    (key,) = reader.read(pattern)
+    return key
+
+
+def _dotenv_value(reader: _DotenvReader) -> str:
+    char = reader.peek()
+    if char == "'":
+        (value,) = reader.read(_DOTENV_SINGLE_QUOTED_VALUE)
+        return _DOTENV_SINGLE_QUOTE_ESCAPES.sub(_decode_dotenv_escape, value)
+    if char == '"':
+        (value,) = reader.read(_DOTENV_DOUBLE_QUOTED_VALUE)
+        return _DOTENV_DOUBLE_QUOTE_ESCAPES.sub(_decode_dotenv_escape, value)
+    if char in ("", "\n", "\r"):
+        return ""
+    (part,) = reader.read(_DOTENV_UNQUOTED_VALUE)
+    return re.sub(r"\s+#.*", "", part).rstrip()
+
+
+def _decode_dotenv_escape(match: re.Match[str]) -> str:
+    return codecs.decode(match.group(0), "unicode-escape")
+
+
+def _dotenv_statement(reader: _DotenvReader) -> _DotenvStatement:
+    """One statement, as python-dotenv's `parse_binding` reads it.
+
+    A statement that does not parse is dropped from the error on, through the
+    end of its line, which is what lets a bad quote swallow the lines after it.
+    Its start line is the first line after the blank lines before it, so a
+    report names the line the statement is on rather than the blank above it.
+    """
+    reader.read(_DOTENV_MULTILINE_WHITESPACE)
+    start_line = reader.line
+    begin = reader.pos
+    try:
+        if not reader.has_next():
+            return _DotenvStatement(None, None, start_line, start_line, False)
+        reader.read(_DOTENV_EXPORT)
+        key = _dotenv_key(reader)
+        reader.read(_DOTENV_WHITESPACE)
+        value: str | None = None
+        if reader.peek() == "=":
+            reader.read(_DOTENV_EQUAL_SIGN)
+            value = _dotenv_value(reader)
+        reader.read(_DOTENV_COMMENT)
+        reader.read(_DOTENV_END_OF_LINE)
+    except _DotenvSyntaxError:
+        reader.read(_DOTENV_REST_OF_LINE)
+        error = True
+        key = value = None
+    else:
+        error = False
+    consumed = reader.text[begin : reader.pos]
+    # A statement ends on the line its newline sits on, so a trailing newline
+    # does not start another line.
+    newlines = len(_DOTENV_NEWLINE.findall(consumed))
+    end_line = start_line + max(
+        newlines - (1 if consumed.endswith(("\n", "\r")) else 0), 0
+    )
+    return _DotenvStatement(key, value, start_line, end_line, error)
+
+
+def _dotenv_statements(text: str) -> list[_DotenvStatement]:
+    reader = _DotenvReader(text)
+    statements = []
+    while reader.has_next():
+        statements.append(_dotenv_statement(reader))
+    return statements
+
+
+def _expand_dotenv_variables(value: str, env: dict[str, str | None]) -> str:
+    """python-dotenv's `resolve_variables` with `override=False`.
+
+    The process environment wins over the file, as `load_dotenv` resolves it,
+    and an unset name with no default expands to the empty string.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        result = env.get(match["name"], match["default"] or "")
+        return result or ""
+
+    return _DOTENV_VARIABLE.sub(replace, value)
+
+
+def dropped_statement_clause(spans: list[tuple[int, int]]) -> str:
+    """One `.env` finding for statements the runtime's reader drops.
+
+    Line numbers only: the statement's text is what the customer wrote and
+    may be a credential, so no value is quoted here or in the metrics.
+    """
+    if not spans:
+        return ""
+    labels = [str(start) if start == end else f"{start}-{end}" for start, end in spans]
+    shown = labels[:MAX_REPORTED_ENV_FILE_LINES]
+    suffix = (
+        ""
+        if len(labels) <= len(shown)
+        else f" (first {MAX_REPORTED_ENV_FILE_LINES} shown)"
+    )
+    if len(labels) == 1:
+        return (
+            f"1 statement at source line {labels[0]} could not be read and was "
+            "dropped; no key in it is set"
+        )
+    return (
+        f"{len(labels)} statements at source lines {', '.join(shown)}{suffix} "
+        "could not be read and were dropped; no key in them is set"
+    )
+
+
+def parse_env_file(path: Path) -> dict[str, str | None]:
+    """Parse `.env` as python-dotenv reads it, and record what it cannot read.
+
+    The grammar is python-dotenv's (`PYTHON_DOTENV_GRAMMAR_VERSION`), so the
+    keys and values here are the ones `load_dotenv` sets. A bare `KEY` is
+    `None`, as python-dotenv keeps it: it erases an earlier assignment of the
+    same key.
+
+    Every line this parser cannot use is collected and reported in ONE
     `env-file` record after the walk. Emitting inside the loop made a second
     unreadable line trip the registry, which used to cost the customer the
     entire report and now costs the second warning and an exit saying we broke
-    (`DuplicateCheckName`) - either way they get less than the warning about
-    two lines they should have got. That file is the one thing this guide asks
-    a first-run customer to write by hand, and two stray lines is an ordinary
+    (`DuplicateCheckName`). That file is the one thing this guide asks a
+    first-run customer to write by hand, and two stray lines is an ordinary
     way to write one: a pasted note without a `#`, a wrapped value, two bare
     `export FOO`.
 
     So this is a parser that also RECORDS, and `read_env` is its one caller
     for that reason: a second call in the same run would record `env-file` a
-    second time, which is the defect this function was just fixed for.
+    second time.
     """
     values: dict[str, str | None] = {}
     if not path.exists():
@@ -787,34 +970,38 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
             "No values were read from it.",
         )
         return {}
-    for line_number, raw_line in enumerate(text.splitlines(), 1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
+    # The lines python-dotenv's statements start on, split as it counts them.
+    lines = _DOTENV_NEWLINE.split(text)
+    # Statements python-dotenv drops, as (first, last) source lines.
+    dropped_spans: list[tuple[int, int]] = []
+    for statement in _dotenv_statements(text):
+        if statement.error:
+            # The population is decided by the first line, as before: a line
+            # with no `=` is prose, a key that is not a legal name is a setting
+            # spelled wrong, and anything else is a setting the runtime drops.
+            first = lines[statement.start_line - 1].strip()
+            if first.startswith("export "):
+                first = first.removeprefix("export ").lstrip()
+            if "=" not in first:
+                unparsed_lines.append(statement.start_line)
+            elif not _ENV_NAME.fullmatch(first.split("=", 1)[0].strip()):
+                invalid_name_lines.append(statement.start_line)
+            else:
+                dropped_spans.append((statement.start_line, statement.end_line))
             continue
-        if line.startswith("export "):
-            line = line.removeprefix("export ").lstrip()
-        if "=" not in line:
-            unparsed_lines.append(line_number)
+        if statement.key is None:
             continue
-        key, raw_value = line.split("=", 1)
-        key = key.strip()
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-            invalid_name_lines.append(line_number)
+        if not _ENV_NAME.fullmatch(statement.key):
+            invalid_name_lines.append(statement.start_line)
             continue
-        value = raw_value.strip()
-        # A comment begins outside a quoted value. Keep hashes and escaped
-        # quotes inside it, and recognize the empty value before inventorying
-        # credentials. Preserve this small parser's existing escape handling.
-        quoted_comment = re.fullmatch(
-            r"""(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')[ \t]+#.*""", value
-        )
-        if quoted_comment:
-            value = next(part for part in quoted_comment.groups() if part is not None)
-        elif len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        elif " #" in value:
-            value = value.split(" #", 1)[0].rstrip()
-        values[key] = value
+        if statement.value is None:
+            unparsed_lines.append(statement.start_line)
+            values[statement.key] = None
+            continue
+        # python-dotenv expands `${NAME}` against the statements before this
+        # one and then the process environment, which wins.
+        expansion_env = {**values, **os.environ}
+        values[statement.key] = _expand_dotenv_variables(statement.value, expansion_env)
     findings = [
         clause
         for lines, singular, plural in (
@@ -831,6 +1018,8 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
         )
         if (clause := env_line_clause(lines, singular, plural))
     ]
+    if dropped_clause := dropped_statement_clause(dropped_spans):
+        findings.append(dropped_clause)
     if findings:
         emit(
             "env-file",
@@ -845,9 +1034,12 @@ def parse_env_file(path: Path) -> dict[str, str | None]:
             # and the population is bounded by an `.env`, which is the smallest
             # file this run reads.
             {
-                "ignored_lines": len(unparsed_lines) + len(invalid_name_lines),
+                "ignored_lines": len(unparsed_lines)
+                + len(invalid_name_lines)
+                + sum(end - start + 1 for start, end in dropped_spans),
                 "unparsed_lines": unparsed_lines,
                 "invalid_name_lines": invalid_name_lines,
+                "dropped_statements": [list(span) for span in dropped_spans],
             },
         )
     return values

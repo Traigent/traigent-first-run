@@ -675,8 +675,9 @@ class StaticPreflightTests(unittest.TestCase):
             ('"plain # retained" # annotation', "plain # retained"),
             ("'plain # retained' # annotation", "plain # retained"),
             ('"plain # retained" # a "comment"', "plain # retained"),
-            (r'"plain \" # retained" # annotation', r"plain \" # retained"),
-            (r"'plain \' # retained' # annotation", r"plain \' # retained"),
+            # Escapes decode as python-dotenv decodes them (#623).
+            (r'"plain \" # retained" # annotation', 'plain " # retained'),
+            (r"'plain \' # retained' # annotation", "plain ' # retained"),
         )
         for raw, expected in cases:
             with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
@@ -8109,6 +8110,204 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         env_records = [r for r in records if r["check"] == "env-file"]
         self.assertEqual(len(env_records), 1)
         self.assertIn("2 lines at source lines [1, 3]", env_records[0]["detail"])
+
+
+#: One `.env` line per form. Ported from the probe that found #623
+#: (python-dotenv 1.2.2 against the hand-written reader, 17 of 47 disagreeing).
+DOTENV_CORPUS_LINES = (
+    "K=plain",
+    "K= plain ",
+    "K=plain # c",
+    "K=plain\t# c",
+    "K=plain#nocomment",
+    'K="dq"',
+    "K='sq'",
+    'K="dq # keep"',
+    "K='sq # keep'",
+    'K="dq" # c',
+    "K='sq' # c",
+    'K="dq"\t# c',
+    'K=""',
+    "K=''",
+    'K="" # c',
+    'K="abc',
+    "K='abc",
+    'K="x"y',
+    "K='x'y",
+    'K="x" y',
+    'K=abc"',
+    "export K=v",
+    "export  K=v",
+    'K="a\\"b"',
+    'K="a\\nb"',
+    "K='a\\nb'",
+    "K=a b c",
+    "K =v",
+    " K=v",
+    "K=",
+    "K",
+    'K="multi',
+    "K=`bt`",
+    'K="dq"#c',
+    "K=v #c",
+    "K=v  #c",
+    'K="a\'b"',
+    "K='a\"b'",
+    "K=${OTHER}",
+    'K="${OTHER}"',
+    "K=\\#x",
+    'K="a\\\\b"',
+    "K='a\\\\b'",
+    'K="x"\t',
+    'K=  "spaced"  ',
+    'K="dq" junk # c',
+    "K=v\t#\tc",
+)
+
+#: Whole-file forms: a double-quoted value that spans lines (the swallow),
+#: interpolation, a byte-order mark, a hash-led value, and a bare key after a
+#: real assignment (python-dotenv sets that key to None, erasing the value).
+DOTENV_CORPUS_FILES = (
+    'A="abc\nOPENAI_API_KEY=k\nB="x"\nC=after\n',
+    'K=${SET}\nJ="${SET}"\nL=${UNSET}\nM=${UNSET:-d}\n',
+    "﻿K=v\n",
+    'K=#c\nQ="#c"\n',
+    "K=a\nK\n",
+)
+
+#: The identifier shape preflight admits as a key. python-dotenv keeps other
+#: keys too (a byte-order mark sticks to the first one); preflight ignores
+#: them as invalid names, so the comparison is over admitted names only.
+ADMITTED_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def python_dotenv_values():
+    """`dotenv_values` when the pinned package is importable, else `None`.
+
+    Read only by the tests: preflight runs with `-I -S` and must never import
+    the package, so the contract is checked from outside the check.
+    """
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        return None
+    return dotenv_values
+
+
+class EnvFileReadsWhatPythonDotenvReadsTests(unittest.TestCase):
+    """#623: a credential the check calls available is one the runtime sets.
+
+    `run_wrapper.py` loads `.env` with python-dotenv's `load_dotenv`. The
+    hand-written reader used to keep `"abc` and `"x"y` as values, which
+    python-dotenv refuses, so the preflight PASSed a credential the first
+    paid stage then reported missing.
+    """
+
+    def run_preflight_json(self, contents: str):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(contents, encoding="utf-8")
+            env_path.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--defer-missing-sdk",
+                    "--offline",
+                    "--json",
+                ],
+                cwd=directory,
+                env={},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        records = {item["check"]: item for item in json.loads(completed.stdout)}
+        return completed, records
+
+    def test_env_parser_matches_python_dotenv(self) -> None:
+        dotenv_values = python_dotenv_values()
+        if dotenv_values is None:
+            self.skipTest("python-dotenv is not importable; the pinned CI image has it")
+        forms = [line + "\n" for line in DOTENV_CORPUS_LINES] + list(
+            DOTENV_CORPUS_FILES
+        )
+        # Cleared, so both readers interpolate against the same environment.
+        with mock.patch.dict(
+            os.environ, {"SET": "from-process"}, clear=True
+        ), tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            for contents in forms:
+                with self.subTest(contents=contents):
+                    env_path.write_text(contents, encoding="utf-8")
+                    MODULE.RESULTS.clear()
+                    mine = MODULE.parse_env_file(env_path)
+                    theirs = {
+                        key: value
+                        for key, value in dotenv_values(env_path).items()
+                        if ADMITTED_ENV_NAME.fullmatch(key)
+                    }
+                    self.assertEqual(mine, theirs)
+
+    def test_a_dropped_statement_leaks_no_value(self) -> None:
+        marker = "sk-private-marker-7f3a"
+        for contents in (
+            f'OPENAI_API_KEY="{marker}\n',
+            f'OPENAI_API_KEY="{marker}" junk\n',
+            f'A="{marker}\nOPENAI_API_KEY=k\nB="x"\n',
+        ):
+            with self.subTest(contents=contents):
+                with tempfile.TemporaryDirectory() as directory:
+                    env_path = Path(directory) / ".env"
+                    env_path.write_text(contents, encoding="utf-8")
+                    MODULE.RESULTS.clear()
+                    MODULE.parse_env_file(env_path)
+                record = next(r for r in MODULE.RESULTS if r.check == "env-file")
+                self.assertNotIn(marker, record.detail)
+                self.assertNotIn(marker, json.dumps(record.metrics))
+
+    def test_an_unterminated_quote_is_not_an_available_credential(self) -> None:
+        completed, records = self.run_preflight_json(
+            'OPENAI_API_KEY="fake-not-a-secret-12345\n'
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertNotEqual(records["provider-credentials"]["status"], MODULE.PASS)
+        self.assertEqual(records["env-file"]["status"], MODULE.WARN)
+        self.assertIn("source line 1", records["env-file"]["detail"])
+        self.assertNotIn("fake-not-a-secret", completed.stdout)
+
+    def test_a_multi_line_swallow_names_its_lines_and_drops_the_credential(
+        self,
+    ) -> None:
+        completed, records = self.run_preflight_json(
+            'A="abc\nOPENAI_API_KEY=sk-swallowed-marker\nB="x"\nC=after\n'
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertNotEqual(records["provider-credentials"]["status"], MODULE.PASS)
+        self.assertIn("source line 1-3", records["env-file"]["detail"])
+        self.assertNotIn("sk-swallowed-marker", completed.stdout)
+
+    def test_the_port_names_the_pinned_python_dotenv(self) -> None:
+        requirements = (ROOT / "skills" / "traigent-first-run" / "assets").joinpath(
+            "requirements-first-run.txt"
+        )
+        pins = re.findall(
+            r"^python-dotenv==(\S+)$", requirements.read_text(encoding="utf-8"), re.M
+        )
+        self.assertEqual(pins, [MODULE.PYTHON_DOTENV_GRAMMAR_VERSION])
+        if python_dotenv_values() is not None:
+            from importlib.metadata import version as installed_version
+
+            self.assertEqual(
+                installed_version("python-dotenv"),
+                MODULE.PYTHON_DOTENV_GRAMMAR_VERSION,
+                "the port in preflight.py was read against a different grammar",
+            )
 
 
 class ExecutionWitnessKindsTests(unittest.TestCase):
