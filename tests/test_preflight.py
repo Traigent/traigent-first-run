@@ -8248,7 +8248,7 @@ DOTENV_CORPUS_LINES = (
 DOTENV_CORPUS_FILES = (
     'A="abc\nOPENAI_API_KEY=k\nB="x"\nC=after\n',
     'K=${SET}\nJ="${SET}"\nL=${UNSET}\nM=${UNSET:-d}\n',
-    "﻿K=v\n",
+    "\ufeffK=v\n",
     'K=#c\nQ="#c"\n',
     "K=a\nK\n",
 )
@@ -8558,6 +8558,324 @@ class EnvFileReadsWhatPythonDotenvReadsTests(unittest.TestCase):
                 MODULE.PYTHON_DOTENV_GRAMMAR_VERSION,
                 "the port in preflight.py was read against a different grammar",
             )
+
+
+#: Swallowed-setting rows (#623). Each is (row, `.env` text, process env, the
+#: expected `swallowed_assignments`, or None when no swallow is reported). The
+#: planted value must never reach the output.
+SWALLOW_MARKER = "sk-marker-r6a"
+SWALLOW_PEM = "-----BEGIN PRIVATE KEY-----\ndGVzdA==\nQUJD=\n-----END PRIVATE KEY-----"
+SWALLOW_ROWS = (
+    (
+        "value twin, double-quoted",
+        f'NOTE="remember\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        [[2, 1]],
+    ),
+    (
+        "key twin, bare key",
+        f"'\nOPENAI_API_KEY={SWALLOW_MARKER}\n'\n",
+        {},
+        [[2, 1]],
+    ),
+    (
+        "key twin, named key",
+        f"'NOTE\nOPENAI_API_KEY={SWALLOW_MARKER}\n'\n",
+        {},
+        [[2, 1]],
+    ),
+    (
+        "key twin, export",
+        f"export '\nOPENAI_API_KEY={SWALLOW_MARKER}\n'\n",
+        {},
+        [[2, 1]],
+    ),
+    (
+        "earlier blank binding",
+        f'OPENAI_API_KEY=\nNOTE="remember\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        [[3, 2]],
+    ),
+    (
+        "earlier bare key",
+        f'OPENAI_API_KEY\nNOTE="remember\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        [[3, 2]],
+    ),
+    (
+        "earlier quoted-empty binding",
+        f'OPENAI_API_KEY=""\nNOTE="remember\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        [[3, 2]],
+    ),
+    (
+        "earlier comment-only binding",
+        f'OPENAI_API_KEY=#todo\nNOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        [[3, 2]],
+    ),
+    (
+        "later dropped statement",
+        f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\nOPENAI_API_KEY="unterminated\n',
+        {},
+        [[2, 1]],
+    ),
+    (
+        "single-quoted, indented, export with spaces",
+        f"NOTE='r\n  export OPENAI_API_KEY = {SWALLOW_MARKER}\n'\n",
+        {},
+        [[2, 1]],
+    ),
+    (
+        "later binding to an empty interpolation",
+        f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\nOPENAI_API_KEY=${{NOPE}}\n',
+        {},
+        None,
+    ),
+    (
+        "later blank binding",
+        f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\nOPENAI_API_KEY=\n',
+        {},
+        None,
+    ),
+    (
+        "later bare key",
+        f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\nOPENAI_API_KEY\n',
+        {},
+        None,
+    ),
+    (
+        "later real binding",
+        f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\nOPENAI_API_KEY=sk-later\n',
+        {},
+        None,
+    ),
+    (
+        "earlier real binding",
+        f'OPENAI_API_KEY=sk-earlier\nNOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        None,
+    ),
+    (
+        "earlier placeholder binding",
+        f'OPENAI_API_KEY=your-key-here\nNOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        None,
+    ),
+    (
+        "process environment holds the name",
+        f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {"OPENAI_API_KEY": "sk-proc"},
+        None,
+    ),
+    (
+        "process environment holds a blank name",
+        f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {"OPENAI_API_KEY": ""},
+        None,
+    ),
+    (
+        "self-swallow",
+        f'OPENAI_API_KEY="a\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n',
+        {},
+        None,
+    ),
+    (
+        "key twin, process environment holds the name",
+        f"'\nOPENAI_API_KEY={SWALLOW_MARKER}\n'\n",
+        {"OPENAI_API_KEY": "sk-proc"},
+        None,
+    ),
+    (
+        "PEM body with setting-shaped lines",
+        f"SA='{SWALLOW_PEM}'\n",
+        {},
+        None,
+    ),
+    (
+        "JSON body",
+        'SA=\'{\n  "OPENAI_API_KEY": "x"\n}\n\'\n',
+        {},
+        None,
+    ),
+    (
+        "shell script body",
+        "SA='#!/bin/sh\nFOO=bar\nPATH=/x\n'\n",
+        {},
+        None,
+    ),
+    (
+        "one-line quoted setting",
+        f'NOTE="OPENAI_API_KEY={SWALLOW_MARKER}"\n',
+        {},
+        None,
+    ),
+    (
+        "one-line escaped newline",
+        f'NOTE="r\\nOPENAI_API_KEY={SWALLOW_MARKER}"\n',
+        {},
+        None,
+    ),
+    (
+        "name outside the shadow set",
+        f'NOTE="r\nOPENAI_BASE_URL_X={SWALLOW_MARKER}\n"\n',
+        {},
+        None,
+    ),
+    (
+        "key twin refused by the runtime",
+        f"'\nOPENAI_API_KEY={SWALLOW_MARKER}\n'=v\n",
+        {},
+        [[2, 1]],
+    ),
+)
+
+
+class SwallowedSettingRuleTests(unittest.TestCase):
+    """A setting a quoted key or value swallows is reported exactly when the
+    runtime would use it were the quoting fixed (#623).
+
+    Each row runs the real check in a subprocess whose environment is the
+    row's own process environment, as the swallowed-assignment tests above do.
+    """
+
+    def run_env(self, contents: str, process_env: dict[str, str]):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_bytes(contents.encode("utf-8"))
+            env_path.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--defer-missing-sdk",
+                    "--offline",
+                    "--json",
+                ],
+                cwd=directory,
+                env=dict(process_env),
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        records = {item["check"]: item for item in json.loads(completed.stdout)}
+        return completed, records
+
+    def test_each_row_reports_a_swallow_exactly_when_fixing_the_quoting_changes_the_runtime(
+        self,
+    ) -> None:
+        for row, contents, process_env, expected in SWALLOW_ROWS:
+            with self.subTest(row=row):
+                completed, records = self.run_env(contents, process_env)
+                output = completed.stdout + completed.stderr
+                self.assertNotIn(SWALLOW_MARKER, output)
+                env_record = records.get("env-file", {})
+                got = env_record.get("metrics", {}).get("swallowed_assignments")
+                self.assertEqual(got, expected)
+                if expected is None:
+                    self.assertNotIn("inside the quoted", env_record.get("detail", ""))
+                    continue
+                self.assertNotEqual(
+                    records["provider-credentials"]["status"], MODULE.PASS
+                )
+                for number, start in expected:
+                    self.assertIn(
+                        f"line {number} sets OPENAI_API_KEY inside the quoted text "
+                        f"that starts at line {start}",
+                        env_record["detail"],
+                    )
+
+    def test_a_single_swallow_uses_the_singular_wording(self) -> None:
+        _, records = self.run_env(f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\n"\n', {})
+        detail = records["env-file"]["detail"]
+        self.assertIn(
+            "so it is not set; fix the quoting rather than adding it again", detail
+        )
+        self.assertNotIn("they are not set", detail)
+
+    def test_several_swallows_use_the_plural_wording(self) -> None:
+        _, records = self.run_env(
+            f'NOTE="r\nOPENAI_API_KEY={SWALLOW_MARKER}\nOPENAI_API_KEY=b\n"\n', {}
+        )
+        detail = records["env-file"]["detail"]
+        self.assertIn(
+            "so they are not set; fix the quoting rather than adding them again",
+            detail,
+        )
+        self.assertNotIn("so it is not set", detail)
+
+    def test_an_indented_swallowed_setting_is_reported(self) -> None:
+        _, records = self.run_env(
+            f'NOTE="r\n    OPENAI_API_KEY={SWALLOW_MARKER}\n"\n', {}
+        )
+        self.assertEqual(
+            records["env-file"]["metrics"]["swallowed_assignments"], [[2, 1]]
+        )
+
+    def test_the_opening_line_is_never_reported_as_swallowed(self) -> None:
+        # The first line of a quoted statement is its own binding, never a swallow.
+        _, records = self.run_env('OPENAI_API_KEY="a\nb"\nOPENAI_API_KEY\n', {})
+        env_record = records.get("env-file", {})
+        self.assertNotIn("starts at line 1", env_record.get("detail", ""))
+        self.assertNotIn(
+            [1, 1], env_record.get("metrics", {}).get("swallowed_assignments", [])
+        )
+
+    def test_the_display_is_capped_and_the_metric_is_not(self) -> None:
+        swallowed = "".join(f"OPENAI_API_KEY={SWALLOW_MARKER}\n" for _ in range(12))
+        completed, records = self.run_env(f'NOTE="r\n{swallowed}"\n', {})
+        record = records["env-file"]
+        self.assertEqual(len(record["metrics"]["swallowed_assignments"]), 12)
+        self.assertIn("(first 10 shown)", record["detail"])
+        self.assertEqual(record["detail"].count("sets OPENAI_API_KEY inside"), 10)
+        self.assertNotIn(SWALLOW_MARKER, completed.stdout + completed.stderr)
+
+    def test_a_byte_order_mark_key_does_not_crash_under_an_ascii_filesystem(
+        self,
+    ) -> None:
+        # Membership on `os.environ` encodes the key with the filesystem
+        # encoding, which is ASCII here, so the BOM key would raise. `-I` ignores
+        # PYTHON* variables, so UTF-8 mode is switched off with `-X utf8=0`.
+        locale_env = {"LC_ALL": "C"}
+        ascii_argv = [sys.executable, "-I", "-S", "-B", "-X", "utf8=0"]
+        probe = subprocess.run(
+            [*ascii_argv, "-c", "import sys; print(sys.getfilesystemencoding())"],
+            env=locale_env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if probe.stdout.strip() != "ascii":
+            self.skipTest("this interpreter does not run under an ASCII filesystem")
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_bytes("\ufeffOPENAI_API_KEY=sk-a\n".encode("utf-8"))
+            completed = subprocess.run(
+                [
+                    *ascii_argv,
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--defer-missing-sdk",
+                    "--offline",
+                    "--json",
+                ],
+                cwd=directory,
+                env=locale_env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertNotEqual(completed.returncode, 3, completed.stderr)
+        self.assertNotIn("Traceback", completed.stderr)
+        self.assertIn(
+            "env-file", {item["check"] for item in json.loads(completed.stdout)}
+        )
 
 
 class ExecutionWitnessKindsTests(unittest.TestCase):
@@ -8963,7 +9281,7 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
         self.assertNotIn("byte-order", records[0].detail)
 
     def test_a_bom_that_breaks_the_first_name_is_named(self) -> None:
-        _, records = self.parse("﻿OK=1\n")
+        _, records = self.parse("\ufeffOK=1\n")
         self.assertIn("byte-order mark", records[0].detail)
 
     def test_export_is_stripped_before_an_unparseable_statement_is_classified(
@@ -9226,7 +9544,7 @@ NON_ADMITTED_BINDINGS = (
     ("my.key=sk-x-dependent\n", "my.key"),
     ("KÉY=sk-x-dependent\n", "KÉY"),
     ("1KEY=sk-x-dependent\n", "1KEY"),
-    ("﻿A=sk-x-dependent\n", "﻿A"),
+    ("\ufeffA=sk-x-dependent\n", "\ufeffA"),
     ("'MY-KEY'=sk-x-dependent\n", "MY-KEY"),
     ("MY-KEY\n", "MY-KEY"),
 )

@@ -818,8 +818,8 @@ _DOTENV_REST_OF_LINE = re.compile(r"[^\r\n]*(?:\r|\n|\r\n)?")
 _DOTENV_DOUBLE_QUOTE_ESCAPES = re.compile(r"\\[\\'\"abfnrtv]")
 _DOTENV_SINGLE_QUOTE_ESCAPES = re.compile(r"\\[\\']")
 _DOTENV_VARIABLE = re.compile(r"\$\{(?P<name>[^\}:]*)(?::-(?P<default>[^\}]*))?\}")
-# A physical line shaped like a setting: what a multi-line quoted value can hold
-# without python-dotenv setting anything.
+# A physical line shaped like a setting: what a multi-line quoted key or value
+# can hold without python-dotenv setting anything.
 _SETTING_LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 
 
@@ -985,7 +985,7 @@ def dropped_statement_clause(spans: list[tuple[int, int]]) -> str:
 
 
 def swallowed_setting_clause(hits: list[tuple[int, int, str]]) -> str:
-    """One `.env` finding for settings a quoted value swallowed.
+    """One `.env` finding for settings a quoted key or value swallowed.
 
     Names and line numbers only, as `dropped_statement_clause`: the swallowed
     line's text is the customer's and may be a credential.
@@ -994,7 +994,7 @@ def swallowed_setting_clause(hits: list[tuple[int, int, str]]) -> str:
         return ""
     shown = hits[:MAX_REPORTED_ENV_FILE_LINES]
     described = "; ".join(
-        f"line {number} sets {name} inside the quoted value that starts at line {start}"
+        f"line {number} sets {name} inside the quoted text that starts at line {start}"
         for number, start, name in shown
     )
     suffix = (
@@ -1031,9 +1031,10 @@ class DotenvParse(NamedTuple):
     # the expansion could carry a secret, and a target read from it could be a
     # production one. A later literal or bare key removes the name.
     interpolated: frozenset[str]
-    # A line inside a cleanly closed multi-line quoted value that is shaped like
-    # a setting of a name preflight reads, and that the file leaves unset: as
-    # (line, the line the value starts on, name). Names only, never values.
+    # A line inside a cleanly closed multi-line quoted key or value that is
+    # shaped like a setting of a name preflight reads, and that the file leaves
+    # unset: as (line, the line the value starts on, name). Names only, never
+    # values.
     swallowed: list[tuple[int, int, str]]
     # The start lines of final bindings `load_dotenv` cannot set (a NUL byte in
     # a key or value, or `=` in a key), so the runtime raises before it sets any
@@ -1054,12 +1055,13 @@ def _refused_by_load_dotenv(key: str, value: str) -> bool:
 def _swallowed_settings(
     statement: _DotenvStatement, lines: list[str]
 ) -> list[tuple[int, int, str]]:
-    """Setting-shaped lines a cleanly closed multi-line value holds.
+    """Setting-shaped lines a cleanly closed multi-line quoted key or value holds.
 
-    Only candidates: whether each name is left unset is decided once every
-    statement is read, because a later binding can still set it.
+    A stray quote can open a key as well as a value: python-dotenv then reads
+    a bare key spanning the lines, and sets none of them. Only candidates:
+    whether each name is left unset is decided once every statement is read.
     """
-    if statement.value is None or statement.end_line == statement.start_line:
+    if statement.end_line == statement.start_line:
         return []
     hits = []
     for number in range(statement.start_line + 1, statement.end_line + 1):
@@ -1143,12 +1145,18 @@ def parse_dotenv_text(text: str) -> DotenvParse:
             interpolated.add(statement.key)
         else:
             interpolated.discard(statement.key)
-    # Availability is decided last: a later binding can set a name a quoted
-    # value swallowed, and a process value sets it without the file.
+    # Decided last, and only where fixing the quoting would change what the
+    # runtime uses: the swallowed line would be NAME's last binding (no binding
+    # of NAME starts after it - a later blank or bare key would still win), the
+    # process does not hold NAME (it wins under override=False, blank or not),
+    # and NAME is unavailable now by `key_present`, so the customer is asked
+    # for a key the file visibly holds.
     swallowed = [
-        hit
-        for hit in swallow_candidates
-        if values.get(hit[2]) is None and hit[2] not in process_env
+        (number, start, name)
+        for number, start, name in swallow_candidates
+        if bound_at.get(name, 0) < number
+        and name not in process_env
+        and not key_present(values.get(name))
     ]
     refused_lines = sorted(
         {
