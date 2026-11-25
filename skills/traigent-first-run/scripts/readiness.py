@@ -178,21 +178,40 @@ def build_plan(
     )
 
 
-def render_text(plan: ReadinessPlan) -> str:
-    """Render real readiness separately from generated walkthrough substitutes."""
+def keep_stdout_printable() -> None:
+    """Write unencodable characters as escapes instead of stopping the run.
+
+    A Windows pipe defaults stdout to a code page such as cp1252. Customer-derived
+    text (a path with CJK characters, for one) can be unencodable there, and the
+    boundary would report that as a defect in the check. Escapes keep the
+    information; the handler fires only where the encoding would otherwise fail.
+    `reconfigure` is absent on streams such as `io.StringIO`, which tests pass in.
+    """
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
+
+
+def render_text(plan: ReadinessPlan, *, unicode_ok: bool = True) -> str:
+    """Render real readiness separately from generated walkthrough substitutes.
+
+    `unicode_ok` selects the same ASCII vocabulary the scoring card uses (`OK`
+    and `!!`) so a stream that cannot encode the glyphs still shows the marks.
+    """
+    ok_mark, warn_mark = ("✅", "❗") if unicode_ok else ("OK", "!!")
     lines = [f"Real-world readiness: {plan.real_ready_count}/3"]
     for name in COMPONENTS:
         state = plan.states[name]
         if state == "real":
-            lines.append(f"✅ {name.title()}: real")
+            lines.append(f"{ok_mark} {name.title()}: real")
         elif state == "limited":
             lines.append(
-                f"❗ {name.title()}: real material exists but evidence is limited"
+                f"{warn_mark} {name.title()}: real material exists but evidence is limited"
             )
         elif state == "invalid":
-            lines.append(f"❗ {name.title()}: validation failed")
+            lines.append(f"{warn_mark} {name.title()}: validation failed")
         else:
-            lines.append(f"❗ {name.title()}: no real component is connected")
+            lines.append(f"{warn_mark} {name.title()}: no real component is connected")
 
     demo_components = [name for name in COMPONENTS if plan.states[name] == "demo"]
     if demo_components:
@@ -21498,6 +21517,7 @@ def report_internal_error(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """The process boundary. See `report_internal_error`."""
+    keep_stdout_printable()
     try:
         return run(argv)
     except Exception as error:  # noqa: BLE001 - the boundary is the point
@@ -21709,7 +21729,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         if args.json:
             print(json.dumps(asdict(plan), indent=2, sort_keys=True))
             return 0
-        print(render_text(plan))
+        print(
+            render_text(
+                plan, unicode_ok=not args.ascii and supports_unicode(sys.stdout)
+            )
+        )
         return 0
 
     try:

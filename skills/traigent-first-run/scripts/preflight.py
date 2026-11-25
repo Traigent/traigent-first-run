@@ -5752,6 +5752,20 @@ INTERNAL_ERROR_EXIT = 3
 TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
 
 
+def keep_stdout_printable() -> None:
+    """Write unencodable characters as escapes instead of stopping the run.
+
+    A Windows pipe defaults stdout to a code page such as cp1252. Customer-derived
+    text (a path with CJK characters, for one) can be unencodable there, and the
+    boundary would report that as a defect in the check. Escapes keep the
+    information; the handler fires only where the encoding would otherwise fail.
+    `reconfigure` is absent on streams such as `io.StringIO`, which tests pass in.
+    """
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
+
+
 def report_internal_error(
     tool: str,
     error: BaseException,
@@ -5776,6 +5790,7 @@ def report_internal_error(
 
 def main() -> int:
     """The process boundary. See `report_internal_error`."""
+    keep_stdout_printable()
     try:
         return run()
     except Exception as error:  # noqa: BLE001 - the boundary is the point
