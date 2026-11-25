@@ -818,6 +818,9 @@ _DOTENV_REST_OF_LINE = re.compile(r"[^\r\n]*(?:\r|\n|\r\n)?")
 _DOTENV_DOUBLE_QUOTE_ESCAPES = re.compile(r"\\[\\'\"abfnrtv]")
 _DOTENV_SINGLE_QUOTE_ESCAPES = re.compile(r"\\[\\']")
 _DOTENV_VARIABLE = re.compile(r"\$\{(?P<name>[^\}:]*)(?::-(?P<default>[^\}]*))?\}")
+# A physical line shaped like a setting: what a multi-line quoted value can hold
+# without python-dotenv setting anything.
+_SETTING_LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 
 
 def decode_error_line(raw: bytes, error: UnicodeDecodeError) -> int:
@@ -981,6 +984,35 @@ def dropped_statement_clause(spans: list[tuple[int, int]]) -> str:
     )
 
 
+def swallowed_setting_clause(hits: list[tuple[int, int, str]]) -> str:
+    """One `.env` finding for settings a quoted value swallowed.
+
+    Names and line numbers only, as `dropped_statement_clause`: the swallowed
+    line's text is the customer's and may be a credential.
+    """
+    if not hits:
+        return ""
+    shown = hits[:MAX_REPORTED_ENV_FILE_LINES]
+    described = "; ".join(
+        f"line {number} sets {name} inside the quoted value that starts at line {start}"
+        for number, start, name in shown
+    )
+    suffix = (
+        ""
+        if len(hits) <= len(shown)
+        else f" (first {MAX_REPORTED_ENV_FILE_LINES} shown)"
+    )
+    if len(hits) == 1:
+        return (
+            f"{described}{suffix}, so it is not set; fix the quoting rather than "
+            "adding it again"
+        )
+    return (
+        f"{described}{suffix}, so they are not set; fix the quoting rather than "
+        "adding them again"
+    )
+
+
 class DotenvParse(NamedTuple):
     """What python-dotenv's reader made of one text, and what it could not use.
 
@@ -999,6 +1031,42 @@ class DotenvParse(NamedTuple):
     # the expansion could carry a secret, and a target read from it could be a
     # production one. A later literal or bare key removes the name.
     interpolated: frozenset[str]
+    # A line inside a cleanly closed multi-line quoted value that is shaped like
+    # a setting of a name preflight reads, and that the file leaves unset: as
+    # (line, the line the value starts on, name). Names only, never values.
+    swallowed: list[tuple[int, int, str]]
+    # The start lines of final bindings `load_dotenv` cannot set (a NUL byte in
+    # a key or value, or `=` in a key), so the runtime raises before it sets any
+    # key. A refused line is not also reported as an invalid name.
+    refused_lines: list[int]
+
+
+def _refused_by_load_dotenv(key: str, value: str) -> bool:
+    """Whether `os.environ[key] = value` raises, for a key the process lacks.
+
+    Applied by `load_dotenv` to every final binding, admitted name or not. This
+    is the POSIX rule under a UTF-8 locale. Windows and legacy non-UTF-8 locales
+    refuse other shapes; they are not modelled.
+    """
+    return not key or "=" in key or "\0" in key or "\0" in value
+
+
+def _swallowed_settings(
+    statement: _DotenvStatement, lines: list[str]
+) -> list[tuple[int, int, str]]:
+    """Setting-shaped lines a cleanly closed multi-line value holds.
+
+    Only candidates: whether each name is left unset is decided once every
+    statement is read, because a later binding can still set it.
+    """
+    if statement.value is None or statement.end_line == statement.start_line:
+        return []
+    hits = []
+    for number in range(statement.start_line + 1, statement.end_line + 1):
+        match = _SETTING_LINE.match(lines[number - 1])
+        if match is not None and match.group(1) in SHADOW_SCANNED_ENV_NAMES:
+            hits.append((number, statement.start_line, match.group(1)))
+    return hits
 
 
 def parse_dotenv_text(text: str) -> DotenvParse:
@@ -1012,9 +1080,16 @@ def parse_dotenv_text(text: str) -> DotenvParse:
     # reads this map: python-dotenv resolves `${NAME}` against every key it
     # parsed, so a name preflight does not admit can still decide an admitted
     # value. `values` is the admitted part, which is what preflight reports.
+    # One snapshot of the process environment, read once. Membership on
+    # `os.environ` itself encodes the key with the filesystem encoding, which is
+    # ASCII under a C locale, so a byte-order-mark key would raise here.
+    process_env = dict(os.environ)
     bound: dict[str, str | None] = {}
+    # The line each bound key's last binding starts on.
+    bound_at: dict[str, int] = {}
     values: dict[str, str | None] = {}
     interpolated: set[str] = set()
+    swallow_candidates: list[tuple[int, int, str]] = []
     # Two populations, kept apart, because they are two different mistakes and
     # a reader fixing them does two different things: a line with no `=` at all
     # is prose where a setting was expected, while a line whose key is not a
@@ -1048,9 +1123,11 @@ def parse_dotenv_text(text: str) -> DotenvParse:
         expanded = (
             None
             if statement.value is None
-            else _expand_dotenv_variables(statement.value, {**bound, **os.environ})
+            else _expand_dotenv_variables(statement.value, {**bound, **process_env})
         )
         bound[statement.key] = expanded
+        bound_at[statement.key] = statement.start_line
+        swallow_candidates.extend(_swallowed_settings(statement, lines))
         if not _ENV_NAME.fullmatch(statement.key):
             invalid_name_lines.append(statement.start_line)
             continue
@@ -1066,12 +1143,31 @@ def parse_dotenv_text(text: str) -> DotenvParse:
             interpolated.add(statement.key)
         else:
             interpolated.discard(statement.key)
+    # Availability is decided last: a later binding can set a name a quoted
+    # value swallowed, and a process value sets it without the file.
+    swallowed = [
+        hit
+        for hit in swallow_candidates
+        if values.get(hit[2]) is None and hit[2] not in process_env
+    ]
+    refused_lines = sorted(
+        {
+            bound_at[key]
+            for key, value in bound.items()
+            if value is not None
+            and key not in process_env
+            and _refused_by_load_dotenv(key, value)
+        }
+    )
+    refused = set(refused_lines)
     return DotenvParse(
         values,
         unparsed_lines,
-        invalid_name_lines,
+        [line for line in invalid_name_lines if line not in refused],
         dropped_spans,
         frozenset(interpolated),
+        swallowed,
+        refused_lines,
     )
 
 
@@ -1096,6 +1192,10 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
     So this is a parser that also RECORDS, and `read_env` is its one caller
     for that reason: a second call in the same run would record `env-file` a
     second time.
+
+    A file `load_dotenv` refuses (`DotenvParse.refused_lines`) sets no key, so
+    it returns no values and the record is a FAIL. Every other finding is
+    recorded as a WARN in that same record.
     """
     if not path.exists():
         return {}, frozenset()
@@ -1115,7 +1215,23 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
         )
         return {}, frozenset()
     parsed = parse_dotenv_text(text)
-    findings = [
+    # A file `load_dotenv` refuses sets nothing at all, so the findings lead with
+    # the refusal and no value from the file is used. Line numbers only: a
+    # refused key may hold the NUL byte, so its name is not printed either.
+    refusal = (
+        env_line_clause(
+            parsed.refused_lines,
+            'cannot be set by python-dotenv (a NUL byte, or "=" in a name), so '
+            "the runtime stops before any provider call; fix that line",
+            'cannot be set by python-dotenv (a NUL byte, or "=" in a name), so '
+            "the runtime stops before any provider call; fix those lines",
+        )
+        + ". No values were read from it."
+        if parsed.refused_lines
+        else ""
+    )
+    findings = [refusal] if refusal else []
+    findings += [
         clause
         for lines, singular, plural in (
             (
@@ -1140,28 +1256,38 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
         )
     if dropped_clause := dropped_statement_clause(parsed.dropped_spans):
         findings.append(dropped_clause)
+    if swallowed_clause := swallowed_setting_clause(parsed.swallowed):
+        findings.append(swallowed_clause)
     if findings:
+        # The same facts as data, on `emit`'s own rule that a wording change
+        # must never alter a score, and in full: the sentence truncates for a
+        # reader, the metrics do not, so nothing measured is lost to the display
+        # ceiling. Uncapped for the reason the id digests beside `dataset-ids`
+        # are - a consumer asking whether a line it was told about is a line of
+        # this file needs every one - and the population is bounded by an
+        # `.env`, which is the smallest file this run reads.
+        metrics: dict[str, Any] = {
+            "ignored_lines": len(parsed.unparsed_lines)
+            + len(parsed.invalid_name_lines)
+            + sum(end - start + 1 for start, end in parsed.dropped_spans),
+            "unparsed_lines": parsed.unparsed_lines,
+            "invalid_name_lines": parsed.invalid_name_lines,
+            "dropped_statements": [list(span) for span in parsed.dropped_spans],
+        }
+        if parsed.swallowed:
+            metrics["swallowed_assignments"] = [
+                [number, start] for number, start, _ in parsed.swallowed
+            ]
+        if parsed.refused_lines:
+            metrics["refused_lines"] = parsed.refused_lines
         emit(
             "env-file",
-            WARN,
+            FAIL if parsed.refused_lines else WARN,
             f"{path}: " + "; ".join(findings),
-            # The same facts as data, on `emit`'s own rule that a wording
-            # change must never alter a score, and in full: the sentence
-            # truncates for a reader, the metrics do not, so nothing measured
-            # is lost to the display ceiling. Uncapped for the reason the id
-            # digests beside `dataset-ids` are - a consumer asking whether a
-            # line it was told about is a line of this file needs every one -
-            # and the population is bounded by an `.env`, which is the smallest
-            # file this run reads.
-            {
-                "ignored_lines": len(parsed.unparsed_lines)
-                + len(parsed.invalid_name_lines)
-                + sum(end - start + 1 for start, end in parsed.dropped_spans),
-                "unparsed_lines": parsed.unparsed_lines,
-                "invalid_name_lines": parsed.invalid_name_lines,
-                "dropped_statements": [list(span) for span in parsed.dropped_spans],
-            },
+            metrics,
         )
+    if parsed.refused_lines:
+        return {}, frozenset()
     return parsed.values, parsed.interpolated
 
 

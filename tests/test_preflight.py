@@ -8272,6 +8272,64 @@ def python_dotenv_values():
     return dotenv_values
 
 
+#: Texts python-dotenv parses but `load_dotenv` cannot set (#623): a NUL byte
+#: in a key or value, or `=` in a key. Each row is (text, process environment,
+#: the source lines a refusal names). The marker is the value that must never
+#: reach output.
+REFUSED_ROWS = (
+    ("OPENAI_API_KEY=sk-marker-1\x00y\n", {}, [1]),
+    ("NOTE=marker-2\x00\n", {}, [1]),
+    ("A\x00B=marker-3\n", {}, [1]),
+    ("'A=B'=marker-4\n", {}, [1]),
+    ("'=A'=marker-5\n", {}, [1]),
+    ("MY-K=marker-6\x00\n", {}, [1]),
+    ("A=marker-7\x00\nB=${A}\n", {}, [1, 2]),
+    # Both bindings are refused; only the final one sets the key, so only its
+    # line is the one the customer must fix.
+    ("K=marker-8a\x00b\nK=marker-8b\x00d\n", {}, [2]),
+)
+
+#: Texts with a NUL byte or an `=` in a key that `load_dotenv` still sets: the
+#: NUL is overwritten by a later binding, sits in a comment or a dropped
+#: statement, is a bare key, or is on a key the process already has.
+LOADS_ROWS = (
+    ("K=a\x00b\nK=ok\n", {}),
+    ("K=v # a\x00b\n", {}),
+    ("A\x00B\n", {}),
+    ('K="a\x00\n', {}),
+    ("OPENAI_API_KEY=sk\x00x\n", {"OPENAI_API_KEY": "preset"}),
+    ("''=x\n", {}),
+    ("K=ok\n", {}),
+)
+
+
+def runtime_load_dotenv_raises(path: Path, process_env: dict[str, str]) -> bool:
+    """Whether python-dotenv's `load_dotenv` raises on `path` in a fresh process.
+
+    A child interpreter, because a load that raises part-way has already set
+    the keys before the failing one. Any other failure is re-raised, so a
+    broken child cannot pass for a refusal.
+    """
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\nfrom dotenv import load_dotenv\n"
+            "load_dotenv(sys.argv[1], override=False)\n",
+            str(path),
+        ],
+        env=process_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return False
+    if "ValueError" not in completed.stderr:
+        raise AssertionError(completed.stdout + completed.stderr)
+    return True
+
+
 class EnvFileReadsWhatPythonDotenvReadsTests(unittest.TestCase):
     """#623: a credential the check calls available is one the runtime sets.
 
@@ -8331,6 +8389,120 @@ class EnvFileReadsWhatPythonDotenvReadsTests(unittest.TestCase):
                         if ADMITTED_ENV_NAME.fullmatch(key)
                     }
                     self.assertEqual(mine, theirs)
+            # A file `load_dotenv` refuses sets nothing, so preflight reads no
+            # value from it; the reference is the runtime raising, not dotenv's
+            # parse (which returns the values and never raises).
+            for text, process_env, _lines in REFUSED_ROWS:
+                with self.subTest(refused=text):
+                    env_path.write_text(text, encoding="utf-8")
+                    MODULE.RESULTS.clear()
+                    with mock.patch.dict(os.environ, process_env):
+                        mine, interpolated = MODULE.parse_env_file(env_path)
+                    self.assertEqual(mine, {})
+                    self.assertEqual(interpolated, frozenset())
+                    self.assertTrue(
+                        runtime_load_dotenv_raises(env_path, dict(os.environ))
+                    )
+
+    def test_a_refused_statement_fails_the_env_file_and_names_lines_only(
+        self,
+    ) -> None:
+        for text, _process_env, lines in REFUSED_ROWS:
+            with self.subTest(text=text):
+                completed, records = self.run_preflight_json(text)
+                record = records["env-file"]
+                self.assertEqual(record["status"], MODULE.FAIL)
+                self.assertEqual(record["metrics"]["refused_lines"], lines)
+                self.assertNotIn("\x00", completed.stdout)
+                self.assertNotIn("marker-", completed.stdout)
+                self.assertNotIn("'A=B'", completed.stdout)
+                self.assertNotEqual(
+                    records["provider-credentials"]["status"], MODULE.PASS
+                )
+
+    def test_a_statement_python_dotenv_sets_is_not_refused(self) -> None:
+        for text, process_env in LOADS_ROWS:
+            with self.subTest(text=text), mock.patch.dict(
+                os.environ, process_env, clear=True
+            ):
+                self.assertEqual(MODULE.parse_dotenv_text(text).refused_lines, [])
+
+    def test_a_refused_invalid_name_is_not_also_called_ignored(self) -> None:
+        completed, records = self.run_preflight_json("K=ok\n'A=B'=marker\n")
+        self.assertEqual(records["env-file"]["metrics"]["refused_lines"], [2])
+        self.assertNotIn("was ignored", records["env-file"]["detail"])
+
+    def test_the_refusal_rule_matches_what_load_dotenv_raises_on(self) -> None:
+        if python_dotenv_values() is None:
+            self.skipTest("python-dotenv is not importable; the pinned CI image has it")
+        rows = [(text, env) for text, env, _ in REFUSED_ROWS] + list(LOADS_ROWS)
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            for text, process_env in rows:
+                with self.subTest(text=text):
+                    env_path.write_text(text, encoding="utf-8")
+                    raised = runtime_load_dotenv_raises(env_path, dict(process_env))
+                    with mock.patch.dict(os.environ, process_env, clear=True):
+                        predicted = bool(MODULE.parse_dotenv_text(text).refused_lines)
+                    self.assertEqual(predicted, raised)
+
+    def test_a_swallowed_assignment_names_its_line_and_is_not_set(self) -> None:
+        marker = "sk-abcdef123456"
+        completed, records = self.run_preflight_json(
+            f'NOTE="remember to\nOPENAI_API_KEY={marker}\n"\n'
+        )
+        record = records["env-file"]
+        self.assertEqual(record["status"], MODULE.WARN)
+        for expected in ("line 2", "OPENAI_API_KEY", "starts at line 1"):
+            self.assertIn(expected, record["detail"])
+        self.assertEqual(record["metrics"]["swallowed_assignments"], [[2, 1]])
+        self.assertNotEqual(records["provider-credentials"]["status"], MODULE.PASS)
+        self.assertNotIn(marker, completed.stdout + completed.stderr)
+
+    def test_a_multi_line_value_without_a_swallowed_setting_is_not_flagged(
+        self,
+    ) -> None:
+        pem = "-----BEGIN PRIVATE KEY-----\ndGVzdA==\nQUJD=\n-----END PRIVATE KEY-----"
+        cases = {
+            "pem": f"SA='{pem}'\n",
+            "json": 'SA=\'{\n  "OPENAI_API_KEY": "x"\n}\n\'\n',
+            "script": "SA='#!/bin/sh\nFOO=bar\nPATH=/x\n'\n",
+            "one line": 'NOTE="OPENAI_API_KEY=sk-1"\n',
+            "set again later": 'NOTE="remember\nOPENAI_API_KEY=sk-1\n"\nOPENAI_API_KEY=sk-2\n',
+        }
+        for label, text in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                env_path.write_text(text, encoding="utf-8")
+                MODULE.RESULTS.clear()
+                with mock.patch.dict(os.environ, {}, clear=True):
+                    MODULE.parse_env_file(env_path)
+                self.assertEqual(
+                    [r for r in MODULE.RESULTS if r.check == "env-file"], []
+                )
+        with mock.patch.dict(
+            os.environ, {"OPENAI_API_KEY": "preset"}, clear=True
+        ), tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                'NOTE="remember\nOPENAI_API_KEY=sk-1\n"\n', encoding="utf-8"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.parse_env_file(env_path)
+            self.assertEqual([r for r in MODULE.RESULTS if r.check == "env-file"], [])
+
+    def test_an_export_or_single_quoted_swallow_is_flagged_once(self) -> None:
+        for text in (
+            'NOTE="remember to\nexport ANTHROPIC_API_KEY = sk-x\n"\n',
+            "NOTE='remember to\nOPENAI_API_KEY=sk-1\n'\n",
+        ):
+            with self.subTest(text=text):
+                completed, records = self.run_preflight_json(text)
+                self.assertEqual(
+                    records["env-file"]["metrics"]["swallowed_assignments"],
+                    [[2, 1]],
+                )
+                self.assertNotIn("sk-", completed.stdout + completed.stderr)
 
     def test_a_dropped_statement_leaks_no_value(self) -> None:
         marker = "sk-private-marker-7f3a"
