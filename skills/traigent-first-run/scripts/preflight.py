@@ -476,6 +476,12 @@ BACKEND_URL_NAMES = ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
 #
 # Route values are still passed through `route_display` before printing, which
 # drops any userinfo, path or query a URL might be carrying.
+#
+# The print rule for every other `.env` value, written once: a value read from
+# `.env` reaches output only through `route_display`, `env_value_display` or
+# `value_fingerprint`. Every other site prints names, counts or line numbers.
+# `tests/test_preflight.py` runs the program over every name this file reads
+# and holds the rule to account, so a new site that breaks it fails there.
 SECRET_ENV_NAMES: tuple[str, ...] = (
     "TRAIGENT_API_KEY",
     *sorted({name for names in VENDOR_KEYS.values() for name in names}),
@@ -515,6 +521,25 @@ def value_fingerprint(value: str) -> str:
 AWS_REGION_SHAPE = re.compile(r"[a-z]{2}(?:-[a-z]+)+-\d+")
 
 
+def env_value_display(value: str, *, interpolated: bool) -> str:
+    """A `.env` value as the report may show it, under the one print rule.
+
+    `interpolated` says the winning statement built the value from a `${NAME}`
+    reference (`DotenvParse.interpolated`). Such a value is whatever the
+    referenced variable held, so only its fingerprint is printed. A literal is
+    the customer's own text and prints as it always has, `repr` of the stripped
+    value. `route_display` is the same rule with the URL and region shapes
+    added for routes.
+    """
+    stripped = value.strip()
+    if interpolated:
+        return (
+            "a value built by ${} interpolation "
+            f"(sha256:{value_fingerprint(stripped)})"
+        )
+    return repr(stripped)
+
+
 def route_display(value: str, *, interpolated: bool) -> str:
     """A route value in the clear, minus anything credential-shaped.
 
@@ -533,14 +558,12 @@ def route_display(value: str, *, interpolated: bool) -> str:
     because a scheme-less `host/path?token=...` written out carries a token.
 
     The sibling `backend-url` check names the VARIABLE and never its value;
-    this is the one place a route value is printed.
+    this is the one place a route value is printed, and `env_value_display`
+    is the one place any other `.env` value is.
     """
     stripped = value.strip()
     if interpolated:
-        return (
-            "a value built by ${} interpolation "
-            f"(sha256:{value_fingerprint(stripped)})"
-        )
+        return env_value_display(value, interpolated=True)
     parsed = urllib.parse.urlsplit(stripped)
     if not parsed.scheme or not parsed.netloc:
         if AWS_REGION_SHAPE.fullmatch(stripped):
@@ -961,10 +984,9 @@ def dropped_statement_clause(spans: list[tuple[int, int]]) -> str:
 class DotenvParse(NamedTuple):
     """What python-dotenv's reader made of one text, and what it could not use.
 
-    `values` is what `load_dotenv` would set, a bare key being `None`. The
-    three line populations are the ones `parse_env_file` reports; they are
-    returned rather than emitted so a caller that is not preflight can read the
-    same grammar without writing a preflight record.
+    `values` is what `load_dotenv` would set for admitted names, a bare key
+    being `None`. The three line populations are the ones `parse_env_file`
+    reports; they are returned rather than emitted so the parse stays pure.
     """
 
     values: dict[str, str | None]
@@ -984,9 +1006,13 @@ def parse_dotenv_text(text: str) -> DotenvParse:
 
     Pure: it emits nothing and reads nothing but `os.environ`, which python-dotenv
     also reads when it interpolates `${NAME}` (the process wins, as with
-    `override=False`). `parse_env_file` reports the lines, and `calibrate_evaluator`
-    reads its values through here so the two readers cannot drift apart.
+    `override=False`). `parse_env_file` is its one caller and reports the lines.
     """
+    # Every keyed statement python-dotenv binds, admitted name or not. Expansion
+    # reads this map: python-dotenv resolves `${NAME}` against every key it
+    # parsed, so a name preflight does not admit can still decide an admitted
+    # value. `values` is the admitted part, which is what preflight reports.
+    bound: dict[str, str | None] = {}
     values: dict[str, str | None] = {}
     interpolated: set[str] = set()
     # Two populations, kept apart, because they are two different mistakes and
@@ -1016,6 +1042,15 @@ def parse_dotenv_text(text: str) -> DotenvParse:
             continue
         if statement.key is None:
             continue
+        # python-dotenv expands `${NAME}` against the statements before this
+        # one and then the process environment, which wins. A bare key is bound
+        # as `None`, which expands to the empty string.
+        expanded = (
+            None
+            if statement.value is None
+            else _expand_dotenv_variables(statement.value, {**bound, **os.environ})
+        )
+        bound[statement.key] = expanded
         if not _ENV_NAME.fullmatch(statement.key):
             invalid_name_lines.append(statement.start_line)
             continue
@@ -1024,10 +1059,7 @@ def parse_dotenv_text(text: str) -> DotenvParse:
             values[statement.key] = None
             interpolated.discard(statement.key)
             continue
-        # python-dotenv expands `${NAME}` against the statements before this
-        # one and then the process environment, which wins.
-        expansion_env = {**values, **os.environ}
-        values[statement.key] = _expand_dotenv_variables(statement.value, expansion_env)
+        values[statement.key] = expanded
         # The same grammar as the expansion above, so "built from a reference"
         # is exactly the set of values that were expanded.
         if _DOTENV_VARIABLE.search(statement.value):
@@ -1645,7 +1677,8 @@ def check_keys(
         # default route dials `portal.traigent.ai`, so that test is what holds
         # this sentence and the SDK equal, and it is the thing to change if the
         # default ever moves. An override is reduced by `route_display` first:
-        # this is the only place preflight prints an environment value, and a
+        # that and `env_value_display` are the only places preflight prints an
+        # environment value (the print rule above SECRET_ENV_NAMES), and a
         # backend URL can carry a token in its userinfo or query.
         override_name = next(
             (name for name in BACKEND_URL_NAMES if key_present(env.get(name))),
@@ -1688,6 +1721,8 @@ def check_cost_settings(
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
     env_path: Path,
+    *,
+    file_interpolated: frozenset[str],
 ) -> None:
     """The cost inventory, and it names the file it actually read.
 
@@ -1751,6 +1786,7 @@ def check_cost_settings(
         )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
+    approved_is_interpolated = "TRAIGENT_COST_APPROVED" in file_interpolated
     approved_in_process = process_values.get("TRAIGENT_COST_APPROVED")
     # The process view and the file view, read apart. The merged `env` cannot
     # say where a value came from, and the warning used to read "active in
@@ -1787,10 +1823,11 @@ def check_cost_settings(
         emit(
             "cost-approved",
             SKIP,
-            f"TRAIGENT_COST_APPROVED={approved_in_file.strip()!r} is preserved "
-            f"in {env_path} and is not an approval value; it does not authorize "
-            "a first-run paid process, and nothing in the process environment "
-            "sets it",
+            f"TRAIGENT_COST_APPROVED is "
+            f"{env_value_display(approved_in_file, interpolated=approved_is_interpolated)} "
+            f"and is preserved in {env_path} and is not an approval value; it does "
+            "not authorize a first-run paid process, and nothing in the process "
+            "environment sets it",
         )
 
     # Both names, because the SDK resolves its backend origin from either and
@@ -6175,7 +6212,13 @@ def run() -> int:
         file_interpolated=file_interpolated,
         offline_inherited_key=offline_inherited_key,
     )
-    check_cost_settings(env, file_values, process_values, env_path)
+    check_cost_settings(
+        env,
+        file_values,
+        process_values,
+        env_path,
+        file_interpolated=file_interpolated,
+    )
 
     models = [model.strip() for model in args.models.split(",") if model.strip()]
     check_models(models, offline=args.offline)

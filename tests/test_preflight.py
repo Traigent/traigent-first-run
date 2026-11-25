@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import io
 import itertools
@@ -417,7 +418,13 @@ class StaticPreflightTests(unittest.TestCase):
         the approved figures it is launched with, so a reader told the SDK
         default governs is being told the walkthrough's ceiling does not.
         """
-        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
+        MODULE.check_cost_settings(
+            {},
+            {},
+            {},
+            Path(".env"),
+            file_interpolated=frozenset(),
+        )
         cost_cap = next(
             result for result in MODULE.RESULTS if result.check == "cost-cap"
         )
@@ -437,7 +444,13 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings({}, {name: "500.00"}, {}, Path(".env"))
+                MODULE.check_cost_settings(
+                    {},
+                    {name: "500.00"},
+                    {},
+                    Path(".env"),
+                    file_interpolated=frozenset(),
+                )
                 result = next(
                     item
                     for item in MODULE.RESULTS
@@ -458,7 +471,11 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(os.environ, {}, clear=True):
                 effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
         self.assertFalse(
             any(
@@ -482,7 +499,11 @@ class StaticPreflightTests(unittest.TestCase):
             ):
                 effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
         active_cap = next(item for item in MODULE.RESULTS if item.check == "cost-cap")
         self.assertEqual(active_cap.status, MODULE.SKIP)
@@ -490,7 +511,13 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertNotIn("$3.75", active_cap.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
+        MODULE.check_cost_settings(
+            {},
+            {},
+            {},
+            Path(".env"),
+            file_interpolated=frozenset(),
+        )
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"],
             [],
@@ -1164,7 +1191,11 @@ class StaticPreflightTests(unittest.TestCase):
             with self.subTest(present=sorted(present)):
                 MODULE.RESULTS.clear()
                 MODULE.check_cost_settings(
-                    dict(present), {}, dict(present), Path(".env")
+                    dict(present),
+                    {},
+                    dict(present),
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "backend-url"
@@ -1175,7 +1206,13 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertIn("connected destination at its approval", result.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
+        MODULE.check_cost_settings(
+            {},
+            {},
+            {},
+            Path(".env"),
+            file_interpolated=frozenset(),
+        )
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "backend-url"],
             [],
@@ -7626,7 +7663,11 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             with self.subTest(arm=label):
                 MODULE.RESULTS.clear()
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, handoff
+                    effective,
+                    file_values,
+                    process_values,
+                    handoff,
+                    file_interpolated=frozenset(),
                 )
                 detail = " ".join(record.detail for record in MODULE.RESULTS)
                 self.assertIn(str(handoff), detail)
@@ -7641,6 +7682,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             {"TRAIGENT_COST_APPROVED": "0"},
             {},
             Path(".env"),
+            file_interpolated=frozenset(),
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
@@ -7663,6 +7705,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
                     file_values,
                     {"TRAIGENT_COST_APPROVED": "1"},
                     Path(".env"),
+                    file_interpolated=frozenset(),
                 )
                 record = self._record()
                 self.assertEqual(record.status, MODULE.WARN)
@@ -7680,6 +7723,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             {"TRAIGENT_COST_APPROVED": "true"},
             {},
             Path(".env"),
+            file_interpolated=frozenset(),
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
@@ -7694,7 +7738,11 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
                 effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 self.assertNotIn("TRAIGENT_COST_APPROVED", process_values)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
             self.assertEqual(self._record().status, MODULE.SKIP)
             MODULE.RESULTS.clear()
@@ -7703,7 +7751,11 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             ):
                 effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
             record = self._record()
         self.assertEqual(record.status, MODULE.WARN)
@@ -8812,3 +8864,248 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
             MODULE.check_dataset(dataset)
         integrity = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
         self.assertEqual(integrity.metrics["unlabelled_rows"], 1)
+
+
+#: Every `.env` name preflight reads is a string literal in its source, so the
+#: names come from the AST: a site added later that reads a new literal name is
+#: covered without anyone editing this test. The walk is over literals only, so
+#: a name built at run time (`f"{vendor}_API_KEY"`) is not found; the
+#: `ZZ_UNREAD_NAME` row below is the probe for the iteration style.
+ENV_NAME_SHAPE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
+
+#: How a `.env` line can build a value from a `${}` reference. `${S}` and `${R}`
+#: are placeholders; `run_once` binds them to the process-side source names.
+INTERPOLATED_SHAPES = (
+    "${S}",
+    "https://${S}",
+    "https://${S}.example.com",
+    "x-${S}",
+    "uk_${S}",
+    "sk-or-${S}",
+    "${R}",
+    '"${S}"',
+    "https://u:${S}@h.example/p?t=${S}",
+)
+#: The process-side values the references expand to. The region reference
+#: carries a region-shaped secret, so the literal-route branch would print it
+#: verbatim if it were ever routed there.
+SECRET_FOR_TEST = "zq9tokxsecretval77"
+REGION_SECRET_FOR_TEST = "eu-secretval-77"
+SECRET_SOURCE_NAME = "SECRET_SOURCE_FOR_TEST"
+REGION_SOURCE_NAME = "REGION_SOURCE_FOR_TEST"
+SECRETS_FOR_TEST = (SECRET_FOR_TEST, REGION_SECRET_FOR_TEST)
+#: Process states of the name under test: unset, a different literal, blank.
+PROCESS_STATES = ("unset", "literal", "blank")
+
+
+def env_names_preflight_reads() -> set[str]:
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    names = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and ENV_NAME_SHAPE.fullmatch(node.value)
+    }
+    return names | {"ZZ_UNREAD_NAME"}
+
+
+class NoEnvValueReachesOutputTests(unittest.TestCase):
+    """A `.env` value built from `${}` never reaches preflight's output.
+
+    The rule is structural and lives in preflight.py: a value read from `.env`
+    is printed only through `route_display`, `env_value_display` or
+    `value_fingerprint`. This test checks the rule by running the program. It
+    sets every name preflight reads to each `${}` shape, in each process state,
+    and asserts that the secret is absent, ignoring case, from stdout and stderr.
+    """
+
+    def run_once(
+        self, directory: Path, contents: str, process: dict[str, str], flags: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        env_path = directory / ".env"
+        env_path.write_text(contents, encoding="utf-8")
+        env_path.chmod(0o600)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                str(SCRIPT),
+                "--env",
+                str(env_path),
+                "--defer-missing-sdk",
+                *flags,
+            ],
+            cwd=directory,
+            env={
+                SECRET_SOURCE_NAME: SECRET_FOR_TEST,
+                REGION_SOURCE_NAME: REGION_SECRET_FOR_TEST,
+                **process,
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def leaks(self, completed) -> list[str]:
+        """What is wrong with one run: a bad exit, or a secret in a stream."""
+        problems = []
+        if completed.returncode not in (0, 1):
+            problems.append(f"exit {completed.returncode}")
+        for stream, text in (
+            ("stdout", completed.stdout),
+            ("stderr", completed.stderr),
+        ):
+            for secret in SECRETS_FOR_TEST:
+                if secret.lower() in text.lower():
+                    problems.append(f"secret in {stream}")
+        return problems
+
+    def test_no_interpolated_value_is_printed_for_any_name_or_shape(self) -> None:
+        names = env_names_preflight_reads()
+        self.assertGreaterEqual(len(names), 25, "the AST walk found too few names")
+        shapes = [
+            shape.replace("${S}", f"${{{SECRET_SOURCE_NAME}}}").replace(
+                "${R}", f"${{{REGION_SOURCE_NAME}}}"
+            )
+            for shape in INTERPOLATED_SHAPES
+        ]
+        cases = []
+        for name, shape, state in itertools.product(
+            sorted(names), shapes, PROCESS_STATES
+        ):
+            contents = f"{name}={shape}\n"
+            if name != "TRAIGENT_API_KEY":
+                contents += "TRAIGENT_API_KEY=tk-literal-companion\n"
+            cases.append((f"{name} {shape!r} {state}", contents, state, name))
+        for shape in shapes:
+            contents = "".join(f"{name}={shape}\n" for name in sorted(names))
+            for state in PROCESS_STATES:
+                cases.append((f"ALL {shape!r} {state}", contents, state, "ALL"))
+
+        def process_for(state: str, name: str) -> dict[str, str]:
+            if state == "unset" or name == "ALL":
+                return {}
+            if state == "blank":
+                return {name: ""}
+            return {name: "literal-process-value"}
+
+        def run_case(case):
+            label, contents, state, name = case
+            process = process_for(state, name)
+            with tempfile.TemporaryDirectory() as directory:
+                results = []
+                for flags in (
+                    [],
+                    ["--json"],
+                    ["--offline"],
+                    ["--offline", "--json"],
+                ):
+                    if name != "ALL" and flags in (
+                        ["--offline"],
+                        ["--offline", "--json"],
+                    ):
+                        continue
+                    results.append(
+                        (
+                            f"{label} {flags}",
+                            self.run_once(Path(directory), contents, process, flags),
+                        )
+                    )
+            return results
+
+        runs = 0
+        failures: list[str] = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for results in pool.map(run_case, cases):
+                for label, completed in results:
+                    runs += 1
+                    problems = self.leaks(completed)
+                    if problems:
+                        failures.append(f"{label}: {', '.join(problems)}")
+        self.assertFalse(
+            failures,
+            f"{len(failures)} of {runs} runs leaked; first: {failures[:5]}",
+        )
+
+
+class ThePrintRuleCoversEveryValueSiteTests(unittest.TestCase):
+    """The formatter names its two branches; a literal keeps its display."""
+
+    def test_an_interpolated_value_prints_as_a_fingerprint(self) -> None:
+        text = MODULE.env_value_display("https://u:tok@h/p", interpolated=True)
+        self.assertNotIn("tok", text)
+        self.assertIn(MODULE.value_fingerprint("https://u:tok@h/p"), text)
+        self.assertIn("built by ${} interpolation", text)
+
+    def test_a_literal_value_prints_as_repr_of_its_stripped_text(self) -> None:
+        self.assertEqual(
+            MODULE.env_value_display("  maybe ", interpolated=False), "'maybe'"
+        )
+
+
+#: A binding whose key python-dotenv keeps but preflight does not admit as a
+#: name, paired with the name a later `${}` reference writes for it. python-dotenv
+#: expands against every key it parsed, so an admitted name can depend on these.
+NON_ADMITTED_BINDINGS = (
+    ("MY-KEY=sk-x-dependent\n", "MY-KEY"),
+    ("my.key=sk-x-dependent\n", "my.key"),
+    ("KÉY=sk-x-dependent\n", "KÉY"),
+    ("1KEY=sk-x-dependent\n", "1KEY"),
+    ("﻿A=sk-x-dependent\n", "﻿A"),
+    ("'MY-KEY'=sk-x-dependent\n", "MY-KEY"),
+    ("MY-KEY\n", "MY-KEY"),
+)
+
+
+def dependent_contents() -> list[str]:
+    """Every text that makes an admitted name read a non-admitted key."""
+    texts = []
+    for binding, reference in NON_ADMITTED_BINDINGS:
+        texts += [
+            binding + f"OPENAI_API_KEY=${{{reference}}}\n",
+            binding + f"OPENAI_API_KEY=${{{reference}:-dflt}}\n",
+            binding + f"X=${{{reference}}}\nOPENAI_API_KEY=${{X}}\n",
+            f"OPENAI_API_KEY=${{{reference}}}\n" + binding,
+        ]
+    return texts
+
+
+class NonAdmittedKeysStillFeedExpansionTests(unittest.TestCase):
+    """The `${}` expansion sees every key python-dotenv binds, valid or not.
+
+    `values` and the invalid-name WARN keep their old meaning; only expansion
+    widens. The fixed rows below are the cases the memo names, and the
+    generated contract compares every row with `dotenv_values`.
+    """
+
+    def test_a_reference_to_an_invalid_name_expands_to_its_value(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            parsed = MODULE.parse_dotenv_text("MY-KEY=sk-x\nOPENAI_API_KEY=${MY-KEY}\n")
+        self.assertEqual(parsed.values["OPENAI_API_KEY"], "sk-x")
+        self.assertNotIn("MY-KEY", parsed.values)
+        self.assertEqual(parsed.invalid_name_lines, [1])
+
+    def test_a_default_form_does_not_replace_a_bound_invalid_name(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            parsed = MODULE.parse_dotenv_text("MY-KEY=v\nL=${MY-KEY:-dflt}\n")
+        self.assertEqual(parsed.values["L"], "v")
+
+    def test_a_dependent_admitted_value_matches_python_dotenv(self) -> None:
+        dotenv_values = python_dotenv_values()
+        if dotenv_values is None:
+            self.skipTest("python-dotenv is not importable; the pinned CI image has it")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            for text in dependent_contents():
+                with self.subTest(text=text):
+                    mine = MODULE.parse_dotenv_text(text).values
+                    theirs = {
+                        key: value
+                        for key, value in dotenv_values(
+                            stream=io.StringIO(text)
+                        ).items()
+                        if ADMITTED_ENV_NAME.fullmatch(key)
+                    }
+                    self.assertEqual(mine, theirs)
