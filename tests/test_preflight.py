@@ -9060,9 +9060,20 @@ NON_ADMITTED_BINDINGS = (
 )
 
 
+#: Texts where a key is bound twice before a `${}` reads it. python-dotenv keeps
+#: the LAST binding, so expansion must too; a first-binding-wins expansion
+#: passes every other row. The invalid-name row covers the same rule for a key
+#: that is not admitted.
+LAST_BINDING_CONTENTS = (
+    "K=old\nK=new\nOPENAI_API_KEY=${K}\n",
+    "MY-K=old\nMY-K=new\nOPENAI_API_KEY=${MY-K}\n",
+    "OPENAI_API_KEY=a\nOPENAI_API_KEY=b\nX=${OPENAI_API_KEY}\n",
+)
+
+
 def dependent_contents() -> list[str]:
     """Every text that makes an admitted name read a non-admitted key."""
-    texts = []
+    texts = list(LAST_BINDING_CONTENTS)
     for binding, reference in NON_ADMITTED_BINDINGS:
         texts += [
             binding + f"OPENAI_API_KEY=${{{reference}}}\n",
