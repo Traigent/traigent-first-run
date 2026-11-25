@@ -12,6 +12,7 @@ raising.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -216,6 +217,70 @@ class ReadinessPreflightInputEncodingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
         self.assertIn(str(report), result.stderr)
         self.assertNotIn("internal error", result.stdout + result.stderr)
+
+    def test_a_utf8_bom_preflight_document_loads(self) -> None:
+        # PowerShell 5.1's `Out-File -Encoding utf8` writes a byte-order mark,
+        # which is not JSON. `load_json` reads it with utf-8-sig for that reason.
+        records = [
+            {"check": "dataset-shape", "status": "FAIL", "detail": "x", "metrics": None}
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "preflight.json"
+            report.write_bytes(b"\xef\xbb\xbf" + json.dumps(records).encode("utf-8"))
+            result = c_locale_run(
+                [str(READINESS), "--preflight", str(report), "--json"], cwd=root
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("internal error", result.stdout + result.stderr)
+
+    def test_latin1_preflight_on_stdin_is_a_named_input_error(self) -> None:
+        # The file path converts its decode error to a named OSError; stdin is
+        # read raw, so its UnicodeDecodeError must be named by the boundary.
+        # `:strict` is what makes stdin raise: the C locale's default is
+        # surrogateescape, which reads these bytes without error. `-I` is not
+        # passed, because isolated mode ignores PYTHONIOENCODING.
+        env = {
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONIOENCODING": "utf-8:strict",
+        }
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-X",
+                "utf8=0",
+                "-S",
+                "-B",
+                str(READINESS),
+                "--preflight",
+                "-",
+            ],
+            input='[{"check": "café"}]'.encode("latin-1"),
+            cwd=tempfile.gettempdir(),
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+        stderr = result.stderr.decode("utf-8", errors="replace")
+        self.assertEqual(result.returncode, 2, stderr)
+        self.assertIn("cannot read scoring input", stderr)
+        self.assertNotIn("internal error", stderr)
+
+
+class CalibrateLiteralOrFileReadsBomTests(unittest.TestCase):
+    """A BOM-prefixed `@file` argument loads, as the readiness document does."""
+
+    def test_a_bom_prefixed_at_file_argument_loads(self) -> None:
+        spec = importlib.util.spec_from_file_location(
+            "calibrate_evaluator_under_test", SCRIPTS / "calibrate_evaluator.py"
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "expected.json"
+            path.write_bytes(b"\xef\xbb\xbf" + b'{"a": 1}')
+            self.assertEqual(module.literal_or_file(f"@{path}"), {"a": 1})
 
 
 if __name__ == "__main__":

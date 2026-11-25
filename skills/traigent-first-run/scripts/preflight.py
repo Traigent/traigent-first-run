@@ -4874,11 +4874,15 @@ def check_dataset(
         dataset_text = path.read_text(encoding="utf-8")
     except UnicodeDecodeError as error:
         line = decode_error_line(path.read_bytes(), error)
+        # The metric is the machine-readable half of this FAIL: readiness reads
+        # "a file was supplied and its bytes are not UTF-8" from it, and cannot
+        # tell that from "no dataset" by any other field of the record.
         emit(
             "dataset-shape",
             FAIL,
             f"{path} is not valid UTF-8 (first bad byte at line {line}); the SDK "
             "reads datasets as UTF-8 - re-save it as UTF-8",
+            {"decodes_as_utf8": False},
         )
         return None
 
@@ -4926,6 +4930,7 @@ def check_dataset(
     invalid_rows: list[tuple[int, str]] = []
     unlabelled_present = 0
     unreadable_gold_present = 0
+    blank_input_present = 0
     unreadable_gold_ids: list[Any] = []
     candidate_count = 0
     for line_number, raw_line in enumerate(dataset_text.splitlines(), 1):
@@ -4954,6 +4959,11 @@ def check_dataset(
             # tell "rows exist, none labelled" apart from "no dataset at all".
             input_found, input_value = dataset_field_value(row, input_field)
             expected_found, _ = dataset_field_value(row, expected_field)
+            # Counted apart, because readiness routes a row with a blank input
+            # as a defect in the data and a row with no such field as a
+            # possible defect in the reading (#620).
+            if input_found and dataset_value_is_blank(input_value):
+                blank_input_present += 1
             has_input = input_found and not dataset_value_is_blank(input_value)
             if has_input and not expected_found and input_field != expected_field:
                 present_rows.append(row)
@@ -5050,6 +5060,7 @@ def check_dataset(
                 "malformed_rows": malformed_rows,
                 "unlabelled_rows": unlabelled_present,
                 "unreadable_gold_rows": unreadable_gold_present,
+                "blank_input_rows": blank_input_present,
                 # Truncated like every other reported list, and the FULL
                 # count travels beside it in `unreadable_gold_rows`, so a
                 # reader of five digests is not misled about how many rows

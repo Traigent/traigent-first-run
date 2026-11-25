@@ -1440,10 +1440,11 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # which is a reason to go and look, not a verdict on the data.
     #
     # `dataset-integrity-fail` keeps `repair-dataset` and that stays right,
-    # because it fires only when at least one row DID match: the shape
-    # assumption is confirmed by that row, so the rest are genuinely broken.
-    # Zero matched rows is the absence of that evidence, and the two conditions
-    # already sit exactly on that line.
+    # because it fires where the data is at fault with the reading established:
+    # at least one row DID match, so the rest are genuinely broken; or the file
+    # is not UTF-8, or every row's selected input is blank, and no row needs
+    # the shape re-read to say so. Zero matched rows with a reading that is
+    # still open is the one state left to `dataset-shape-unrecognised`.
     "dataset-shape-unrecognised": "read-dataset",
     # Not `get-data`, and the split is the whole of traigent-first-run#197.
     # These two shared that slug with `dataset-absent`, and one remedy then
@@ -2597,8 +2598,10 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "where the rows came from"
     ),
     "dataset-integrity-fail": (
-        "fires only when at least one row DID parse, so it is the complement of "
-        "dataset-absent rather than a narrowing of it"
+        "fires when a supplied dataset is defective with its reading established: "
+        "some row parses, or the file is not UTF-8, or every row's selected input "
+        "is blank. So it is the complement of dataset-absent rather than a "
+        "narrowing of it"
     ),
     "dataset-tune-holdout-overlap": (
         "a split defect; it can accompany any size or provenance and narrows none"
@@ -3827,6 +3830,16 @@ class DatasetFacts:
     # `None` when preflight said nothing about it; then the reason names no
     # cause at all rather than inventing one.
     unreadable_detail: str | None = None
+    # A supplied file whose bytes are not UTF-8. Preflight FAILs `dataset-shape`
+    # with no provenance, which is the same payload as "no dataset", so the
+    # marker it sets (`decodes_as_utf8` false) is the only thing that tells the
+    # two apart. The rows are not known to be wrong; the encoding is.
+    undecodable_file: bool = False
+    # Rows whose selected input is blank (#620). Counted apart from the rest of
+    # `unreadable_rows`, because a blank input is a defect in the data, while a
+    # missing field may be a defect in the reading. `None` when preflight did
+    # not say.
+    blank_input_rows: int | None = None
     rows: int | None = None
     labelled_rows: int | None = None
     tuning_rows: int | None = None
@@ -6985,7 +6998,38 @@ def score_dataset(
         # shape this score did not recognise, never an absent dataset.
         unreadable = (facts.unreadable_rows or 0) + facts.gold_rows_unreadable
         detail = facts.unreadable_detail
-        if facts.dataset_supplied and unreadable:
+        # Both are data defects with the reading established, so both get the
+        # integrity cap that `repair-dataset` belongs to, not a read-the-file
+        # route and not a collect-more one. QA-1 (#617): the file is not UTF-8,
+        # and the rows are fine until it is re-saved. QA-2 (#620): every row's
+        # selected input is blank, so the field was found and the data is empty.
+        blank_only = (
+            bool(facts.blank_input_rows) and facts.blank_input_rows == unreadable
+        )
+        if facts.undecodable_file:
+            caps.append(
+                Cap(
+                    "dataset-integrity-fail",
+                    DATASET_INTEGRITY_CEILING,
+                    "A dataset was provided but it is not valid UTF-8, so none of "
+                    "its rows could be read: the file's encoding is the defect, "
+                    "not the rows - re-save it as UTF-8, then re-score.",
+                )
+            )
+            evidence = "provided, not valid UTF-8, no rows read"
+        elif blank_only:
+            caps.append(
+                Cap(
+                    "dataset-integrity-fail",
+                    DATASET_INTEGRITY_CEILING,
+                    "A dataset was provided and every row in it has a blank "
+                    "selected input, so nothing could be measured: that is a "
+                    "defect in the data - fill those inputs or drop those rows, "
+                    "then re-score." + (f" Preflight: {detail}." if detail else ""),
+                )
+            )
+            evidence = "provided, every row has a blank selected input"
+        elif facts.dataset_supplied and unreadable:
             # Rows were counted and none matched the shape the run read them
             # with. The earlier wording called that broken data. It is not, on
             # most of the files that produce it - see `ACTION_FOR_CONDITION`
@@ -10386,10 +10430,18 @@ def resolve_color(
     return True
 
 
+# Every glyph the renderers emit, in plan mode and on the scoring card, and the
+# one place the ASCII vocabulary is chosen against. The probe must cover all of
+# them: a code page that carries the block characters (cp437, cp850, cp936) does
+# not thereby carry the check marks, and probing one glyph let those code pages
+# through to escapes.
+RENDERED_GLYPHS = "█░✅❗•"
+
+
 def supports_unicode(stream: Any) -> bool:
     encoding = getattr(stream, "encoding", None) or "utf-8"
     try:
-        "█".encode(encoding)
+        RENDERED_GLYPHS.encode(encoding)
     except (LookupError, UnicodeEncodeError):
         return False
     return True
@@ -11603,6 +11655,21 @@ class ConfigSpaceInputError(ValueError):
     """
 
 
+def _dataset_bytes_undecodable(records: Sequence[dict[str, Any]]) -> bool:
+    """Whether preflight found the supplied dataset is not UTF-8.
+
+    The one marker that separates a file that exists and cannot be decoded from
+    no dataset at all: both arrive with no provenance and no row count.
+    """
+    return any(
+        isinstance(record, dict)
+        and record.get("check") == "dataset-shape"
+        and record.get("status") == "FAIL"
+        and (record.get("metrics") or {}).get("decodes_as_utf8") is False
+        for record in records
+    )
+
+
 def _dataset_absence_detail(records: Sequence[dict[str, Any]]) -> str | None:
     """Preflight's own sentence about why no row reached the score.
 
@@ -12358,6 +12425,13 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 check="dataset-integrity",
             ),
             unreadable_detail=_dataset_absence_detail(records),
+            undecodable_file=_dataset_bytes_undecodable(records),
+            blank_input_rows=_row_count(
+                integrity.get("blank_input_rows"),
+                "blank_input_rows",
+                required=False,
+                check="dataset-integrity",
+            ),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
     # The third guard of the same shape, and it is here for the reason the two

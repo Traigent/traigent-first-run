@@ -12,6 +12,7 @@ way a Windows customer's environment sets it.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -77,6 +78,111 @@ class ReadinessPlanOutputTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("✅ Agent: real", result.stdout)
+
+    def test_plan_text_with_ascii_flag_under_utf8_prints_the_ascii_marks(
+        self,
+    ) -> None:
+        # `--ascii` is an explicit choice, so it wins even where the glyphs
+        # would encode: the flag is not only a fallback for a failed probe.
+        with tempfile.TemporaryDirectory() as directory:
+            result = run_with_stdout_encoding(
+                READINESS, [*self.PLAN, "--ascii"], Path(directory), "utf-8"
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("OK Agent: real", result.stdout)
+        self.assertNotIn("✅", result.stdout)
+
+
+class GlyphProbeCoversEveryRenderedGlyphTests(unittest.TestCase):
+    """QA-3 (#618): the probe must cover every glyph the renderers emit.
+
+    The probe used to encode only the block glyph, which cp437, cp850, cp936
+    and cp950 all carry, so those code pages passed it while the check marks
+    and bullets they could not encode came out as backslash escapes.
+    """
+
+    CODE_PAGES = ("cp1252", "gbk", "cp437")
+    PLAN = ["--agent", "real", "--dataset", "real", "--evaluation", "real"]
+
+    def test_plan_text_under_each_code_page_prints_the_ascii_marks(self) -> None:
+        for encoding in self.CODE_PAGES:
+            with self.subTest(encoding=encoding):
+                with tempfile.TemporaryDirectory() as directory:
+                    result = run_with_stdout_encoding(
+                        READINESS, self.PLAN, Path(directory), encoding
+                    )
+                combined = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0, combined)
+                self.assertIn("OK Agent: real", result.stdout)
+                self.assertNotIn("\\u2705", result.stdout)
+
+    def test_scoring_card_under_each_code_page_prints_the_ascii_vocabulary(
+        self,
+    ) -> None:
+        for encoding in self.CODE_PAGES:
+            with self.subTest(encoding=encoding):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    records = root / "preflight.json"
+                    records.write_text("[]", encoding="utf-8")
+                    result = run_with_stdout_encoding(
+                        READINESS,
+                        ["--preflight", str(records), "--color", "never"],
+                        root,
+                        encoding,
+                    )
+                combined = result.stdout + result.stderr
+                self.assertEqual(result.returncode, 0, combined)
+                self.assertIn("!! ", result.stdout)
+                # Neither the bar, the bullet nor the warning mark may arrive
+                # as an escape: each one is a glyph the card has an ASCII
+                # spelling for.
+                self.assertNotIn("\\u", result.stdout)
+
+    def test_scoring_card_under_utf8_keeps_the_glyphs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            records = root / "preflight.json"
+            records.write_text("[]", encoding="utf-8")
+            result = run_with_stdout_encoding(
+                READINESS,
+                ["--preflight", str(records), "--color", "never"],
+                root,
+                "utf-8",
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("░", result.stdout)
+        self.assertIn("❗", result.stdout)
+
+
+class ReadinessCardOutputTests(unittest.TestCase):
+    def test_a_non_ascii_path_in_a_readiness_card_is_printed_not_crashed_on(
+        self,
+    ) -> None:
+        # Hand-built records, because the path must reach the card's own
+        # sentence verbatim and the card is what this test reads.
+        records = [
+            {
+                "check": "dataset-shape",
+                "status": "FAIL",
+                "detail": "日本/data.jsonl does not exist",
+                "metrics": None,
+            }
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = root / "preflight.json"
+            report.write_text(json.dumps(records), encoding="utf-8")
+            result = run_with_stdout_encoding(
+                READINESS,
+                ["--preflight", str(report), "--color", "never"],
+                root,
+                "cp1252",
+            )
+        combined = result.stdout + result.stderr
+        self.assertNotIn("internal error", combined)
+        self.assertEqual(result.returncode, 0, combined)
+        self.assertIn(ESCAPED_NIHON, result.stdout)
 
 
 class PreflightTextOutputTests(unittest.TestCase):

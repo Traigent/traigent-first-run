@@ -7125,6 +7125,60 @@ class BlankInputRowsReachTheCardAsBlankTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             dataset = _write_jsonl(Path(raw), "blank.jsonl", self._rows(True))
             score = _score(dataset)
-        reason = _cap(score, "dataset-shape-unrecognised")["reason"]
+        # QA-2: preflight counts these rows as unusable DATA (#620). The field
+        # was found and is empty, so the reading is settled and this is the
+        # repair-dataset cap, the one a partly blank file gets - not a
+        # "describes the reading" cap that tells the assistant to re-map fields.
+        conditions = {cap["condition"] for cap in score["caps"]}
+        self.assertNotIn("dataset-shape-unrecognised", conditions)
+        reason = _cap(score, "dataset-integrity-fail")["reason"]
         self.assertIn("selected input field 'input' is blank", reason)
         self.assertNotIn("missing selected input field", reason)
+        self.assertIn("a defect in the data", reason)
+        self.assertIn("fill", reason)
+        self.assertIn("drop", reason)
+        self.assertNotIn("not a defect in the data", reason)
+        self.assertEqual(
+            _cap(score, "dataset-integrity-fail")["action_kind"], "repair-dataset"
+        )
+
+
+class UndecodableDatasetRoutesToRepairTests(unittest.TestCase):
+    """QA-1 (#617): a supplied file that is not UTF-8 is repaired, never collected.
+
+    Preflight reads the file as the SDK does, finds the bytes are not UTF-8,
+    and FAILs `dataset-shape` with no provenance. The card used to read that as
+    "no dataset", so it said the file holds no rows, told the customer nothing
+    needs repairing, and routed them to collect examples.
+    """
+
+    def _cp1252_dataset(self, directory: Path) -> Path:
+        text = "".join(
+            json.dumps(
+                {"input": f"café question {n}", "output": f"a{n}"}, ensure_ascii=False
+            )
+            + "\n"
+            for n in range(30)
+        )
+        path = directory / "data.jsonl"
+        path.write_bytes(text.encode("cp1252"))
+        return path
+
+    def test_a_cp1252_dataset_is_routed_to_repair_not_to_absence(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            dataset = self._cp1252_dataset(Path(raw))
+            records = _preflight_records(dataset)
+            score = _score_records(records)
+            card = _card_records(records)
+        conditions = {cap["condition"] for cap in score["caps"]}
+        self.assertNotIn("dataset-absent", conditions)
+        self.assertEqual(
+            _cap(score, "dataset-integrity-fail")["action_kind"], "repair-dataset"
+        )
+        self.assertNotIn("Choose existing examples", card)
+        self.assertNotIn("holds no rows", card)
+        self.assertNotIn("nothing to repair", card)
+        self.assertIn("re-save it as UTF-8", card)
+        reason = _cap(score, "dataset-integrity-fail")["reason"]
+        self.assertIn("re-save it as UTF-8", reason)
+        self.assertNotIn("holds no rows", reason)
