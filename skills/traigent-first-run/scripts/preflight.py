@@ -981,35 +981,6 @@ def dropped_statement_clause(spans: list[tuple[int, int]]) -> str:
     )
 
 
-def swallowed_setting_clause(hits: list[tuple[int, int, str]]) -> str:
-    """One `.env` finding for settings a quoted key or value swallowed.
-
-    Names and line numbers only, as `dropped_statement_clause`: the swallowed
-    line's text is the customer's and may be a credential.
-    """
-    if not hits:
-        return ""
-    shown = hits[:MAX_REPORTED_ENV_FILE_LINES]
-    described = "; ".join(
-        f"line {number} sets {name} inside the quoted text that starts at line {start}"
-        for number, start, name in shown
-    )
-    suffix = (
-        ""
-        if len(hits) <= len(shown)
-        else f" (first {MAX_REPORTED_ENV_FILE_LINES} shown)"
-    )
-    if len(hits) == 1:
-        return (
-            f"{described}{suffix}, so it is not set; fix the quoting rather than "
-            "adding it again"
-        )
-    return (
-        f"{described}{suffix}, so they are not set; fix the quoting rather than "
-        "adding them again"
-    )
-
-
 class DotenvParse(NamedTuple):
     """What python-dotenv's reader made of one text, and what it could not use.
 
@@ -1028,11 +999,6 @@ class DotenvParse(NamedTuple):
     # the expansion could carry a secret, and a target read from it could be a
     # production one. A later literal or bare key removes the name.
     interpolated: frozenset[str]
-    # A line inside a cleanly closed multi-line quoted key or value that,
-    # read on its own by the same grammar, sets a name preflight reads to a
-    # present value, and that the file leaves unset: as (line, the line the
-    # quoted text starts on, name). Names only, never values.
-    swallowed: list[tuple[int, int, str]]
     # The start lines of final bindings `load_dotenv` cannot set (a NUL byte in
     # a key or value, or `=` in a key), so the runtime raises before it sets any
     # key. A refused line is not also reported as an invalid name.
@@ -1047,36 +1013,6 @@ def _refused_by_load_dotenv(key: str, value: str) -> bool:
     refuse other shapes; they are not modelled.
     """
     return not key or "=" in key or "\0" in key or "\0" in value
-
-
-def _swallowed_settings(
-    statement: _DotenvStatement, lines: list[str], env: dict[str, str | None]
-) -> list[tuple[int, int, str]]:
-    """Settings a cleanly closed multi-line quoted key or value swallows.
-
-    A stray quote can open a key as well as a value: python-dotenv then reads
-    a bare key spanning the lines, and sets none of them. Each line the quote
-    spans is read on its own by the same grammar `_dotenv_statements` ports,
-    which is the statement it becomes once the quoting is fixed, so every key
-    form python-dotenv accepts (plain, single-quoted, `export`) is recognised
-    without a second, hand-written pattern. A line counts only if it would
-    then set a name preflight reads to a present value: a blank, `#`, bare-key
-    or unreadable line supplies nothing. `env` is what its `${NAME}` expands
-    against at that point, as for any binding; the value is never reported.
-    Only candidates: position and the process are decided once every
-    statement is read.
-    """
-    hits = []
-    for number in range(statement.start_line + 1, statement.end_line + 1):
-        for alone in _dotenv_statements(lines[number - 1]):
-            # A statement that does not parse has no key, so it never counts.
-            if (
-                alone.key in SHADOW_SCANNED_ENV_NAMES
-                and alone.value is not None
-                and key_present(_expand_dotenv_variables(alone.value, env))
-            ):
-                hits.append((number, statement.start_line, alone.key))
-    return hits
 
 
 def parse_dotenv_text(text: str) -> DotenvParse:
@@ -1099,7 +1035,6 @@ def parse_dotenv_text(text: str) -> DotenvParse:
     bound_at: dict[str, int] = {}
     values: dict[str, str | None] = {}
     interpolated: set[str] = set()
-    swallow_candidates: list[tuple[int, int, str]] = []
     # Two populations, kept apart, because they are two different mistakes and
     # a reader fixing them does two different things: a line with no `=` at all
     # is prose where a setting was expected, while a line whose key is not a
@@ -1137,12 +1072,6 @@ def parse_dotenv_text(text: str) -> DotenvParse:
         )
         bound[statement.key] = expanded
         bound_at[statement.key] = statement.start_line
-        if statement.end_line > statement.start_line:
-            # Only a quote that spans lines swallows any; the line it holds
-            # expands against what is bound once the quote's own key is.
-            swallow_candidates.extend(
-                _swallowed_settings(statement, lines, {**bound, **process_env})
-            )
         if not _ENV_NAME.fullmatch(statement.key):
             invalid_name_lines.append(statement.start_line)
             continue
@@ -1158,19 +1087,6 @@ def parse_dotenv_text(text: str) -> DotenvParse:
             interpolated.add(statement.key)
         else:
             interpolated.discard(statement.key)
-    # Decided last, and only where fixing the quoting would change what the
-    # runtime uses: the swallowed line would be NAME's last binding (no binding
-    # of NAME starts after it - a later blank or bare key would still win), the
-    # process does not hold NAME (it wins under override=False, blank or not),
-    # and NAME is unavailable now by `key_present`, so the customer is asked
-    # for a key the file visibly holds.
-    swallowed = [
-        (number, start, name)
-        for number, start, name in swallow_candidates
-        if bound_at.get(name, 0) < number
-        and name not in process_env
-        and not key_present(values.get(name))
-    ]
     refused_lines = sorted(
         {
             bound_at[key]
@@ -1187,7 +1103,6 @@ def parse_dotenv_text(text: str) -> DotenvParse:
         [line for line in invalid_name_lines if line not in refused],
         dropped_spans,
         frozenset(interpolated),
-        swallowed,
         refused_lines,
     )
 
@@ -1277,8 +1192,6 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
         )
     if dropped_clause := dropped_statement_clause(parsed.dropped_spans):
         findings.append(dropped_clause)
-    if swallowed_clause := swallowed_setting_clause(parsed.swallowed):
-        findings.append(swallowed_clause)
     if findings:
         # The same facts as data, on `emit`'s own rule that a wording change
         # must never alter a score, and in full: the sentence truncates for a
@@ -1295,10 +1208,6 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
             "invalid_name_lines": parsed.invalid_name_lines,
             "dropped_statements": [list(span) for span in parsed.dropped_spans],
         }
-        if parsed.swallowed:
-            metrics["swallowed_assignments"] = [
-                [number, start] for number, start, _ in parsed.swallowed
-            ]
         if parsed.refused_lines:
             metrics["refused_lines"] = parsed.refused_lines
         emit(
