@@ -8728,6 +8728,86 @@ SWALLOW_ROWS = (
         {},
         [[2, 1]],
     ),
+    # The swallowed line is recognised by the runtime's own grammar, so every
+    # key form python-dotenv accepts counts, and a line that would set nothing
+    # present once the quoting is fixed does not.
+    (
+        "single-quoted key swallowed",
+        f"NOTE=\"remember\n'OPENAI_API_KEY'={SWALLOW_MARKER}\n\"\n",
+        {},
+        [[2, 1]],
+    ),
+    (
+        "indented export single-quoted key swallowed",
+        f"NOTE=\"r\n  export 'OPENAI_API_KEY' = {SWALLOW_MARKER}\n\"\n",
+        {},
+        [[2, 1]],
+    ),
+    (
+        "single-quoted key swallowed after an earlier blank",
+        f"OPENAI_API_KEY=\nNOTE=\"r\n'OPENAI_API_KEY'={SWALLOW_MARKER}\n\"\n",
+        {},
+        [[3, 2]],
+    ),
+    (
+        "single-quoted key swallowed, CRLF file",
+        f"NOTE=\"r\r\n'OPENAI_API_KEY'={SWALLOW_MARKER}\r\n\"\r\n",
+        {},
+        [[2, 1]],
+    ),
+    (
+        "swallowed reference to an earlier binding",
+        f'SRC={SWALLOW_MARKER}\nNOTE="r\nOPENAI_API_KEY=${{SRC}}\n"\n',
+        {},
+        [[3, 2]],
+    ),
+    (
+        "swallowed reference with a default",
+        f'NOTE="r\nOPENAI_API_KEY=${{NOPE:-{SWALLOW_MARKER}}}\n"\n',
+        {},
+        [[2, 1]],
+    ),
+    (
+        "single-quoted key swallowed, later single-quoted blank",
+        f"NOTE=\"r\n'OPENAI_API_KEY'={SWALLOW_MARKER}\n\"\n'OPENAI_API_KEY'=\n",
+        {},
+        None,
+    ),
+    (
+        "single-quoted key swallowed, in the process",
+        f"NOTE=\"r\n'OPENAI_API_KEY'={SWALLOW_MARKER}\n\"\n",
+        {"OPENAI_API_KEY": "sk-proc"},
+        None,
+    ),
+    ("swallowed blank", 'NOTE="r\nOPENAI_API_KEY=\n"\n', {}, None),
+    ("swallowed comment", 'NOTE="r\nOPENAI_API_KEY=#todo\n"\n', {}, None),
+    ("swallowed empty quotes", "NOTE=\"r\nOPENAI_API_KEY=''\n\"\n", {}, None),
+    ("swallowed unset reference", 'NOTE="r\nOPENAI_API_KEY=${NOPE}\n"\n', {}, None),
+    (
+        "swallowed line the runtime cannot read",
+        f"NOTE=\"r\nOPENAI_API_KEY='{SWALLOW_MARKER}' junk\n\"\n",
+        {},
+        None,
+    ),
+    ("swallowed bare single-quoted key", "NOTE=\"r\n'OPENAI_API_KEY'\n\"\n", {}, None),
+    (
+        "double-quoted key is not a key",
+        f"NOTE='r\n\"OPENAI_API_KEY\"={SWALLOW_MARKER}\n'\n",
+        {},
+        None,
+    ),
+    (
+        "quoted key with a space is another name",
+        f"NOTE=\"r\n'OPENAI_API_KEY '={SWALLOW_MARKER}\n\"\n",
+        {},
+        None,
+    ),
+    (
+        "commented single-quoted key",
+        f"NOTE=\"r\n# 'OPENAI_API_KEY'={SWALLOW_MARKER}\n\"\n",
+        {},
+        None,
+    ),
 )
 
 
@@ -8876,6 +8956,137 @@ class SwallowedSettingRuleTests(unittest.TestCase):
         self.assertIn(
             "env-file", {item["check"] for item in json.loads(completed.stdout)}
         )
+
+
+#: The swallowed-line shapes the contract below generates: key form, `export`,
+#: spacing and value form, plus lines that never set the name.
+SWALLOW_CONTRACT_KEYS = ("OPENAI_API_KEY", "'OPENAI_API_KEY'")
+SWALLOW_CONTRACT_VALUES = (
+    "sk-v",
+    "",
+    "#todo",
+    "sk-v # c",
+    "'sk-v'",
+    '\\"sk-v\\"',
+    "${NOPE}",
+    "${NOPE:-sk-d}",
+    "${NOTE}",
+    "'sk-v' junk",
+    "''",
+)
+SWALLOW_CONTRACT_OTHER_LINES = (
+    "# OPENAI_API_KEY=sk-v",
+    "OPENAI_API_KEY",
+    "'OPENAI_API_KEY'",
+    '"OPENAI_API_KEY"=sk-v',
+    "MY_OPENAI_API_KEY=sk-v",
+)
+SWALLOW_CONTRACT_CONTAINERS = (
+    'NOTE="remember\n{}\n"\n',
+    "NOTE='remember\n{}\n'\n",
+    "'\n{}\n'\n",
+    'export NOTE="r\r\n{}\r\n"\r\n',
+)
+#: (earlier text, later text, process environment).
+SWALLOW_CONTRACT_CONTEXTS = (
+    ("", "", {}),
+    ("OPENAI_API_KEY=\n", "", {}),
+    ("OPENAI_API_KEY=sk-earlier\n", "", {}),
+    ("", "'OPENAI_API_KEY'=\n", {}),
+    ("", "", {"OPENAI_API_KEY": "sk-proc"}),
+)
+
+
+class SwallowedSettingContractTests(unittest.TestCase):
+    """The swallow clause fires exactly when fixing the quoting supplies a key
+    the runtime lacks (#623), measured against python-dotenv itself.
+
+    For every line a multi-line quoted key or value spans, python-dotenv's own
+    parser finds the statement and `load_dotenv` decides, before and after the
+    line is moved out of the quote, whether the name is present. Files
+    `load_dotenv` refuses are the refusal's FAIL and are left out.
+    """
+
+    def test_the_clause_fires_exactly_when_fixing_the_quoting_supplies_the_key(
+        self,
+    ) -> None:
+        try:
+            import dotenv
+            import dotenv.parser
+        except ImportError:
+            self.skipTest("python-dotenv is not importable")
+        name = "OPENAI_API_KEY"
+        newline = MODULE._DOTENV_NEWLINE
+
+        def runtime(text: str, process_env: dict[str, str]) -> tuple[bool, bool]:
+            # python-dotenv logs each statement it drops; the rows drop many.
+            with mock.patch.dict(
+                os.environ, process_env, clear=True
+            ), mock.patch.object(dotenv.main.logger, "disabled", True):
+                try:
+                    dotenv.load_dotenv(stream=io.StringIO(text), override=False)
+                except ValueError:
+                    return False, True
+                return MODULE.key_present(os.environ.get(name)), False
+
+        lines_by_shape = [
+            f"{indent}{export}{key}{equals}{value}"
+            for key, export, (indent, equals), value in itertools.product(
+                SWALLOW_CONTRACT_KEYS,
+                ("", "export "),
+                (("", "="), ("  ", " = ")),
+                SWALLOW_CONTRACT_VALUES,
+            )
+        ] + list(SWALLOW_CONTRACT_OTHER_LINES)
+        disagreements = []
+        checked = 0
+        for line, container, (earlier, later, process_env) in itertools.product(
+            lines_by_shape, SWALLOW_CONTRACT_CONTAINERS, SWALLOW_CONTRACT_CONTEXTS
+        ):
+            text = earlier + container.format(line) + later
+            present_now, refused = runtime(text, process_env)
+            if refused:
+                continue
+            physical = newline.split(text)
+            separator = "\r\n" if "\r\n" in text else "\n"
+            expected = set()
+            for binding in dotenv.parser.parse_stream(io.StringIO(text)):
+                if binding.error or binding.key is None:
+                    continue
+                consumed = binding.original.string
+                leading = consumed[: len(consumed) - len(consumed.lstrip())]
+                start = binding.original.line + len(newline.findall(leading))
+                end = binding.original.line + max(
+                    len(newline.findall(consumed))
+                    - (1 if consumed.endswith(("\n", "\r")) else 0),
+                    0,
+                )
+                for number in range(start + 1, end + 1):
+                    if name not in physical[number - 1]:
+                        continue
+                    checked += 1
+                    moved = (
+                        physical[: number - 1]
+                        + physical[number:end]
+                        + [physical[number - 1]]
+                        + physical[end:]
+                    )
+                    present_fixed, _ = runtime(separator.join(moved), process_env)
+                    if not present_now and present_fixed:
+                        expected.add((number, start))
+            with mock.patch.dict(os.environ, process_env, clear=True):
+                got = {
+                    (number, start)
+                    for number, start, swallowed in MODULE.parse_dotenv_text(
+                        text
+                    ).swallowed
+                    if swallowed == name
+                }
+            if got != expected:
+                disagreements.append((line, container, earlier, later, process_env))
+        self.assertGreater(checked, 500)
+        self.assertEqual(disagreements[:5], [])
+        self.assertEqual(len(disagreements), 0)
 
 
 class ExecutionWitnessKindsTests(unittest.TestCase):

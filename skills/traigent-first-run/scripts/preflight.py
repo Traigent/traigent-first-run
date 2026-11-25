@@ -818,9 +818,6 @@ _DOTENV_REST_OF_LINE = re.compile(r"[^\r\n]*(?:\r|\n|\r\n)?")
 _DOTENV_DOUBLE_QUOTE_ESCAPES = re.compile(r"\\[\\'\"abfnrtv]")
 _DOTENV_SINGLE_QUOTE_ESCAPES = re.compile(r"\\[\\']")
 _DOTENV_VARIABLE = re.compile(r"\$\{(?P<name>[^\}:]*)(?::-(?P<default>[^\}]*))?\}")
-# A physical line shaped like a setting: what a multi-line quoted key or value
-# can hold without python-dotenv setting anything.
-_SETTING_LINE = re.compile(r"\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
 
 
 def decode_error_line(raw: bytes, error: UnicodeDecodeError) -> int:
@@ -1031,10 +1028,10 @@ class DotenvParse(NamedTuple):
     # the expansion could carry a secret, and a target read from it could be a
     # production one. A later literal or bare key removes the name.
     interpolated: frozenset[str]
-    # A line inside a cleanly closed multi-line quoted key or value that is
-    # shaped like a setting of a name preflight reads, and that the file leaves
-    # unset: as (line, the line the value starts on, name). Names only, never
-    # values.
+    # A line inside a cleanly closed multi-line quoted key or value that,
+    # read on its own by the same grammar, sets a name preflight reads to a
+    # present value, and that the file leaves unset: as (line, the line the
+    # quoted text starts on, name). Names only, never values.
     swallowed: list[tuple[int, int, str]]
     # The start lines of final bindings `load_dotenv` cannot set (a NUL byte in
     # a key or value, or `=` in a key), so the runtime raises before it sets any
@@ -1053,21 +1050,32 @@ def _refused_by_load_dotenv(key: str, value: str) -> bool:
 
 
 def _swallowed_settings(
-    statement: _DotenvStatement, lines: list[str]
+    statement: _DotenvStatement, lines: list[str], env: dict[str, str | None]
 ) -> list[tuple[int, int, str]]:
-    """Setting-shaped lines a cleanly closed multi-line quoted key or value holds.
+    """Settings a cleanly closed multi-line quoted key or value swallows.
 
     A stray quote can open a key as well as a value: python-dotenv then reads
-    a bare key spanning the lines, and sets none of them. Only candidates:
-    whether each name is left unset is decided once every statement is read.
+    a bare key spanning the lines, and sets none of them. Each line the quote
+    spans is read on its own by the same grammar `_dotenv_statements` ports,
+    which is the statement it becomes once the quoting is fixed, so every key
+    form python-dotenv accepts (plain, single-quoted, `export`) is recognised
+    without a second, hand-written pattern. A line counts only if it would
+    then set a name preflight reads to a present value: a blank, `#`, bare-key
+    or unreadable line supplies nothing. `env` is what its `${NAME}` expands
+    against at that point, as for any binding; the value is never reported.
+    Only candidates: position and the process are decided once every
+    statement is read.
     """
-    if statement.end_line == statement.start_line:
-        return []
     hits = []
     for number in range(statement.start_line + 1, statement.end_line + 1):
-        match = _SETTING_LINE.match(lines[number - 1])
-        if match is not None and match.group(1) in SHADOW_SCANNED_ENV_NAMES:
-            hits.append((number, statement.start_line, match.group(1)))
+        for alone in _dotenv_statements(lines[number - 1]):
+            # A statement that does not parse has no key, so it never counts.
+            if (
+                alone.key in SHADOW_SCANNED_ENV_NAMES
+                and alone.value is not None
+                and key_present(_expand_dotenv_variables(alone.value, env))
+            ):
+                hits.append((number, statement.start_line, alone.key))
     return hits
 
 
@@ -1129,7 +1137,12 @@ def parse_dotenv_text(text: str) -> DotenvParse:
         )
         bound[statement.key] = expanded
         bound_at[statement.key] = statement.start_line
-        swallow_candidates.extend(_swallowed_settings(statement, lines))
+        if statement.end_line > statement.start_line:
+            # Only a quote that spans lines swallows any; the line it holds
+            # expands against what is bound once the quote's own key is.
+            swallow_candidates.extend(
+                _swallowed_settings(statement, lines, {**bound, **process_env})
+            )
         if not _ENV_NAME.fullmatch(statement.key):
             invalid_name_lines.append(statement.start_line)
             continue
