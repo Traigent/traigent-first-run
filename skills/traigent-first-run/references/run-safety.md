@@ -1462,7 +1462,7 @@ establish a free call or provider-reported usage.
 
 Use the objective-selection rules in `references/sdk-execution.md` for the baseline producer
 and its actual agent and evaluator cost coverage. Keep the primary criterion and
-its direction unchanged. This is a quality-only comparison, with no cost-ranked recommendation,
+its direction unchanged. A primary-only comparison supports no cost-ranked recommendation,
 savings claim or objective-cost frontier. Missing usage by itself does not remove a trustworthy
 cost measurement; a provider cost field alone does not prove the SDK's cost objective consumed it.
 Repair before the first baseline may establish cost coverage normally. Once an operation has used

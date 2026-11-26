@@ -490,9 +490,9 @@ response with `litellm.completion_cost()`: a missing local price entry can raise
 
 For SDK-backed baselines, select `INCLUDE_COST_OBJECTIVE` from the approved probe before
 constructing the public `ObjectiveSchema`. Leave it false without trustworthy cost coverage.
-For a generated baseline handoff, keep it false because the bridge has no per-trial costs. Set it true only when the SDK's
-costs have the expected response provenance and coverage. This is an agent-derived fact, not a
-user-facing knob. Once a started comparison is primary-only, keep that mode for its remaining
+Enable cost on the SDK-backed route only when the SDK costs have verified provenance and
+coverage. For a generated baseline handoff, keep it false because the bridge has no per-trial
+costs. Derive this from evidence without asking the user to select an objective mode. Once a started comparison is primary-only, keep that mode for its remaining
 planned phases; restored costs may be reported, while cost optimization belongs to a future run.
 Record each phase's actual objectives in the run plan. Preserve the normal
 quality-and-cost path when its cost evidence is sound. The SDK's automatic missing-price approval
