@@ -6053,13 +6053,15 @@ class CopiedActorWorkerOutputTests(unittest.TestCase):
             guard.mkdir()
             records = root / "observations"
             records.mkdir()
+            # python-dotenv selects its debugger path when sys.gettrace() is
+            # non-None. Tracking every line of the SDK imports is unnecessary.
             (guard / "sitecustomize.py").write_text(
                 "import atexit,json,os,socket,sys\nfrom pathlib import Path\n"
                 "def deny(*a,**k): raise RuntimeError('network denied')\n"
                 "socket.socket.connect=deny\nsocket.getaddrinfo=deny\n"
                 "if '--_worker' in sys.argv:\n"
                 " if sys.gettrace() is None:\n"
-                "  def trace(frame,event,arg): return trace\n"
+                "  def trace(frame,event,arg): return None\n"
                 "  sys.settrace(trace)\n"
                 " def record():\n"
                 "  state={'original_reloaded':'DB_FILE' in os.environ,"
