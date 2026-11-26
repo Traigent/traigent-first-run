@@ -1,9 +1,9 @@
-# 0163 - no usable row is not a partial repair
+# 0165 - no usable row is not a partial repair
 
-follows: 0162
-follows-total-measured: 613_981
-total-ceiling: 614_050
-total-measured: 614_001
+follows: 0164
+follows-total-measured: 612_041
+total-ceiling: 612_150
+total-measured: 612_061
 
 A non-UTF-8 dataset (#617) and a dataset whose every selected input is blank (#620) leave no
 usable row. They were capped as `dataset-integrity-fail` at 35, the rung for a file where some
