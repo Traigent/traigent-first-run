@@ -10,12 +10,12 @@ import io
 import json
 import math
 import os
-from pathlib import Path
 import re
 import subprocess
 import sys
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import test_generate_adapter as adapter_tests
