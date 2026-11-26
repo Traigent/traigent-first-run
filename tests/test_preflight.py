@@ -9095,6 +9095,21 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
         self.assertEqual(records[0].metrics["unparsed_lines"], [1])
         self.assertIsNone(values["BARE"])
 
+    def test_a_line_without_equals_is_unparsed_whatever_its_word(self) -> None:
+        """A line with no `=` is prose, so its word never makes it an invalid name.
+
+        Only a KEY=VALUE line with an illegal key is a setting spelled wrong.
+        A legal bare key stays bound to `None`, as the runtime binds it.
+        """
+        values, records = self.parse(
+            "see-docs\nhttps://platform.openai.com/api-keys\n1BAD=x\nPROSE\n"
+        )
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1, 2, 4])
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [3])
+        self.assertIsNone(values["PROSE"])
+        self.assertNotIn("see-docs", values)
+        self.assertNotIn("1BAD", values)
+
     def test_the_process_environment_wins_over_the_file_when_interpolating(
         self,
     ) -> None:

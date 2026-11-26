@@ -1092,13 +1092,16 @@ def parse_dotenv_text(text: str) -> DotenvParse:
         )
         bound[statement.key] = expanded
         bound_at[statement.key] = statement.start_line
+        if statement.value is None:
+            # No `=` at all: prose where a setting was expected, whatever the
+            # word looks like, as the error branch above decides it.
+            unparsed_lines.append(statement.start_line)
+            if _ENV_NAME.fullmatch(statement.key):
+                values[statement.key] = None
+                interpolated.discard(statement.key)
+            continue
         if not _ENV_NAME.fullmatch(statement.key):
             invalid_name_lines.append(statement.start_line)
-            continue
-        if statement.value is None:
-            unparsed_lines.append(statement.start_line)
-            values[statement.key] = None
-            interpolated.discard(statement.key)
             continue
         values[statement.key] = expanded
         # The same grammar as the expansion above, so "built from a reference"
