@@ -564,11 +564,19 @@ def route_display(value: str, *, interpolated: bool) -> str:
     stripped = value.strip()
     if interpolated:
         return env_value_display(value, interpolated=True)
-    parsed = urllib.parse.urlsplit(stripped)
+    unreadable = f"a value that is neither a URL nor a region (sha256:{value_fingerprint(stripped)})"
+    # `urlsplit` raises on a netloc it cannot normalise (NFKC maps full-width
+    # delimiters onto `/ ? # @ :`) and on an unclosed IPv6 bracket, and its
+    # message quotes the netloc, userinfo included. It fails on the text, so
+    # the text is fingerprinted, never printed and never quoted in an error.
+    try:
+        parsed = urllib.parse.urlsplit(stripped)
+    except ValueError:
+        return unreadable
     if not parsed.scheme or not parsed.netloc:
         if AWS_REGION_SHAPE.fullmatch(stripped):
             return stripped
-        return f"a value that is neither a URL nor a region (sha256:{value_fingerprint(stripped)})"
+        return unreadable
     try:
         host, port = parsed.hostname, parsed.port
     except ValueError:  # a malformed port; the host is not trustworthy either

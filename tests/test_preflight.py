@@ -5360,6 +5360,31 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
                 self.assertNotIn(value, shown)
                 self.assertIn(MODULE.value_fingerprint(value), shown)
 
+    def test_a_hostile_route_value_never_raises_nor_shows_its_secret(self) -> None:
+        """`route_display` must return for ANY literal value (#617).
+
+        `urlsplit` raises on a netloc it cannot normalise (full-width `／ ？ ＃
+        ＠ ：`, which NFKC maps onto delimiters) and on an unclosed IPv6 bracket.
+        The raise used to escape `route_display` and reach the internal-error
+        boundary in `main`, which prints the message - and the message quotes
+        the netloc, userinfo included.
+        """
+        marker = "MARKERSECRET123"
+        for value in (
+            f"https://u:{marker}@ho／st",
+            f"https://u:{marker}@ho？st",
+            f"https://u:{marker}@ho＃st",
+            f"https://{marker}＠host",
+            f"https://u:{marker}@host：8000/x",
+            f"https://[x{marker}",
+            f"https://[::1{marker}",
+        ):
+            with self.subTest(value=value):
+                shown = MODULE.route_display(value, interpolated=False)
+                self.assertIsInstance(shown, str)
+                self.assertNotIn(marker.lower(), shown.lower())
+                self.assertIn(MODULE.value_fingerprint(value), shown)
+
     def test_the_shadow_check_is_reached_through_main(self) -> None:
         """The views are computed and were handed to one caller only.
 
@@ -8925,6 +8950,50 @@ class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
         )
         self.assertEqual(parsed.interpolated, frozenset({"C"}))
 
+    def test_a_route_value_urlsplit_rejects_exits_clean_and_keeps_its_secret(
+        self,
+    ) -> None:
+        """The CLI run of the value above: no exit 3, no marker on either stream.
+
+        Run as a process, through `main`'s boundary, which is what turned the
+        raise into exit 3 and a printed message quoting the userinfo (#617).
+        """
+        marker = "MARKERSECRET123"
+        env_text = (
+            f"TRAIGENT_BACKEND_URL=https://u:{marker}@ho／st\n"
+            "TRAIGENT_API_KEY=tg_abcdefabcdefabcdef\n"
+        )
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                with tempfile.TemporaryDirectory() as directory:
+                    env_path = Path(directory) / ".env"
+                    env_path.write_text(env_text, encoding="utf-8")
+                    env_path.chmod(0o600)
+                    completed = subprocess.run(
+                        [
+                            sys.executable,
+                            "-I",
+                            "-S",
+                            str(SCRIPT),
+                            "--env",
+                            str(env_path),
+                            "--project-root",
+                            directory,
+                            "--defer-missing-sdk",
+                            *extra,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        env={
+                            "PATH": os.environ.get("PATH", ""),
+                            "LANG": "C.UTF-8",
+                        },
+                    )
+                self.assertNotEqual(completed.returncode, 3, completed.stderr)
+                self.assertNotIn(marker.lower(), completed.stdout.lower())
+                self.assertNotIn(marker.lower(), completed.stderr.lower())
+
     def test_a_scheme_less_route_value_with_a_token_is_not_printed(self) -> None:
         output = self.run_preflight(
             "TRAIGENT_BACKEND_URL=api.example.com/v1?token=SECRETTOKEN999\n",
@@ -8963,6 +9032,18 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
     def test_a_bom_that_breaks_the_first_name_is_named(self) -> None:
         _, records = self.parse("\ufeffOK=1\n")
         self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_refused_first_line_behind_a_bom_is_not_blamed_on_the_bom(self) -> None:
+        """The BOM sentence needs the first line in `invalid_name_lines` (#623).
+
+        Here the first line is refused by load_dotenv (a NUL byte), so it is
+        not an invalid name: the refusal is the finding and the mark is not.
+        Dropping the `1 in invalid_name_lines` term would name the mark too.
+        """
+        _, records = self.parse("\ufeffA=x\x00y\n")
+        self.assertEqual(records[0].status, MODULE.FAIL)
+        self.assertEqual(records[0].metrics["refused_lines"], [1])
+        self.assertNotIn("byte-order", records[0].detail)
 
     def test_export_is_stripped_before_an_unparseable_statement_is_classified(
         self,
