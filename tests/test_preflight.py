@@ -9063,11 +9063,11 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
         self.assertIn("byte-order mark", records[0].detail)
 
     def test_a_refused_first_line_behind_a_bom_is_not_blamed_on_the_bom(self) -> None:
-        """The BOM sentence needs the first line in `invalid_name_lines` (#623).
+        """The BOM sentence skips a refused first line (#623).
 
         Here the first line is refused by load_dotenv (a NUL byte), so it is
-        not an invalid name: the refusal is the finding and the mark is not.
-        Dropping the `1 in invalid_name_lines` term would name the mark too.
+        in no population the BOM sentence names: the refusal is the finding
+        and the mark is not. Naming the mark here would blame it for the NUL.
         """
         _, records = self.parse("\ufeffA=x\x00y\n")
         self.assertEqual(records[0].status, MODULE.FAIL)
@@ -9103,10 +9103,10 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
         _, records = self.parse("export prose\n")
         self.assertEqual(records[0].metrics["unparsed_lines"], [1])
 
-    def test_an_unparseable_statement_with_a_bad_name_is_an_invalid_name(self) -> None:
+    def test_an_unparseable_statement_with_a_bad_name_is_dropped(self) -> None:
         _, records = self.parse('1BAD="abc\n')
-        self.assertEqual(records[0].metrics["invalid_name_lines"], [1])
-        self.assertEqual(records[0].metrics["dropped_statements"], [])
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [])
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
 
     def test_a_bare_key_is_recorded_as_unparsed(self) -> None:
         values, records = self.parse("BARE\n")
@@ -9433,3 +9433,142 @@ class NonAdmittedKeysStillFeedExpansionTests(unittest.TestCase):
                         if ADMITTED_ENV_NAME.fullmatch(key)
                     }
                     self.assertEqual(mine, theirs)
+
+
+class EnvFilePopulationIsPythonDotenvsVerdictTests(unittest.TestCase):
+    """Each unused statement lands where python-dotenv's own Binding puts it."""
+
+    def parse(self, contents):
+        return EnvFileParserPinsEveryRecordTests.parse(self, contents)
+
+    def test_a_bare_key_after_a_value_clears_it(self):
+        values, records = self.parse("OPENAI_API_KEY=sk-test\nOPENAI_API_KEY\n")
+        self.assertEqual(values, {"OPENAI_API_KEY": None})
+        self.assertEqual(records[0].metrics["clearing_lines"], [2])
+        self.assertEqual(records[0].metrics["unparsed_lines"], [])
+        self.assertEqual(records[0].metrics["ignored_lines"], 0)
+        self.assertIn(
+            'line 2 has no "=" and clears the value an earlier line gave the same name',
+            records[0].detail,
+        )
+        self.assertNotIn("sk-test", records[0].detail)
+
+    def test_a_second_bare_key_clears_nothing(self):
+        _, records = self.parse("K=a\nK\nK\n")
+        self.assertEqual(records[0].metrics["clearing_lines"], [2])
+        self.assertEqual(records[0].metrics["unparsed_lines"], [3])
+
+    def test_a_bare_key_with_no_earlier_value_is_not_key_value(self):
+        _, records = self.parse("OPENAI_API_KEY\nK=\nK\n")
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1])
+        self.assertEqual(records[0].metrics["clearing_lines"], [3])
+
+    def test_an_unclosed_value_behind_a_quoted_key_is_dropped(self):
+        for text in (
+            "'OPENAI_API_KEY'=\"abc\n",
+            "export 'OPENAI_API_KEY'='abc\n",
+            'MY-KEY="abc\n',
+            "=abc\n",
+        ):
+            with self.subTest(text=text):
+                _, records = self.parse(text)
+                self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+                self.assertEqual(records[0].metrics["invalid_name_lines"], [])
+
+    def test_a_bom_before_an_unclosed_value_is_named(self):
+        _, records = self.parse('\ufeffOPENAI_API_KEY="abc\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_refused_first_line_is_not_blamed_on_the_bom_beside_a_later_line(self):
+        for later in ("see the docs\n", "TODO\n", "1BAD=x\n", 'K="abc\n'):
+            with self.subTest(later=later):
+                _, records = self.parse("\ufeffA=x\x00y\n" + later)
+                self.assertEqual(records[0].status, MODULE.FAIL)
+                self.assertNotIn("byte-order", records[0].detail)
+
+    def test_every_population_is_python_dotenvs_verdict(self):
+        try:
+            import dotenv.parser as dp
+        except ImportError:
+            self.skipTest("python-dotenv is not installed")
+        import io
+        import random
+
+        name = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+        newline = re.compile(r"\r\n|\n|\r")
+
+        def expected(text):
+            unparsed, invalid, dropped, clearing, last = [], [], [], [], {}
+            for b in dp.parse_stream(io.StringIO(text)):
+                body = b.original.string.lstrip()
+                start = b.original.line + len(
+                    newline.findall(
+                        b.original.string[: len(b.original.string) - len(body)]
+                    )
+                )
+                end = start + len(newline.findall(re.sub(r"(\r\n|\n|\r)$", "", body)))
+                if b.error:
+                    if start == end and "=" not in body:
+                        unparsed.append(start)
+                    else:
+                        dropped.append((start, end))
+                elif b.key is not None:
+                    if b.value is None:
+                        (clearing if last.get(b.key) is not None else unparsed).append(
+                            start
+                        )
+                    elif not name.fullmatch(b.key):
+                        invalid.append(start)
+                    last[b.key] = b.value
+            return unparsed, invalid, dropped, clearing
+
+        fragments = [
+            "OPENAI_API_KEY",
+            "'OPENAI_API_KEY'",
+            "export ",
+            "MY-KEY",
+            "\ufeff",
+            "=",
+            " ",
+            "\t",
+            '"',
+            "'",
+            "#",
+            "sk-1",
+            "\n",
+            "\r\n",
+            "\r",
+            "${OPENAI_API_KEY}",
+            "a b",
+            "x",
+        ]
+        rng = random.Random(623)
+        for _ in range(20000):
+            text = "".join(rng.choice(fragments) for _ in range(rng.randint(1, 14)))
+            parsed = MODULE.parse_dotenv_text(text)
+            unparsed, invalid, dropped, clearing = expected(text)
+            refused = set(parsed.refused_lines)
+            self.assertEqual(
+                (
+                    parsed.unparsed_lines,
+                    parsed.invalid_name_lines,
+                    parsed.dropped_spans,
+                    parsed.clearing_lines,
+                ),
+                (
+                    unparsed,
+                    [line for line in invalid if line not in refused],
+                    dropped,
+                    clearing,
+                ),
+                repr(text),
+            )
+            bom_named = text.startswith("\ufeff") and (
+                1 in parsed.unparsed_lines
+                or 1 in parsed.invalid_name_lines
+                or any(start == 1 for start, _ in parsed.dropped_spans)
+            )
+            self.assertEqual(
+                bom_named, text.startswith("\ufeff") and 1 not in refused, repr(text)
+            )

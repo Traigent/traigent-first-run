@@ -861,6 +861,8 @@ class _DotenvStatement(NamedTuple):
     start_line: int
     end_line: int
     error: bool
+    # Whether the text python-dotenv consumed for it holds an `=`.
+    has_equals: bool
 
 
 class _DotenvReader:
@@ -927,7 +929,7 @@ def _dotenv_statement(reader: _DotenvReader) -> _DotenvStatement:
     begin = reader.pos
     try:
         if not reader.has_next():
-            return _DotenvStatement(None, None, start_line, start_line, False)
+            return _DotenvStatement(None, None, start_line, start_line, False, False)
         reader.read(_DOTENV_EXPORT)
         key = _dotenv_key(reader)
         reader.read(_DOTENV_WHITESPACE)
@@ -950,7 +952,7 @@ def _dotenv_statement(reader: _DotenvReader) -> _DotenvStatement:
     end_line = start_line + max(
         newlines - (1 if consumed.endswith(("\n", "\r")) else 0), 0
     )
-    return _DotenvStatement(key, value, start_line, end_line, error)
+    return _DotenvStatement(key, value, start_line, end_line, error, "=" in consumed)
 
 
 def _dotenv_statements(text: str) -> list[_DotenvStatement]:
@@ -1013,6 +1015,9 @@ class DotenvParse(NamedTuple):
     unparsed_lines: list[int]
     invalid_name_lines: list[int]
     dropped_spans: list[tuple[int, int]]
+    # Bare keys (no `=`) over a key whose binding so far had a value: python-
+    # dotenv binds them to None, which clears that value.
+    clearing_lines: list[int]
     # The names whose LAST binding was written with a `${NAME}` reference, so
     # the value was built from other variables. Decided from the text the
     # customer wrote, not from the expanded value: a route value printed from
@@ -1061,22 +1066,16 @@ def parse_dotenv_text(text: str) -> DotenvParse:
     # legal variable name is a setting spelled wrong.
     unparsed_lines: list[int] = []
     invalid_name_lines: list[int] = []
-    # The lines python-dotenv's statements start on, split as it counts them.
-    lines = _DOTENV_NEWLINE.split(text)
+    clearing_lines: list[int] = []
     # Statements python-dotenv drops, as (first, last) source lines.
     dropped_spans: list[tuple[int, int]] = []
     for statement in _dotenv_statements(text):
         if statement.error:
-            # The population is decided by the first line, as before: a line
-            # with no `=` is prose, a key that is not a legal name is a setting
-            # spelled wrong, and anything else is a setting the runtime drops.
-            first = lines[statement.start_line - 1].strip()
-            if first.startswith("export "):
-                first = first.removeprefix("export ").lstrip()
-            if "=" not in first:
+            # python-dotenv's verdict is "could not parse": nothing in it is
+            # set. A one-line statement with no `=` is also, as written, not
+            # KEY=VALUE, which is the more useful thing to tell a reader.
+            if statement.start_line == statement.end_line and not statement.has_equals:
                 unparsed_lines.append(statement.start_line)
-            elif not _ENV_NAME.fullmatch(first.split("=", 1)[0].strip()):
-                invalid_name_lines.append(statement.start_line)
             else:
                 dropped_spans.append((statement.start_line, statement.end_line))
             continue
@@ -1090,12 +1089,11 @@ def parse_dotenv_text(text: str) -> DotenvParse:
             if statement.value is None
             else _expand_dotenv_variables(statement.value, {**bound, **process_env})
         )
+        clears = statement.value is None and bound.get(statement.key) is not None
         bound[statement.key] = expanded
         bound_at[statement.key] = statement.start_line
         if statement.value is None:
-            # No `=` at all: prose where a setting was expected, whatever the
-            # word looks like, as the error branch above decides it.
-            unparsed_lines.append(statement.start_line)
+            (clearing_lines if clears else unparsed_lines).append(statement.start_line)
             if _ENV_NAME.fullmatch(statement.key):
                 values[statement.key] = None
                 interpolated.discard(statement.key)
@@ -1125,6 +1123,7 @@ def parse_dotenv_text(text: str) -> DotenvParse:
         unparsed_lines,
         [line for line in invalid_name_lines if line not in refused],
         dropped_spans,
+        clearing_lines,
         frozenset(interpolated),
         refused_lines,
     )
@@ -1203,6 +1202,11 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
                 "has an invalid environment variable name and was ignored",
                 "have an invalid environment variable name and were ignored",
             ),
+            (
+                parsed.clearing_lines,
+                'has no "=" and clears the value an earlier line gave the same name',
+                'have no "=" and clear the value an earlier line gave the same name',
+            ),
         )
         if (clause := env_line_clause(lines, singular, plural))
     ]
@@ -1211,7 +1215,9 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
     # prose or a setting to a reader and the cause is the invisible character.
     # A refused first line is already out of both lists, so it is not blamed.
     if text.startswith("\ufeff") and (
-        1 in parsed.unparsed_lines or 1 in parsed.invalid_name_lines
+        1 in parsed.unparsed_lines
+        or 1 in parsed.invalid_name_lines
+        or any(start == 1 for start, _ in parsed.dropped_spans)
     ):
         findings.append(
             "the file starts with a UTF-8 byte-order mark, which becomes part of "
@@ -1234,6 +1240,7 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
             "unparsed_lines": parsed.unparsed_lines,
             "invalid_name_lines": parsed.invalid_name_lines,
             "dropped_statements": [list(span) for span in parsed.dropped_spans],
+            "clearing_lines": parsed.clearing_lines,
         }
         if parsed.refused_lines:
             metrics["refused_lines"] = parsed.refused_lines
