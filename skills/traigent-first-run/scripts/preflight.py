@@ -818,7 +818,7 @@ def env_line_clause(lines: list[int], singular: str, plural: str) -> str:
 #: agree, so a bump cannot move the runtime without this port being re-read.
 PYTHON_DOTENV_GRAMMAR_VERSION = "1.2.2"
 
-# python-dotenv's `parser.py` and `variables.py`, verbatim. Stdlib only: this
+# Syntax from python-dotenv's `parser.py` and `variables.py`. Stdlib only: this
 # check runs with `-I -S` and must not import the package or run its code.
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _DOTENV_NEWLINE = re.compile(r"(?:\r\n|\n|\r)")
@@ -909,7 +909,11 @@ def _dotenv_value(reader: _DotenvReader) -> str:
     if char in ("", "\n", "\r"):
         return ""
     (part,) = reader.read(_DOTENV_UNQUOTED_VALUE)
-    return re.sub(r"\s+#.*", "", part).rstrip()
+    # An unquoted comment starts at the first # preceded by whitespace.
+    for index, character in enumerate(part):
+        if character == "#" and index > 0 and part[index - 1].isspace():
+            return part[:index].rstrip()
+    return part.rstrip()
 
 
 def _decode_dotenv_escape(match: re.Match[str]) -> str:

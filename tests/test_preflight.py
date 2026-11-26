@@ -8330,11 +8330,12 @@ DOTENV_CORPUS_FILES = (
     "\ufeffK=v\n",
     'K=#c\nQ="#c"\n',
     "K=a\nK\n",
+    "K=left#kept\u2003#comment #rest\nD=literal#hash  \nE=#first\n",
 )
 
 #: The identifier shape preflight admits as a key. python-dotenv keeps other
 #: keys too (a byte-order mark sticks to the first one); preflight ignores
-#: them as invalid names, so the comparison is over admitted names only.
+#: them in its shell-name inventory, so the comparison covers admitted names only.
 ADMITTED_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 
