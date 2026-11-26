@@ -6042,19 +6042,15 @@ class CopiedActorWorkerOutputTests(unittest.TestCase):
         fixture = CopiedActorRouteTests()
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            files = fixture.project(
-                directory,
-                copy_source="import litellm\n" + fixture.COPY,
-                original_source="import litellm\n" + fixture.ORIGINAL,
-            )
+            files = fixture.project(directory)
             with files["env"].open("a") as settings:
                 settings.write("DB_FILE=fixture-original.sqlite\n")
             guard = root / "guard"
             guard.mkdir()
             records = root / "observations"
             records.mkdir()
-            # python-dotenv selects its debugger path when sys.gettrace() is
-            # non-None. Tracking every line of the SDK imports is unnecessary.
+            # Exercise the same dotenv discovery and load that LiteLLM does
+            # without repeatedly importing the SDK during the calibration.
             (guard / "sitecustomize.py").write_text(
                 "import atexit,json,os,socket,sys\nfrom pathlib import Path\n"
                 "def deny(*a,**k): raise RuntimeError('network denied')\n"
@@ -6063,9 +6059,13 @@ class CopiedActorWorkerOutputTests(unittest.TestCase):
                 " if sys.gettrace() is None:\n"
                 "  def trace(frame,event,arg): return None\n"
                 "  sys.settrace(trace)\n"
+                " from dotenv import find_dotenv,load_dotenv\n"
+                f" project_env_found=Path(find_dotenv()).resolve()==Path({str(files['env'])!r}).resolve()\n"
+                " load_dotenv()\n"
                 " def record():\n"
                 "  state={'original_reloaded':'DB_FILE' in os.environ,"
                 "'provider_reloaded':'OPENAI_API_KEY' in os.environ,"
+                "'project_env_found':project_env_found,"
                 "'trace_active':sys.gettrace() is not None}\n"
                 "  (Path(os.environ['FIXTURE_OBSERVATIONS'])/str(os.getpid()))"
                 ".write_text(json.dumps(state))\n"
@@ -6076,7 +6076,6 @@ class CopiedActorWorkerOutputTests(unittest.TestCase):
                 "HOME": str(root),
                 "PYTHONPATH": str(guard),
                 "FIXTURE_OBSERVATIONS": str(records),
-                "LITELLM_LOCAL_MODEL_COST_MAP": "true",
             }
             with unittest.mock.patch.dict(os.environ, environment, clear=True):
                 process = fixture.route(files, "--timeout", "30", cwd=root)
@@ -6091,6 +6090,7 @@ class CopiedActorWorkerOutputTests(unittest.TestCase):
             observations = [json.loads(path.read_text()) for path in records.iterdir()]
             self.assertTrue(observations)
             self.assertTrue(all(state["trace_active"] for state in observations))
+            self.assertTrue(any(state["project_env_found"] for state in observations))
             self.assertFalse(any(state["original_reloaded"] for state in observations))
             self.assertFalse(any(state["provider_reloaded"] for state in observations))
 
