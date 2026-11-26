@@ -723,7 +723,7 @@ class SharedRuntimeTests(unittest.TestCase):
     def bindings(tree: ast.Module) -> dict[str, ast.AST]:
         found: dict[str, ast.AST] = {}
         for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
                 found[node.name] = node
             elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
                 found[node.target.id] = node
@@ -746,6 +746,7 @@ class SharedRuntimeTests(unittest.TestCase):
             "UNPRICED_KNOB_MARKERS",
             "worst_case_requests",
             "tracking_stopped",
+            "CostCeilingRefusal",
             "reserve_call_spend",
             "settle_call_spend",
             "REJECTED_BEFORE_BILLING",
@@ -1507,6 +1508,7 @@ class FirstRunAuditTests(unittest.TestCase):
             "run_remaining_usd",
             "worst_case_requests",
             "tracking_stopped",
+            "CostCeilingRefusal",
             "reserve_call_spend",
             "settle_call_spend",
             "release_call_spend",
@@ -1518,7 +1520,7 @@ class FirstRunAuditTests(unittest.TestCase):
         nodes = [
             n
             for n in ast.parse(fence).body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
             and n.name in wanted
             or isinstance(n, (ast.Assign, ast.AnnAssign))
             and any(
@@ -1693,6 +1695,7 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
             "run_remaining_usd",
             "worst_case_requests",
             "tracking_stopped",
+            "CostCeilingRefusal",
             "reserve_call_spend",
             "settle_call_spend",
             "release_call_spend",
@@ -1706,7 +1709,7 @@ class FirstRunAuditRoundFiveTests(unittest.TestCase):
         nodes = [
             n
             for n in ast.parse(fence).body
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
             and n.name in wanted
             or isinstance(n, (ast.Assign, ast.AnnAssign))
             and any(
