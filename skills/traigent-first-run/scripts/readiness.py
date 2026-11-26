@@ -2353,12 +2353,13 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int | None], ...]], ...] =
             # Its twin with a named defect; the two are raised by exclusive
             # branches, so the rank between them decides nothing observable.
             ("dataset-unusable", DATASET_UNUSABLE_CEILING),
-            # Third of the three at 25, and ranked last of them under the rule
-            # the ties below already follow: a severity you counted outranks
-            # one you did not. `evaluator-invalid` is proven by probes that
-            # ran, `dataset-shape-unrecognised` by a file that was read and
-            # matched nothing, and this one is established by omission - the
-            # weakest positive evidence of the three, so it ranks after both.
+            # Last of the four at 25, under the rule the ties below already
+            # follow: a severity you counted outranks one you did not.
+            # `evaluator-invalid` is proven by probes that ran,
+            # `dataset-shape-unrecognised` by a file that was read and matched
+            # nothing, `dataset-unusable` by a defect preflight found, and this
+            # one is established by omission - the weakest evidence of the four,
+            # so it ranks after all three.
             ("agent-absent", AGENT_ABSENT_CEILING),
             ("dataset-no-expected-outputs", DATASET_NO_EXPECTED_OUTPUTS_CEILING),
             ("dataset-integrity-fail", DATASET_INTEGRITY_CEILING),

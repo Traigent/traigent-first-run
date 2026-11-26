@@ -6601,10 +6601,10 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # 20 only because the dataset and the evaluation method that
                 # would measure the agent are still there, which is the same
                 # sentence `evaluator-invalid` carries one pillar over. Ranked
-                # last of the three under the counted-before-inferred rule the
-                # 40 and 70 ties already apply - the other two are read off a
-                # ruler that ran and a file that was parsed, and this one off
-                # three inputs that did not arrive.
+                # last of the four under the counted-before-inferred rule the
+                # 40 and 70 ties already apply - the other three are read off a
+                # ruler that ran, a file that was parsed, and a defect preflight
+                # found, and this one off inputs that did not arrive.
                 # #617/#620 join them: no usable row, with a defect preflight
                 # named. Ranked directly after its no-defect twin, which it can
                 # never meet - the two are exclusive branches of one test.
