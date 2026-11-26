@@ -1379,7 +1379,7 @@ class FirstRunAuditTests(unittest.TestCase):
         self.assertIn("this process placed 1 provider call(s)", done.stdout)
         result = json.loads((project.runs / "baseline-results.json").read_text())
         self.assertFalse(result["complete"])
-        self.assertEqual(result["stop_reason"], "safety_refusal")
+        self.assertEqual(result["stop_reason"], "evaluator_call_count")
         self.assertEqual(result["provider_calls"], 1)
         self.assertEqual(result["results"][0]["n_failed"], 0)
         self.assertEqual(result["results"][0]["n_unfinished"], len(ROWS))
