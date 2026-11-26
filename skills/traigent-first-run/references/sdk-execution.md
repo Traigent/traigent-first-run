@@ -293,57 +293,40 @@ selected route lists at run time, then verify each id is live before scaling. Mi
 
 **Default: generate the bridge.** Write `traigent-runs/adapter.json` (`assets/adapter.schema.json`)
 from mappings the user approved; `scripts/generate_adapter.py suggest` only proposes them. Then
-`generate_adapter.py generate --config ... --project-root ...` imports their agent and evaluator
-unchanged, and the probe (wiring, no keys) and the baseline command run under the shared runtime's
-ledger and offline boundary. Run the commands the generator prints under "next" and calibrate with
-the scorer it prints there, rather than typing either path: both follow the run directory actually
-selected, and are already shell-quoted.
+`generate_adapter.py generate --config ... --project-root ...` checks the callables statically.
+The generated bridge imports them unchanged when its commands run. Use the printed probe,
+scorer, and baseline commands; their quoted paths follow the selected run directory.
 
-For the connected walkthrough, keep the default `traigent-runs` directory before the baseline:
-the bundled wrapper and phase commands read their artifacts there. A different run directory
-requires a hand-adapted path for both phases; decide that before paid work.
-If a custom-directory baseline is already complete, preserve and report its actual artifact;
-do not automatically repeat it or claim connected reuse without proving the adapted paths.
+Prepare the connected handoff before paid work:
 
-Name its normalized primary measure before the baseline, for example
-`"primary_metric": {"name": "task_quality", "orientation": "maximize"}`. Use the calibrated measure's meaningful
-name, not an assumed accuracy label. The generated scorer returns a normalized, higher-is-better
-grade; raw minimized measures need the hand-adapted route before paid work. Its baseline saves
-complete numeric comparison evidence inside `traigent-runs/baseline-results.json` by default
-(use the selected run directory if different), bound to the measured tuning
-inputs, expected answers, metadata, configuration space and primary definition. For the connected
-wrapper, normalize the same tuning rows into its SDK dataset shape without changing their order,
-values or metadata: each derived JSONL row is exactly
-`{"input": mapped_input, "expected_output": mapped_expected, "metadata": preserved_metadata}`.
-These values come from the approved adapter mappings; keep `metadata.example_id` and all other
-mapped metadata unchanged. Leave the original dataset intact. Do not copy unmapped top-level
-fields into the derived rows: the SDK would promote those extras into metadata and change the
-comparison material. Its loader verifies that the SDK actually reads the same material. Keep the
-same primary definition and primary-only mode: the bridge's aggregate spend is not per-trial cost.
-The generated baseline is already measured; do not run the SDK baseline fence below again.
+1. Use the default `traigent-runs` directory for the wrapper and its artifacts. A custom
+   directory needs a hand-adapted route for both phases.
+2. Give the bridge a meaningful normalized primary measure, for example
+   `"primary_metric": {"name": "task_quality", "orientation": "maximize"}`. Use the
+   hand-adapted SDK route for raw minimized measures. The generated comparison is primary-only
+   because the bridge records overall spend without per-trial costs.
+3. Use the stable-ID shape in `evaluation-and-dataset.md`. Map the ID to
+   `metadata.example_id` and metadata to its containing object. Write the SDK's
+   `traigent-runs/tuning.jsonl` in the same row order using only
+   `{"input": mapped_input, "expected_output": mapped_expected, "metadata": preserved_metadata}`.
+   Keep every mapped value and its type. Preserve the bridge's source separately when it needs
+   fields or paths absent from this projection. Verify the SDK reads the same rows and the
+   connected adapter passes the same agent and evaluator arguments. The default SDK agent receives
+   input only; use the public full-example evaluator route below when it also needs metadata.
+   If equivalent arguments cannot be proved, use the hand-adapted SDK route for both phases.
 
-Older generated artifacts lack that baseline-time identity. Preserve them and report a
-baseline-only result when the loader refuses them; reconstructing missing identity from today's
-files or repeating paid work is not a metadata repair.
-
-The generated handoff consumes the stable-ID shape specified for generated rows in
-`evaluation-and-dataset.md`. Point the adapter's dataset ID mapping at `metadata.example_id` and its
-metadata mapping at the containing object. Keep those same values and metadata in the connected
-dataset; do not drop IDs, add fields to the evaluator's input, or strip fields merely to make the
-fingerprint match. Generation refuses unsupported ID mappings before paid work. Before starting
-that baseline, also verify that the connected adapter preserves the actual agent/evaluator call
-arguments: the SDK's default agent call receives input data, while metadata goes to scorers.
-An agent that needs row metadata requires the existing public full-example evaluator route
-described below, with its call arguments checked explicitly. Dataset fingerprint equality alone
-does not prove this. If those arguments cannot be preserved, use the hand-adapted SDK route for
-both phases before paid work.
+The bridge saves its measured grid and comparison identity in `traigent-runs/baseline-results.json`. The
+connected loader verifies the saved record against the rows it actually loaded. Skip the SDK
+baseline fence for a generated baseline already measured. Preserve an older result without
+baseline-time identity, or one in an unadapted custom directory, as baseline-only. Keep its actual
+artifact and report the limitation without reconstructing evidence or replaying paid work.
 
 A generated-bridge baseline that ends **exit 3** has not produced a complete comparison, and the
 saved means are diagnostic only. This includes unscored configurations, failed examples, timeouts,
 and safety refusals. Read the record's stop reason, completed and unfinished row counts, and
-budget debit; a safety refusal can retain scored rows with no ordinary failures. **Timeout and
-cost-ceiling stops follow `run-safety.md`'s Recovery rules.** Diagnose other safety refusals and
-example failures before further paid work. Do not read a **winner** from the run
+budget debit; a safety refusal can retain scored rows with no ordinary failures. Follow
+`run-safety.md` Recovery for `timeout` or `cost_ceiling`. For `evaluator_call_count`, check the scorer's
+declared and actual calls. Diagnose other refusals and row failures before further paid work. Do not read a **winner** from the run
 or re-run blind: the spend already happened. Carry the cumulative debit forward exactly as below;
 dropping that budget figure would launch the next phase against the full ceiling again. Report
 the incomplete comparison, its saved observations, failure types and counts, and what it cost.
@@ -414,9 +397,8 @@ Two gates hold the approved total, and they are different gates because the spen
 different ways. Inside `optimize_sync`, the SDK admits a trial only while its own limit allows, and
 that limit is now the remaining rather than a default: the wrapper writes
 `TRAIGENT_RUN_COST_LIMIT` before importing the SDK, so a phase reaching it stops gracefully and
-reports `stop_reason`. Outside it, held-out scoring and an LLM judge call `litellm.completion`
-directly, where no permit exists - so the second gate is on `litellm.completion` itself, wrapped
-once at setup, and it refuses a call whose worst case the remaining cannot cover. Neither gate is
+reports `stop_reason`. Outside SDK trials, held-out agent and judge calls use the wrapper's
+`litellm.completion` ledger, which refuses a call whose worst case the remaining cannot cover. Neither gate is
 arithmetic the assistant performs between phases: the first is the SDK's per-trial admission check,
 the second a ledger reserved against before each call and settled after it.
 
@@ -506,11 +488,11 @@ When cost is absent, keep `None` and the existing conservative debit. Do not rec
 response with `litellm.completion_cost()`: a missing local price entry can raise after a billable call.
 `references/run-safety.md` owns the bounded continuation choice and its disclosure.
 
-Select `INCLUDE_COST_OBJECTIVE` from the approved probe's evidence before constructing the
-operation's public `ObjectiveSchema`. Leave it false when trustworthy cost coverage is unavailable;
-the SDK then optimizes the customer's primary criterion alone. Set it true only when the SDK's
-costs have the expected response provenance and coverage. This is an agent-derived fact, not a
-user-facing knob. Once a started comparison is primary-only, keep that mode for its remaining
+For SDK-backed baselines, select `INCLUDE_COST_OBJECTIVE` from the approved probe before
+constructing the public `ObjectiveSchema`. Leave it false without trustworthy cost coverage.
+Enable cost on the SDK-backed route only when the SDK costs have verified provenance and
+coverage. For a generated baseline handoff, keep it false because the bridge has no per-trial
+costs. Derive this from evidence without asking the user to select an objective mode. Once a started comparison is primary-only, keep that mode for its remaining
 planned phases; restored costs may be reported, while cost optimization belongs to a future run.
 Record each phase's actual objectives in the run plan. Preserve the normal
 quality-and-cost path when its cost evidence is sound. The SDK's automatic missing-price approval

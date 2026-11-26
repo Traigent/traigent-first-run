@@ -117,7 +117,7 @@ Only after the standard-library-only component checks:
    below. Into the throwaway environment: the exact pins in
    `assets/requirements-first-run.txt`, never the project's own declarations, which the run never
    edits. Never use an unversioned `pip install traigent`. On the throwaway route,
-   say first: `Installing traigent==0.31.1, litellm==1.101.3 and python-dotenv==1.2.2 into
+   say first: `Installing traigent==0.31.1, litellm==1.108.6 and python-dotenv==1.2.2 into
    <absolute path>/.venv-traigent - a package fetch only: no provider or Traigent calls, and none
    of your project's code runs.` Then proceed: the notice is not a question, and the
    install-approval policy clause in the authorization table still governs. Keep this unattended
@@ -282,17 +282,14 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    covers every installed package, including `python-dotenv` and transitive dependencies. A
    dependency conflict needs a revised disclosed plan; never silently
    upgrade, downgrade, or reinstall an installed package. If planning fails, show
-   `No install plan was produced; no installed packages changed. <observed resolver reason>.`
-   Name any reported version conflict in the customer's terms; do not label a network or missing-wheel
-   failure a dependency conflict. Recommend a compatible project environment.
-   Offer the throwaway route only with its compatibility
-   consequence: for example, `Your agent uses openai 3.x; this SDK stack requires openai below 3.
-   A throwaway environment preserves yours, but would run your agent with that older dependency;
-   compatibility is unverified.` Never recommend that dependency downgrade as the remedy or enter
-   the fallback automatically. After an explicit fallback choice, show its resolved dependency
-   versions and apply the existing static/mock checks to the selected agent before proposing a paid run.
-   Record the versions actually installed and any difference from the original agent's dependency
-   versions as this run's setup evidence.
+   `No install plan was produced; no installed packages changed. <sanitized cause>.`
+   Recommend a compatible environment for a version conflict. For a network or missing-wheel
+   failure, address connectivity or wheel availability first. Offer the throwaway route only with
+   its compatibility consequence: `Your agent uses openai 3.x; this SDK requires openai below 3.
+   A throwaway environment preserves yours, but compatibility with that older dependency is
+   unverified.` Never recommend that downgrade or enter the fallback automatically. After an
+   explicit fallback choice, show its resolved versions and run static/mock checks before planning
+   paid work. Record installed versions and differences from the original agent's dependencies.
 5. **Throwaway route.** `.venv-traigent` under the project root with Python 3.11-3.13 and the
    exact pins (`throwaway`) - used only when the customer declines the project-environment
    install, refuses the guard's change line, or explicitly chooses it because `.venv` is occupied
@@ -1290,8 +1287,7 @@ After showing the baseline result, give the connected stage a preview and approv
   this same approval rather than asking again afterward, and add their known cost or conservative
   deduction to the single running total. The wrapper refuses the whole held-out pass rather than starting one the remaining
   cannot fund to the last row; say that here, because a pass that is refused returns no held-out
-  score at all. `references/sdk-execution.md` owns which of this run's paid calls no permit covers -
-  a judge's are among them, on every scored row of the search as well as these.
+  score at all. See `references/sdk-execution.md` for which paid calls run outside trial permits.
 - Bounds and value: runtime, known cost, budget debit and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts.
@@ -1461,10 +1457,9 @@ recalculate a completed OpenRouter response with `litellm.completion_cost()`: a 
 model-map entry can raise after the call. An SDK `0.0` default or estimated token count does not
 establish a free call or provider-reported usage.
 
-Before each baseline or search operation, use cost as an SDK objective only when its cost coverage
-is trustworthy for the actual agent and evaluator call paths. Otherwise use the public SDK's
-primary-only objective path owned by `references/sdk-execution.md`. Keep the primary criterion and
-its direction unchanged. This is a quality-only comparison, with no cost-ranked recommendation,
+Use the objective-selection rules in `references/sdk-execution.md` for the baseline producer
+and its actual agent and evaluator cost coverage. Keep the primary criterion and
+its direction unchanged. A primary-only comparison supports no cost-ranked recommendation,
 savings claim or objective-cost frontier. Missing usage by itself does not remove a trustworthy
 cost measurement; a provider cost field alone does not prove the SDK's cost objective consumed it.
 Repair before the first baseline may establish cost coverage normally. Once an operation has used
@@ -2169,11 +2164,10 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
 - Environment creation, installation, or installed-preflight failure: preserve every existing
-  environment and stop with the chosen environment's absolute path and the concrete failure,
-  quoting pip's own message for a failed install. Recommend inspecting it, or remove and recreate
-  only the throwaway environment after explicit user approval; a failed install into the
-  customer's own environment offers the throwaway route instead, and nothing falls back to a
-  shared or dependent environment.
+  environment and stop with the chosen environment's absolute path and the sanitized cause.
+  Keep raw pip logs out of chat and tool output. Inspect the stopped environment before
+  further changes. Remove and recreate only the throwaway environment with explicit approval.
+  For a failed install in the customer's environment, offer only the approved throwaway route.
 
 For generated wrappers, set the process-only SDK results folder to a child of `traigent-runs/`
 before importing Traigent so its local optimization logs and state remain inside the ignored

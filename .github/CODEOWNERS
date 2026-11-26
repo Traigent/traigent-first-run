@@ -1,0 +1,16 @@
+# Code owners for review routing. Changes to these paths need review from the
+# owner before merge. No org team has access to this repo, so the owner is a
+# named login.
+
+# CI workflows: a change here can alter what runs with repo secrets.
+/.github/workflows/          @nimrodbusany
+
+# Dependency manifests and lockfiles.
+/deps/                       @nimrodbusany
+
+# Skill assets and requirements files (installed into user environments).
+/skills/traigent-first-run/assets/   @nimrodbusany
+**/requirements*.txt                 @nimrodbusany
+
+# Maintenance tooling (relock, guard census, disclosure scan).
+/tools/                      @nimrodbusany
