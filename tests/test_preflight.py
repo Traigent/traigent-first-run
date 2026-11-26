@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 import io
 import itertools
@@ -15,6 +14,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
