@@ -14,8 +14,8 @@ import argparse
 import configparser
 import contextlib
 import csv
-import errno
 import email.parser
+import errno
 import importlib.util
 import json
 import ntpath
