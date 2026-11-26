@@ -1287,8 +1287,7 @@ After showing the baseline result, give the connected stage a preview and approv
   this same approval rather than asking again afterward, and add their known cost or conservative
   deduction to the single running total. The wrapper refuses the whole held-out pass rather than starting one the remaining
   cannot fund to the last row; say that here, because a pass that is refused returns no held-out
-  score at all. `references/sdk-execution.md` owns which of this run's paid calls no permit covers -
-  a judge's are among them, on every scored row of the search as well as these.
+  score at all. See `references/sdk-execution.md` for which paid calls run outside trial permits.
 - Bounds and value: runtime, known cost, budget debit and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts.
@@ -1458,10 +1457,9 @@ recalculate a completed OpenRouter response with `litellm.completion_cost()`: a 
 model-map entry can raise after the call. An SDK `0.0` default or estimated token count does not
 establish a free call or provider-reported usage.
 
-Before each baseline or search operation, use cost as an SDK objective only when its cost coverage
-is trustworthy for the actual agent and evaluator call paths. Otherwise use the public SDK's
-primary-only objective path owned by `references/sdk-execution.md`. Keep the primary criterion and
-its direction unchanged. This is a quality-only comparison, with no cost-ranked recommendation,
+Use the objective-selection rules in `references/sdk-execution.md` for the baseline producer
+and its actual agent and evaluator cost coverage. Keep the primary criterion and
+its direction unchanged. A primary-only comparison supports no cost-ranked recommendation,
 savings claim or objective-cost frontier. Missing usage by itself does not remove a trustworthy
 cost measurement; a provider cost field alone does not prove the SDK's cost objective consumed it.
 Repair before the first baseline may establish cost coverage normally. Once an operation has used
@@ -1606,7 +1604,7 @@ account request:
 - State that no generalization or production-improvement claim exists yet and this phase created
   no portal experiment. Do not disclose the held-out score before section 8.
 
-Check whether the dataset and evaluator distinguish configurations. If not, stop before search
+Check calibration and reference evidence for defects. If one is established, stop before search
 and recommend the evidenced repair before any connected preview. For a free repair to code this
 run wrote or to a working copy preserving their files, use component-creation.md's repair routes:
 never offer a route that carries the diagnosed fault into paid work, and do not put abandoning the
@@ -1924,8 +1922,9 @@ Before claiming success, verify:
 1. Trials exist; distinguish failed examples, failed trials, and repeated configurations.
 2. Baseline was actually evaluated.
 3. Best configuration exists.
-4. Primary objective measures appear and vary meaningfully. Record any unavailable secondary cost
-   objective as a limitation under "Missing cost or usage telemetry"; it does not erase quality.
+4. Primary objective measures appear and satisfy the metric's contract; interpret flat scores
+   under the no-lift rules below. Record any unavailable secondary cost objective as a limitation
+   under "Missing cost or usage telemetry"; it does not erase quality.
 5. Real calls do not show the mock's constant response pattern.
 6. Verify the actual provider path and successful responses. Report provider token usage where
    available and mark it unverified where absent; missing usage alone does not invalidate quality.
@@ -1960,6 +1959,10 @@ Before claiming success, verify:
 
 An optimized winner that does not beat the baseline is a valid no-lift result. Report the observed
 delta first, then separate verified facts, evidence-backed inferences, and untested hypotheses.
+Flat measured scores alone do not invalidate a calibrated comparison: all-one maximized accuracy
+and all-zero minimized error can be correct, and flat poor performance is a measured outcome, not
+an established evaluator defect. The gate in `evaluation-and-dataset.md`'s Mandatory calibration
+remains in force. Check calibration, references, truncation and provider failures before prescribing repair.
 Candidate hypotheses include an uninformative space, limited or easy data, evaluator mismatch,
 controls the search never varied, output truncation, generated data with no headroom, or insufficient
 model capability. Use the checks below to choose the next test, but say `cause not established by
@@ -2155,8 +2158,9 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
   budgets` above refuses.
 - Timeout with zero trials: diagnose provider latency, a hung call, or setup failure before
   considering another run.
-- Evaluator exceptions or all-zero/all-one measures: repair evaluator/data and rerun only after
+- Evaluator exceptions or established evaluator/data defects: repair and rerun only after
   calibration, under a newly scoped approval that carries what was already spent.
+- Flat measures alone: follow Post-run verification's no-lift interpretation.
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
 - Environment creation, installation, or installed-preflight failure: preserve every existing
