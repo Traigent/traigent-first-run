@@ -4185,8 +4185,8 @@ class SavedLogAdviceTests(unittest.TestCase):
         message, directory = module._save_pip_output(b"out", b"err")
         self.assertIsNotNone(directory)
         advice = (
-            "Read it for the cause and quote only the lines that show it: it can contain "
-            "index or proxy addresses. Delete it when done."
+            "Inspect it locally if needed. Keep its contents out of chat and tool "
+            "output. Delete the log when done."
         )
         self.assertTrue(
             message.endswith(" " + advice),

@@ -204,8 +204,8 @@ def validate_entry_points(text: str, scripts: Path, prefix: Path) -> None:
 
 # The one home of the saved-log advice: the disclosure contract pins it word for word.
 SAVED_LOG_ADVICE = (
-    "Read it for the cause and quote only the lines that show it: it can contain "
-    "index or proxy addresses. Delete it when done."
+    "Inspect it locally if needed. Keep its contents out of chat and tool "
+    "output. Delete the log when done."
 )
 
 
