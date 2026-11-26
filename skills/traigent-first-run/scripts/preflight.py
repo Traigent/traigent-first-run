@@ -1023,8 +1023,8 @@ class DotenvParse(NamedTuple):
     # The names whose LAST binding was written with a `${NAME}` reference, so
     # the value was built from other variables. Decided from the text the
     # customer wrote, not from the expanded value: a route value printed from
-    # the expansion could carry a secret, and a target read from it could be a
-    # production one. A later literal or bare key removes the name.
+    # the expansion could carry a secret. A later literal or bare key removes
+    # the name.
     interpolated: frozenset[str]
     # The start lines of final bindings `load_dotenv` cannot set (a NUL byte in
     # a key or value, or `=` in a key) for a key the process does not already
