@@ -9487,6 +9487,16 @@ class EnvFilePopulationIsPythonDotenvsVerdictTests(unittest.TestCase):
                 self.assertEqual(records[0].status, MODULE.FAIL)
                 self.assertNotIn("byte-order", records[0].detail)
 
+    def test_a_separator_python_dotenv_does_not_split_on_stays_one_statement(self):
+        # str.splitlines() splits on these; python-dotenv does not. A statement
+        # holding one is still one statement, so its "=" must still count.
+        for separator in ("\x0c", "\x85", "\u2028"):
+            text = "'a" + separator + "b' x=y\n"
+            with self.subTest(separator=repr(separator)):
+                _, records = self.parse(text)
+                self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+                self.assertEqual(records[0].metrics["unparsed_lines"], [])
+
     def test_every_population_is_python_dotenvs_verdict(self):
         try:
             import dotenv.parser as dp
@@ -9539,6 +9549,14 @@ class EnvFilePopulationIsPythonDotenvsVerdictTests(unittest.TestCase):
             "\n",
             "\r\n",
             "\r",
+            "\x0b",
+            "\x0c",
+            "\x1c",
+            "\x1d",
+            "\x1e",
+            "\x85",
+            "\u2028",
+            "\u2029",
             "${OPENAI_API_KEY}",
             "a b",
             "x",

@@ -1007,8 +1007,9 @@ class DotenvParse(NamedTuple):
     """What python-dotenv's reader made of one text, and what it could not use.
 
     `values` is what `load_dotenv` would set for admitted names, a bare key
-    being `None`. The three line populations are the ones `parse_env_file`
-    reports; they are returned rather than emitted so the parse stays pure.
+    being `None`. The four line populations (unparsed, invalid name, dropped,
+    clearing) are the ones `parse_env_file` reports; they are returned rather
+    than emitted so the parse stays pure.
     """
 
     values: dict[str, str | None]
@@ -1060,10 +1061,11 @@ def parse_dotenv_text(text: str) -> DotenvParse:
     bound_at: dict[str, int] = {}
     values: dict[str, str | None] = {}
     interpolated: set[str] = set()
-    # Two populations, kept apart, because they are two different mistakes and
-    # a reader fixing them does two different things: a line with no `=` at all
-    # is prose where a setting was expected, while a line whose key is not a
-    # legal variable name is a setting spelled wrong.
+    # Kept apart because each is a different mistake with a different fix: a
+    # line with no `=` is prose where a setting was expected, a line whose key
+    # is not a legal name is a setting spelled wrong, a dropped statement is one
+    # python-dotenv cannot parse (an unclosed quote, text after a value), and a
+    # clearing line is a bare key that wipes a value.
     unparsed_lines: list[int] = []
     invalid_name_lines: list[int] = []
     clearing_lines: list[int] = []
