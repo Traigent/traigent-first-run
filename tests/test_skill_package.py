@@ -16840,9 +16840,9 @@ class SkillPackageTests(unittest.TestCase):
         fence = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
         adapt_list = " ".join(
             text[
-                text.rindex("## Decorator contract") : text.index(
-                    "The runnable wrapper is bundled"
-                )
+                text.index(
+                    "Use one production-compatible function for baseline and optimization."
+                ) : text.index("The runnable wrapper is bundled")
             ].split()
         )
         self.assertIn("every other line is verbatim", adapt_list)
