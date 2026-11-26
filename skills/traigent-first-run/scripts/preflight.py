@@ -1206,12 +1206,16 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
         )
         if (clause := env_line_clause(lines, singular, plural))
     ]
-    # A mark at the start of the file becomes part of the first name, so the
-    # name looks legal to a reader and the cause is the invisible character.
-    if text.startswith("\ufeff") and 1 in parsed.invalid_name_lines:
+    # A mark at the start of the file becomes part of the first line, whether
+    # that line is a key, a comment or a blank line, so the line looks like
+    # prose or a setting to a reader and the cause is the invisible character.
+    # A refused first line is already out of both lists, so it is not blamed.
+    if text.startswith("\ufeff") and (
+        1 in parsed.unparsed_lines or 1 in parsed.invalid_name_lines
+    ):
         findings.append(
             "the file starts with a UTF-8 byte-order mark, which becomes part of "
-            "the first name; re-save the file without it"
+            "the first line; re-save the file without it"
         )
     if dropped_clause := dropped_statement_clause(parsed.dropped_spans):
         findings.append(dropped_clause)

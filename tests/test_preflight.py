@@ -9074,6 +9074,24 @@ class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
         self.assertEqual(records[0].metrics["refused_lines"], [1])
         self.assertNotIn("byte-order", records[0].detail)
 
+    def test_a_bom_before_a_comment_line_is_named(self) -> None:
+        """python-dotenv reads the mark plus the comment as a bare key (#623)."""
+        _, records = self.parse("\ufeff# Traigent keys\nOPENAI_API_KEY=sk-x\n")
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_bom_before_a_blank_line_is_named(self) -> None:
+        _, records = self.parse("\ufeff\nOPENAI_API_KEY=sk-x\n")
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_bom_before_a_key_is_named(self) -> None:
+        _, records = self.parse(b"\xef\xbb\xbfOPENAI_API_KEY=sk-x\n")
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_no_bom_before_a_comment_line_is_not_named(self) -> None:
+        # A clean file records nothing, so check every record there is.
+        _, records = self.parse("# Traigent keys\nOPENAI_API_KEY=sk-x\n")
+        self.assertFalse(any("byte-order" in r.detail for r in records))
+
     def test_export_is_stripped_before_an_unparseable_statement_is_classified(
         self,
     ) -> None:
