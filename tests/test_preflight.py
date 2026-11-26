@@ -1915,6 +1915,29 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertIn("selected input field 'input' is blank", integrity.detail)
         self.assertNotIn("missing", integrity.detail)
 
+    def test_a_same_field_selection_over_blank_values_is_not_a_blank_input(
+        self,
+    ) -> None:
+        """#620 class: `blank_input_rows` counts only blank-input rejections.
+
+        With the same path selected for input and expected output, every row is
+        rejected by the field-selection check first, whatever its values. A
+        blank selected value must not also be counted as a blank input: readiness
+        would then route the file to "fill those inputs", which is the wrong fix.
+        """
+        rows = [{"input": "   ", "output": "   "} for _ in range(3)]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "same.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset, input_field="input", expected_field="input")
+        integrity = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        )
+        self.assertEqual(integrity.metrics["invalid_rows"], 3)
+        self.assertEqual(integrity.metrics["blank_input_rows"], 0)
+        self.assertIn("must be different", integrity.detail)
+
     def test_dataset_normalization_contract_violation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             dataset = Path(directory) / "eval.jsonl"

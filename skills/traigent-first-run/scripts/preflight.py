@@ -5148,8 +5148,15 @@ def check_dataset(
             expected_found, _ = dataset_field_value(row, expected_field)
             # Counted apart, because readiness routes a row with a blank input
             # as a defect in the data and a row with no such field as a
-            # possible defect in the reading (#620).
-            if input_found and dataset_value_is_blank(input_value):
+            # possible defect in the reading (#620). Only when the selection is
+            # valid: with the same path for both, `normalize_dataset_row` rejects
+            # every row on the selection first, so a blank value there is not
+            # why the row was rejected.
+            if (
+                input_found
+                and dataset_value_is_blank(input_value)
+                and input_field != expected_field
+            ):
                 blank_input_present += 1
             has_input = input_found and not dataset_value_is_blank(input_value)
             if has_input and not expected_found and input_field != expected_field:

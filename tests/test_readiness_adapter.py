@@ -7143,6 +7143,28 @@ class BlankInputRowsReachTheCardAsBlankTests(unittest.TestCase):
             _cap(score, "dataset-unusable")["action_kind"], "repair-dataset"
         )
 
+    def test_a_same_field_selection_over_blank_values_is_not_a_blank_input_cap(
+        self,
+    ) -> None:
+        # #620 class: the same path selected for input and expected output is a
+        # field-selection error, whatever the values. Over blank values it must
+        # raise the cap the same selection raises over non-blank values, not the
+        # "fill those inputs" repair, which would send the user to the wrong fix.
+        same = ("--input-field", "input", "--expected-field", "input")
+
+        def caps(value: str) -> set[str]:
+            rows = [
+                {"id": f"q-{i:03d}", "input": value, "output": value} for i in range(3)
+            ]
+            with tempfile.TemporaryDirectory() as raw:
+                dataset = _write_jsonl(Path(raw), "same.jsonl", rows)
+                score = _score(dataset, preflight_extra=same)
+            return {cap["condition"] for cap in score["caps"]}
+
+        blank_caps = caps(" ")
+        self.assertEqual(blank_caps, caps("a real question"))
+        self.assertNotIn("dataset-unusable", blank_caps)
+
     def test_a_mixed_blank_and_missing_file_is_not_the_all_blank_remedy(self) -> None:
         # No row usable, half blank and half without the field. The all-blank
         # remedy applies only when every unusable row is blank, so the card
