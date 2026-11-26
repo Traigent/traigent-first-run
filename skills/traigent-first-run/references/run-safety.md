@@ -284,10 +284,11 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    upgrade, downgrade, or reinstall an installed package. If planning fails, show
    `No install plan was produced; no installed packages changed. <sanitized cause>.`
    Recommend a compatible environment for a version conflict. For a network or missing-wheel
-   failure, address connectivity or wheel availability first. Offer the throwaway route only with
-   its compatibility consequence: `Your agent uses openai 3.x; this SDK requires openai below 3.
-   A throwaway environment preserves yours, but compatibility with that older dependency is
-   unverified.` Never recommend that downgrade or enter the fallback automatically. After an
+   failure, restore access or supply the wheel first. Offer the throwaway route only with its
+   compatibility consequence: `Your agent uses openai 3.x; this SDK requires openai below 3.
+   A throwaway environment preserves yours, but would run your agent with that older dependency;
+   compatibility is unverified.` Never recommend that dependency downgrade as the remedy or enter
+   the fallback automatically. After an
    explicit fallback choice, show its resolved versions and run static/mock checks before planning
    paid work. Record installed versions and differences from the original agent's dependencies.
 5. **Throwaway route.** `.venv-traigent` under the project root with Python 3.11-3.13 and the
