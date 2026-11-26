@@ -1395,6 +1395,10 @@ def tracking_stopped() -> str | None:
     return None
 
 
+class CostCeilingRefusal(RuntimeError):
+    reason = "cost_ceiling"
+
+
 def reserve_call_spend(args: tuple, kwargs: dict) -> int:
     """Commit one invocation's worst case BEFORE it is placed, or refuse it.
 
@@ -1445,7 +1449,7 @@ def reserve_call_spend(args: tuple, kwargs: dict) -> int:
         remaining = run_remaining_usd()
         if remaining < needed:
             model = kwargs.get("model") or (args[0] if args else "an unnamed model")
-            raise RuntimeError(
+            raise CostCeilingRefusal(
                 f"${remaining:.4f} of the approved ${RUN_COST_CEILING_USD:.2f} "
                 f"total is left, which does not cover the {requests} provider "
                 f"request(s) this invocation may place, so a call to {model} "

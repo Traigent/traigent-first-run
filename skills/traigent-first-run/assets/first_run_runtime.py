@@ -347,6 +347,10 @@ def tracking_stopped() -> str | None:
     return None
 
 
+class CostCeilingRefusal(RuntimeError):
+    reason = "cost_ceiling"
+
+
 def reserve_call_spend(args: tuple, kwargs: dict) -> int:
     stopped = tracking_stopped()
     if stopped:
@@ -367,13 +371,12 @@ def reserve_call_spend(args: tuple, kwargs: dict) -> int:
         remaining = run_remaining_usd()
         if remaining < needed:
             model = kwargs.get("model") or (args[0] if args else "an unnamed model")
-            raise SafetyRefusal(
+            raise CostCeilingRefusal(
                 f"${remaining:.4f} of the approved ${RUN_COST_CEILING_USD:.2f} "
                 f"total is left, which does not cover the {requests} provider "
                 f"request(s) this invocation may place, so a call to {model} "
                 "was not placed. Report what completed and ask for a larger "
-                "total before running anything else.",
-                reason="cost_ceiling",
+                "total before running anything else."
             )
         RUN_SPEND_USD.append(needed)
         RUN_CALL_COSTS.append(None)
@@ -583,7 +586,7 @@ def halting(place):
         outer, entered = INSIDE_THE_DOOR.get(), len(RUN_SPEND_USD)
         try:
             return place(*args, **kwargs)
-        except SafetyRefusal:
+        except (CostCeilingRefusal, SafetyRefusal):
             raise
         except RuntimeError as error:
             if not outer and len(RUN_SPEND_USD) == entered:
@@ -599,7 +602,7 @@ def halting_async(place):
         outer, entered = INSIDE_THE_DOOR.get(), len(RUN_SPEND_USD)
         try:
             return await place(*args, **kwargs)
-        except SafetyRefusal:
+        except (CostCeilingRefusal, SafetyRefusal):
             raise
         except RuntimeError as error:
             if not outer and len(RUN_SPEND_USD) == entered:
@@ -1035,7 +1038,7 @@ class Bridge:
 
         try:
             score = normalized_score(self.call(self.function("evaluator"), arguments))
-        except SafetyRefusal:
+        except (CostCeilingRefusal, SafetyRefusal):
             raise
         except BaseException:
             accounted(True)  # an undeclared call before a failure still stops the run
@@ -1338,7 +1341,7 @@ class Bridge:
                         }
                     )
                     preserve_comparison_identity(row, row_index)
-                except SafetyRefusal as error:
+                except (CostCeilingRefusal, SafetyRefusal) as error:
                     # Persist a category without recording exception text.
                     complete = False
                     stop_reason = error.reason

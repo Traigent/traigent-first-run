@@ -1709,6 +1709,7 @@ SPEND_GATE_FUNCTIONS = frozenset(
         # reservation of a call the provider refused before billing, and
         # `ledgered` is what puts them on `litellm.completion`.
         "worst_case_requests",
+        "CostCeilingRefusal",
         "reserve_call_spend",
         "settle_call_spend",
         "release_call_spend",
@@ -1766,7 +1767,10 @@ def sdk_wrapper_spend_gate(text: str) -> list[ast.stmt]:
     install: list[ast.stmt] = []
     for source in sdk_execution_python_fences(text):
         for node in ast.parse(source).body:
-            if isinstance(node, ast.FunctionDef) and node.name in SPEND_GATE_FUNCTIONS:
+            if (
+                isinstance(node, (ast.ClassDef, ast.FunctionDef))
+                and node.name in SPEND_GATE_FUNCTIONS
+            ):
                 nodes.append(node)
             elif isinstance(node, ast.If) and DOOR_INSTALL_MARKER in ast.unparse(
                 node.test
@@ -17078,13 +17082,15 @@ class SkillPackageTests(unittest.TestCase):
             "run_remaining_usd",
             "tracking_stopped",
             "worst_case_requests",
+            "CostCeilingRefusal",
             "reserve_call_spend",
             "ledgered",
         }
         spend_nodes = [
             node
             for node in ast.parse(wrapper).body
-            if isinstance(node, ast.FunctionDef) and node.name in spend_functions
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+            and node.name in spend_functions
         ]
         provider_calls: list[tuple] = []
         spend_namespace = {
