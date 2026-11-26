@@ -1016,8 +1016,9 @@ class DotenvParse(NamedTuple):
     unparsed_lines: list[int]
     invalid_name_lines: list[int]
     dropped_spans: list[tuple[int, int]]
-    # Bare keys (no `=`) over a key whose binding so far had a value: python-
-    # dotenv binds them to None, which clears that value.
+    # Bare keys (a name with no value assigned, whatever its comment holds)
+    # over a key whose binding so far had a value: python-dotenv binds them to
+    # None, which clears that value.
     clearing_lines: list[int]
     # The names whose LAST binding was written with a `${NAME}` reference, so
     # the value was built from other variables. Decided from the text the
@@ -1064,8 +1065,9 @@ def parse_dotenv_text(text: str) -> DotenvParse:
     values: dict[str, str | None] = {}
     interpolated: set[str] = set()
     # Kept apart because each is a different mistake with a different fix: a
-    # line with no `=` is prose where a setting was expected, a line whose key
-    # is not a legal name is a setting spelled wrong, a dropped statement is one
+    # line that is prose, not KEY=VALUE as python-dotenv reads it, is a setting
+    # written as a sentence, a line whose key is not a legal name is a setting
+    # spelled wrong, a dropped statement is one
     # python-dotenv cannot parse (an unclosed quote, text after a value), and a
     # clearing line is a bare key that wipes a value.
     unparsed_lines: list[int] = []
