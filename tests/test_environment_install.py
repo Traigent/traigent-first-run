@@ -10,7 +10,6 @@ import csv
 import io
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -87,9 +86,10 @@ class IsolatedInstallerTests(unittest.TestCase):
     def pip_output(self, result) -> str:
         """Return pip's saved output, which the failed run's error names (never printed)."""
         message = json.loads(result.stderr)["error"]
-        match = re.search(r" in (.+?pip-output\.log)\. Read it", message)
-        assert match is not None, message
-        return Path(match.group(1)).read_text(encoding="utf-8")
+        logs = list(Path(self.scratch.name).glob("first-run-pip-*/pip-output.log"))
+        self.assertEqual(len(logs), 1, message)
+        self.assertIn(str(logs[0]), message)
+        return logs[0].read_text(encoding="utf-8")
 
     def invoke(self, *arguments, success=True):
         result = subprocess.run(
