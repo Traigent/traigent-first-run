@@ -76,7 +76,9 @@ def isolate_temp_dir(test: unittest.TestCase) -> Path:
 
 def saved_output_path(message: str) -> Path:
     """Return the pip-output.log path that a pip failure message names."""
-    match = re.search(r" in (.+?pip-output\.log)\. Read it", message)
+    match = re.search(
+        r"pip's full output is saved, unredacted, in (.+?pip-output\.log)\.", message
+    )
     if match is None:
         raise AssertionError(f"message names no saved pip output: {message!r}")
     return Path(match.group(1))
@@ -1378,7 +1380,7 @@ class PipOutputFileTests(unittest.TestCase):
     def test_successful_save_tells_the_user_to_delete_the_output(self):
         module = load_module()
         message, _ = module._save_pip_output(b"out", b"err")
-        self.assertIn("Delete it when done.", message)
+        self.assertIn("Delete the log when done.", message)
 
     def test_save_failure_still_reports_the_stall_without_chaining(self):
         module = load_module()
