@@ -9448,10 +9448,35 @@ class EnvFilePopulationIsPythonDotenvsVerdictTests(unittest.TestCase):
         self.assertEqual(records[0].metrics["unparsed_lines"], [])
         self.assertEqual(records[0].metrics["ignored_lines"], 0)
         self.assertIn(
-            'line 2 has no "=" and clears the value an earlier line gave the same name',
+            "line 2 assigns no value and clears the value an earlier line gave "
+            "the same name",
             records[0].detail,
         )
         self.assertNotIn("sk-test", records[0].detail)
+
+    def test_a_clearing_line_is_worded_by_what_it_does_whatever_it_contains(self):
+        # A bare key whose trailing comment holds "=" is still a clearing line,
+        # so "has no =" would be false for it (#623).
+        _, records = self.parse(
+            "OPENAI_API_KEY=sk-a\nOPENAI_API_KEY  # see OPENAI_API_KEY=sk-b\n"
+        )
+        self.assertEqual(records[0].metrics["clearing_lines"], [2])
+        self.assertIn(
+            "line 2 assigns no value and clears the value an earlier line gave "
+            "the same name",
+            records[0].detail,
+        )
+        self.assertNotIn('has no "="', records[0].detail)
+        self.assertNotIn("sk-", records[0].detail)
+
+    def test_several_clearing_lines_are_worded_in_the_plural(self):
+        _, records = self.parse("K=a\nK\nJ=b\nJ\n")
+        self.assertEqual(records[0].metrics["clearing_lines"], [2, 4])
+        self.assertIn(
+            "2 lines at source lines [2, 4] assign no value and clear the value "
+            "an earlier line gave the same name",
+            records[0].detail,
+        )
 
     def test_a_second_bare_key_clears_nothing(self):
         _, records = self.parse("K=a\nK\nK\n")
@@ -9478,6 +9503,16 @@ class EnvFilePopulationIsPythonDotenvsVerdictTests(unittest.TestCase):
     def test_a_bom_before_an_unclosed_value_is_named(self):
         _, records = self.parse('\ufeffOPENAI_API_KEY="abc\n')
         self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_bom_before_a_statement_that_spans_two_lines_is_named(self):
+        """The mark starts the dropped span, and the span ends on line 2 (#623).
+
+        A mutant that tests the span's end line instead of its start misses
+        this: the only dropped span starts on line 1 and ends on line 2.
+        """
+        _, records = self.parse('\ufeffK="a\nb" x\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 2]])
         self.assertIn("byte-order mark", records[0].detail)
 
     def test_a_refused_first_line_is_not_blamed_on_the_bom_beside_a_later_line(self):

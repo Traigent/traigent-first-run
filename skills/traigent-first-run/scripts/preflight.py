@@ -1209,8 +1209,8 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
             ),
             (
                 parsed.clearing_lines,
-                'has no "=" and clears the value an earlier line gave the same name',
-                'have no "=" and clear the value an earlier line gave the same name',
+                "assigns no value and clears the value an earlier line gave the same name",
+                "assign no value and clear the value an earlier line gave the same name",
             ),
         )
         if (clause := env_line_clause(lines, singular, plural))
