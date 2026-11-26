@@ -24317,15 +24317,14 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         owner = "Direct held-out agent and judge calls run outside SDK trial permits"
         self.assertIn(owner, " ".join(sdk_execution_reference_text().split()))
         safety = " ".join(RUN_SAFETY.read_text().split())
-        self.assertNotIn(
-            "only paid calls",
-            safety,
-            "the claim about which paid calls go unseen is written out in two "
-            "documents, which is how it drifted: the held-out pass is not the "
-            "only one, because a judge grades every scored row of the search "
-            "as well",
+        self.assertNotIn("a judge's are among them", safety)
+        self.assertIn(
+            "sdk-execution.md` for which paid calls run outside trial permits", safety
         )
-        self.assertIn("which of this run's paid calls no permit covers", safety)
+        self.assertIn(
+            "SDK 0.31.1 folds intercepted metric-function calls into example/trial costs",
+            " ".join(sdk_execution_reference_text().split()),
+        )
 
     def spend_report_program(
         self, *, ceiling: float, spent: float, per_call: float, placed, refused, ending

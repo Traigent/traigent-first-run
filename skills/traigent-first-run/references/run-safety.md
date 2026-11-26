@@ -1290,8 +1290,7 @@ After showing the baseline result, give the connected stage a preview and approv
   this same approval rather than asking again afterward, and add their known cost or conservative
   deduction to the single running total. The wrapper refuses the whole held-out pass rather than starting one the remaining
   cannot fund to the last row; say that here, because a pass that is refused returns no held-out
-  score at all. `references/sdk-execution.md` owns which of this run's paid calls no permit covers -
-  a judge's are among them, on every scored row of the search as well as these.
+  score at all. See `references/sdk-execution.md` for which paid calls run outside trial permits.
 - Bounds and value: runtime, known cost, budget debit and remaining ceiling; provider/Traigent recipients,
   zero-LLM probe, portal history/direct links, and exclusions. Dataset/configuration insights remain
   conditional on verified run-scoped SDK artifacts.
@@ -1461,9 +1460,8 @@ recalculate a completed OpenRouter response with `litellm.completion_cost()`: a 
 model-map entry can raise after the call. An SDK `0.0` default or estimated token count does not
 establish a free call or provider-reported usage.
 
-Before each baseline or search operation, use cost as an SDK objective only when its cost coverage
-is trustworthy for the actual agent and evaluator call paths. Otherwise use the public SDK's
-primary-only objective path owned by `references/sdk-execution.md`. Keep the primary criterion and
+Use the objective-selection rules in `references/sdk-execution.md` for the baseline producer
+and its actual agent and evaluator cost coverage. Keep the primary criterion and
 its direction unchanged. This is a quality-only comparison, with no cost-ranked recommendation,
 savings claim or objective-cost frontier. Missing usage by itself does not remove a trustworthy
 cost measurement; a provider cost field alone does not prove the SDK's cost objective consumed it.

@@ -367,12 +367,13 @@ def reserve_call_spend(args: tuple, kwargs: dict) -> int:
         remaining = run_remaining_usd()
         if remaining < needed:
             model = kwargs.get("model") or (args[0] if args else "an unnamed model")
-            raise RuntimeError(
+            raise SafetyRefusal(
                 f"${remaining:.4f} of the approved ${RUN_COST_CEILING_USD:.2f} "
                 f"total is left, which does not cover the {requests} provider "
                 f"request(s) this invocation may place, so a call to {model} "
                 "was not placed. Report what completed and ask for a larger "
-                "total before running anything else."
+                "total before running anything else.",
+                reason="cost_ceiling",
             )
         RUN_SPEND_USD.append(needed)
         RUN_CALL_COSTS.append(None)
@@ -567,6 +568,10 @@ def _record_request(kwargs: dict) -> None:
 class SafetyRefusal(RuntimeError):
     """An accounting or safety refusal: the run stops here. An ordinary per-row agent failure is
     any other exception and only counts as a failed row."""
+
+    def __init__(self, message: str, *, reason: str = "safety_refusal"):
+        super().__init__(message)
+        self.reason = reason
 
 
 def halting(place):
@@ -1024,7 +1029,8 @@ class Bridge:
                 raise SafetyRefusal(
                     f"scoring one row placed {placed} provider call(s) the ledger saw, and "
                     f"evaluator.calls_per_row declares {entry['calls_per_row']}; correct the "
-                    "declaration before any more spend"
+                    "declaration before any more spend",
+                    reason="evaluator_call_count",
                 )
 
         try:
@@ -1305,7 +1311,7 @@ class Bridge:
                 unchanged = False
             if not unchanged:
                 comparison_blocker = "effective tuning inputs or baseline configuration changed during measurement"
-                raise SafetyRefusal(comparison_blocker)
+                raise SafetyRefusal(comparison_blocker, reason="identity_changed")
 
         began, results, complete = time.monotonic(), [], True
         stop_reason = None
@@ -1332,15 +1338,10 @@ class Bridge:
                         }
                     )
                     preserve_comparison_identity(row, row_index)
-                except SafetyRefusal:
-                    # Finalize observations already paid for, without scheduling
-                    # another row or keeping potentially private exception text.
+                except SafetyRefusal as error:
+                    # Persist a category without recording exception text.
                     complete = False
-                    stop_reason = (
-                        "identity_changed"
-                        if metric_name is not None and comparison_blocker
-                        else "safety_refusal"
-                    )
+                    stop_reason = error.reason
                     break
                 except Exception as error:  # class name only: provider text is not kept
                     failures[type(error).__name__] = (
@@ -1409,10 +1410,10 @@ class Bridge:
                 + comparison_blocker
                 + "; keep the saved observations and do not replay the completed baseline automatically."
             )
-        if stop_reason == "safety_refusal":
+        if stop_reason in {"cost_ceiling", "evaluator_call_count", "safety_refusal"}:
             print(
-                "stopped before any further spend: safety refusal; review accounting "
-                "and the approved budget before another run. Saved observations are incomplete."
+                f"stopped before any further spend: {stop_reason}; "
+                "saved observations are incomplete."
             )
         if any(result["n_failed"] for result in results):
             print(
