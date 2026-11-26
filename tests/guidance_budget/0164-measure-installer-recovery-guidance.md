@@ -1,9 +1,9 @@
 # 0164 - measure installer recovery guidance
 
 follows: 0163
-follows-total-measured: 612_292
+follows-total-measured: 612_368
 total-ceiling: 612_150
-total-measured: 612_041
+total-measured: 612_117
 
 A failed install needs the helper outcome, the safe explanation, and one recovery for the
 reported cause. This replaces resolver-specific wording with a shorter route that covers wheel
