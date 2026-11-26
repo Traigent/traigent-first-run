@@ -1206,8 +1206,8 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
             ),
             (
                 parsed.invalid_name_lines,
-                "has an invalid environment variable name and was ignored",
-                "have an invalid environment variable name and were ignored",
+                "uses a name outside the shell identifier format used by preflight",
+                "use names outside the shell identifier format used by preflight",
             ),
             (
                 parsed.clearing_lines,
@@ -1278,8 +1278,17 @@ def read_env(
     fourth is the names the file built from a `${NAME}` reference: the file
     view alone cannot say whether a value was written literally.
     """
-    file_values, file_interpolated = parse_env_file(path)
     process_values: dict[str, str | None] = dict(os.environ)
+    # Match load_dotenv in the pinned python-dotenv before reading the file.
+    disabled = os.environ.get("PYTHON_DOTENV_DISABLED", "").casefold()
+    if disabled in {"1", "true", "t", "yes", "y"}:
+        emit(
+            "env-source",
+            PASS,
+            "process environment only; PYTHON_DOTENV_DISABLED disables .env loading",
+        )
+        return dict(process_values), {}, process_values, frozenset()
+    file_values, file_interpolated = parse_env_file(path)
     effective = dict(file_values)
     effective.update(process_values)
     source = (

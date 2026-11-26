@@ -8164,7 +8164,9 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         self.assertIn("2 lines at source lines [1, 3]", records[0].detail)
         self.assertIn("are not KEY=VALUE and were ignored", records[0].detail)
         self.assertIn("1 line at source line 4", records[0].detail)
-        self.assertIn("has an invalid environment variable name", records[0].detail)
+        self.assertIn(
+            "uses a name outside the shell identifier format", records[0].detail
+        )
         self.assertEqual(records[0].metrics["ignored_lines"], 3)
         self.assertEqual(records[0].metrics["unparsed_lines"], [1, 3])
         self.assertEqual(records[0].metrics["invalid_name_lines"], [4])
@@ -8442,6 +8444,41 @@ class EnvFileReadsWhatPythonDotenvReadsTests(unittest.TestCase):
             )
         records = {item["check"]: item for item in json.loads(completed.stdout)}
         return completed, records
+
+    def test_disabled_dotenv_uses_only_inherited_credentials(self) -> None:
+        from dotenv import load_dotenv
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text("OPENAI_API_KEY=placeholder-file-key\n", encoding="utf-8")
+            path.chmod(0o600)
+            for flag, inherited_key in (
+                ("TrUe", None),
+                ("Y", "placeholder-process-key"),
+                ("false", None),
+                (" true ", None),
+            ):
+                with self.subTest(flag=flag, inherited_key=inherited_key):
+                    environment = {"PYTHON_DOTENV_DISABLED": flag}
+                    if inherited_key is not None:
+                        environment["OPENAI_API_KEY"] = inherited_key
+                    MODULE.RESULTS.clear()
+                    with mock.patch.dict(os.environ, environment, clear=True):
+                        actual, file_values, process_values, _ = MODULE.read_env(path)
+                        loaded = load_dotenv(path, override=False)
+                        self.assertEqual(
+                            actual.get("OPENAI_API_KEY"), os.getenv("OPENAI_API_KEY")
+                        )
+                    self.assertEqual(
+                        process_values.get("OPENAI_API_KEY"), inherited_key
+                    )
+                    self.assertEqual(bool(file_values), loaded)
+                    source = next(
+                        record.detail
+                        for record in MODULE.RESULTS
+                        if record.check == "env-source"
+                    )
+                    self.assertEqual("PYTHON_DOTENV_DISABLED" in source, not loaded)
 
     def test_env_parser_matches_python_dotenv(self) -> None:
         dotenv_values = python_dotenv_values()
