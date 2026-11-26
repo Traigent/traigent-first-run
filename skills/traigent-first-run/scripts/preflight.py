@@ -1008,8 +1008,8 @@ class DotenvParse(NamedTuple):
 
     `values` is what `load_dotenv` would set for admitted names, a bare key
     being `None`. The four line populations (unparsed, invalid name, dropped,
-    clearing) are the ones `parse_env_file` reports; they are returned rather
-    than emitted so the parse stays pure.
+    clearing) and `refused_lines` are what `parse_env_file` reports; they are
+    returned rather than emitted so the parse stays pure.
     """
 
     values: dict[str, str | None]
@@ -1026,8 +1026,10 @@ class DotenvParse(NamedTuple):
     # production one. A later literal or bare key removes the name.
     interpolated: frozenset[str]
     # The start lines of final bindings `load_dotenv` cannot set (a NUL byte in
-    # a key or value, or `=` in a key), so the runtime raises before it sets any
-    # key. A refused line is not also reported as an invalid name.
+    # a key or value, or `=` in a key) for a key the process does not already
+    # hold. `load_dotenv` raises at the first such key, so keys before it may
+    # already be set; no value from the file is used. A refused line is not
+    # also reported as an invalid name.
     refused_lines: list[int]
 
 
@@ -1153,8 +1155,9 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
     for that reason: a second call in the same run would record `env-file` a
     second time.
 
-    A file `load_dotenv` refuses (`DotenvParse.refused_lines`) sets no key, so
-    it returns no values and the record is a FAIL. Every other finding is
+    A file `load_dotenv` refuses (`DotenvParse.refused_lines`) makes it raise
+    partway through setting keys, so this returns no values and the record is
+    a FAIL. Every other finding is
     recorded as a WARN in that same record.
     """
     if not path.exists():
@@ -1175,8 +1178,8 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
         )
         return {}, frozenset()
     parsed = parse_dotenv_text(text)
-    # A file `load_dotenv` refuses sets nothing at all, so the findings lead with
-    # the refusal and no value from the file is used. Line numbers only: a
+    # A file `load_dotenv` refuses makes it raise partway through, so the findings
+    # lead with the refusal and no value from the file is used. Line numbers only: a
     # refused key may hold the NUL byte, so its name is not printed either.
     refusal = (
         env_line_clause(
@@ -1215,7 +1218,7 @@ def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
     # A mark at the start of the file becomes part of the first line, whether
     # that line is a key, a comment or a blank line, so the line looks like
     # prose or a setting to a reader and the cause is the invisible character.
-    # A refused first line is already out of both lists, so it is not blamed.
+    # A refused first line is in none of these three, so it is not blamed.
     if text.startswith("\ufeff") and (
         1 in parsed.unparsed_lines
         or 1 in parsed.invalid_name_lines
