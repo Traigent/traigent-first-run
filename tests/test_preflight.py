@@ -6704,6 +6704,35 @@ class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
         )
 
 
+class AShellValueTheProcessHoldsAsRawBytesIsFingerprintedTests(unittest.TestCase):
+    """`value_fingerprint` hashes the bytes the process holds (#617, #618).
+
+    Python decodes an environment value it cannot read as UTF-8 into a string
+    with surrogate escapes. The fingerprint must be sha256 of the original bytes,
+    which is what `FINGERPRINT_RECIPE` hashes, and it must never raise.
+    """
+
+    def test_surrogate_escaped_value_fingerprints_its_original_bytes(self) -> None:
+        import hashlib
+
+        raw = b"sk-\xff\xfe-tail"
+        text = raw.decode("utf-8", errors="surrogateescape")
+        self.assertEqual(
+            MODULE.value_fingerprint(text),
+            hashlib.sha256(raw).hexdigest()[:8],
+        )
+
+    def test_ordinary_values_keep_their_fingerprint(self) -> None:
+        import hashlib
+
+        for value in ("uk_filekey", "  https://münchen.example  ", "日本"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    MODULE.value_fingerprint(value),
+                    hashlib.sha256(value.strip().encode("utf-8")).hexdigest()[:8],
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
 

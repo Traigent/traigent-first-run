@@ -283,5 +283,92 @@ class CalibrateLiteralOrFileReadsBomTests(unittest.TestCase):
             self.assertEqual(module.literal_or_file(f"@{path}"), {"a": 1})
 
 
+class ShellValuesTheProcessHoldsAsBytesTests(unittest.TestCase):
+    """A shell value that is not UTF-8 reaches preflight without crashing it (#617, #618).
+
+    Under a C locale with UTF-8 mode off, Python decodes environment bytes it
+    cannot read into surrogate escapes. Preflight fingerprints such values and
+    must neither raise nor print the secret.
+    """
+
+    SECRET_TAIL = b"secret-tail"
+
+    def run_preflight(
+        self,
+        directory: Path,
+        file_env: bytes,
+        extra_env: dict[bytes, bytes],
+        json_mode: bool,
+    ):
+        env_path = directory / ".env"
+        # No TRAIGENT_API_KEY in either source: without one preflight makes no
+        # network call, and the shell route is compared with a file route, which
+        # is the shadow report that reads the route value.
+        env_path.write_bytes(file_env)
+        env_path.chmod(0o600)
+        env = {
+            b"PATH": os.environ.get("PATH", "").encode(),
+            b"LC_ALL": b"C",
+            b"PYTHONCOERCECLOCALE": b"0",
+            **extra_env,
+        }
+        args = [
+            str(PREFLIGHT),
+            "--env",
+            str(env_path),
+            "--project-root",
+            str(directory),
+            "--defer-missing-sdk",
+        ]
+        if json_mode:
+            args.append("--json")
+        return subprocess.run(
+            [sys.executable, "-X", "utf8=0", "-I", "-S", "-B", *args],
+            cwd=directory,
+            env=env,
+            capture_output=True,
+            check=False,
+        )
+
+    def assert_survives(self, result: subprocess.CompletedProcess[bytes]) -> None:
+        self.assertNotEqual(
+            result.returncode, 3, result.stderr.decode(errors="replace")
+        )
+        self.assertNotIn(b"internal error", result.stderr)
+        self.assertNotIn(b"UnicodeEncodeError", result.stderr)
+        self.assertNotIn(self.SECRET_TAIL, result.stdout)
+        self.assertNotIn(self.SECRET_TAIL, result.stderr)
+
+    def test_non_ascii_route_value_does_not_crash_preflight(self) -> None:
+        for json_mode in (False, True):
+            with self.subTest(
+                json_mode=json_mode
+            ), tempfile.TemporaryDirectory() as tmp:
+                result = self.run_preflight(
+                    Path(tmp),
+                    b"TRAIGENT_BACKEND_URL=https://file.example\n",
+                    {
+                        b"TRAIGENT_BACKEND_URL": "https://münchen.example".encode(
+                            "utf-8"
+                        )
+                    },
+                    json_mode,
+                )
+                self.assert_survives(result)
+
+    def test_undecodable_shell_secret_does_not_crash_preflight(self) -> None:
+        for json_mode in (False, True):
+            with self.subTest(
+                json_mode=json_mode
+            ), tempfile.TemporaryDirectory() as tmp:
+                result = self.run_preflight(
+                    Path(tmp),
+                    b"OPENAI_API_KEY=sk-filekey-placeholder\n",
+                    {b"OPENAI_API_KEY": b"sk-\xff\xfe" + self.SECRET_TAIL},
+                    json_mode,
+                )
+                self.assert_survives(result)
+
+
 if __name__ == "__main__":
     unittest.main()

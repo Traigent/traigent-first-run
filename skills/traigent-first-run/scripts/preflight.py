@@ -513,7 +513,13 @@ def value_fingerprint(value: str) -> str:
     a value of their own computed with `FINGERPRINT_RECIPE`, which is printed
     beside the finding so the comparison is actually available to them.
     """
-    return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()[:8]
+    # `surrogateescape` hashes the bytes the process holds: an environment value
+    # that is not UTF-8 arrives as surrogate escapes, and those map back to the
+    # original bytes, which is what `FINGERPRINT_RECIPE` hashes. Ordinary text
+    # encodes exactly as plain UTF-8, so its fingerprint is unchanged.
+    return hashlib.sha256(
+        value.strip().encode("utf-8", errors="surrogateescape")
+    ).hexdigest()[:8]
 
 
 # An AWS region name (`us-east-1`, `us-gov-west-1`): the one non-URL route value
@@ -564,7 +570,13 @@ def route_display(value: str, *, interpolated: bool) -> str:
     stripped = value.strip()
     if interpolated:
         return env_value_display(value, interpolated=True)
-    unreadable = f"a value that is neither a URL nor a region (sha256:{value_fingerprint(stripped)})"
+
+    def unreadable() -> str:
+        return (
+            "a value that is neither a URL nor a region "
+            f"(sha256:{value_fingerprint(stripped)})"
+        )
+
     # `urlsplit` raises on a netloc it cannot normalise (NFKC maps full-width
     # delimiters onto `/ ? # @ :`) and on an unclosed IPv6 bracket, and its
     # message quotes the netloc, userinfo included. It fails on the text, so
@@ -572,11 +584,11 @@ def route_display(value: str, *, interpolated: bool) -> str:
     try:
         parsed = urllib.parse.urlsplit(stripped)
     except ValueError:
-        return unreadable
+        return unreadable()
     if not parsed.scheme or not parsed.netloc:
         if AWS_REGION_SHAPE.fullmatch(stripped):
             return stripped
-        return unreadable
+        return unreadable()
     try:
         host, port = parsed.hostname, parsed.port
     except ValueError:  # a malformed port; the host is not trustworthy either
