@@ -18909,7 +18909,7 @@ class SkillPackageTests(unittest.TestCase):
         # half that is easy to get wrong: the limit is this guide's grammar,
         # so the data is not defective. It needed no new REMEDY, though - it
         # shares `review-answer-key` with the answer-key rungs.
-        self.assertEqual(len(conditions), 18)
+        self.assertEqual(len(conditions), 19)
         normalized = " ".join(
             section_text(
                 SKILL_ROOT / "references" / "evaluation-and-dataset.md",
@@ -18970,6 +18970,8 @@ class SkillPackageTests(unittest.TestCase):
             "dataset-absent",
             "dataset-no-expected-outputs",
             "dataset-integrity-fail",
+            # #617/#620: no usable row, with a defect preflight named.
+            "dataset-unusable",
             "dataset-tune-holdout-overlap",
             # #197's fifteenth condition, and it belongs here rather than in
             # `conditional` below because it has one reading only: no row on

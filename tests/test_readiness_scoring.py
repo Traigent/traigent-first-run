@@ -6605,9 +6605,13 @@ class TheCapOrderingIsWrittenDownAndCheckedTests(unittest.TestCase):
                 # 40 and 70 ties already apply - the other two are read off a
                 # ruler that ran and a file that was parsed, and this one off
                 # three inputs that did not arrive.
+                # #617/#620 join them: no usable row, with a defect preflight
+                # named. Ranked directly after its no-defect twin, which it can
+                # never meet - the two are exclusive branches of one test.
                 25: [
                     "evaluator-invalid",
                     "dataset-shape-unrecognised",
+                    "dataset-unusable",
                     "agent-absent",
                 ],
                 40: ["evaluator-absent", "evaluator-unresolved"],
@@ -7244,6 +7248,12 @@ def _unreadable_dataset(dataset, evaluation, agent) -> None:
     dataset.update(exists=False, dataset_supplied=True, unreadable_rows=240)
 
 
+@_fragment("a file that is not UTF-8")
+def _undecodable_dataset(dataset, evaluation, agent) -> None:
+    _resize(dataset, 0)
+    dataset.update(exists=False, dataset_supplied=True, undecodable_file=True)
+
+
 @_fragment("no expected outputs")
 def _unlabelled_dataset(dataset, evaluation, agent) -> None:
     dataset.update(
@@ -7583,6 +7593,11 @@ _TIED_PAIRS_WITH_NO_WITNESS: dict[tuple[str, str], str] = {
         "behavioural evidence as one that simply has not calibrated, so it is "
         "bounded by the same 45 ceiling. The witnessed arm "
         "carries no ceiling at all and so joins no tie."
+    ),
+    ("dataset-shape-unrecognised", "dataset-unusable"): (
+        "`score_dataset` raises them from exclusive branches of one if/elif "
+        "chain - `dataset-unusable` first, when preflight named the defect - "
+        "so no payload carries both."
     ),
     ("evaluator-absent", "evaluator-unresolved"): (
         "`score_evaluation` returns from its `not facts.present` branch before "

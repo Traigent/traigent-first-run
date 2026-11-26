@@ -1440,12 +1440,17 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # which is a reason to go and look, not a verdict on the data.
     #
     # `dataset-integrity-fail` keeps `repair-dataset` and that stays right,
-    # because it fires where the data is at fault with the reading established:
-    # at least one row DID match, so the rest are genuinely broken; or the file
-    # is not UTF-8, or every row's selected input is blank, and no row needs
-    # the shape re-read to say so. Zero matched rows with a reading that is
-    # still open is the one state left to `dataset-shape-unrecognised`.
+    # because it fires only when at least one row DID match: the shape
+    # assumption is confirmed by that row, so the rest are genuinely broken.
+    # Zero matched rows is the absence of that evidence, and the two conditions
+    # already sit exactly on that line.
     "dataset-shape-unrecognised": "read-dataset",
+    # Zero usable rows, like the state above, but with a defect preflight
+    # named: the file is not UTF-8 (#617), or every row's selected input is
+    # blank (#620). Either is wrong whatever shape the rows turn out to have,
+    # so the remedy is a repair, not a look. Whether the rows match the shape
+    # is still unread; that is why it shares 25 rather than integrity's 35.
+    "dataset-unusable": "repair-dataset",
     # Not `get-data`, and the split is the whole of traigent-first-run#197.
     # These two shared that slug with `dataset-absent`, and one remedy then
     # meant "stop, there is nothing here" on one card and "carry on, this is
@@ -1734,6 +1739,7 @@ ROUTE_CATEGORY: dict[str, str] = {
     "dataset-coarse-resolution": CLAIM_SCOPING,
     "dataset-no-expected-outputs": CREATION_OR_REPAIR,
     "dataset-integrity-fail": CREATION_OR_REPAIR,
+    "dataset-unusable": CREATION_OR_REPAIR,
     "dataset-tune-holdout-overlap": CREATION_OR_REPAIR,
     # A repair, and the same one its `resplit-dataset` sibling above names: the
     # rows are fine and the line drawn through them is not, so the split is
@@ -2002,6 +2008,11 @@ DATASET_SHAPE_UNRECOGNISED_CEILING = 25
 # `dataset-no-expected-outputs` (30) and `dataset-integrity-fail` (35) because
 # each of those has at least one row that confirmed the shape, which is
 # positive evidence this state does not have.
+DATASET_UNUSABLE_CEILING = 25
+# Equal to `dataset-shape-unrecognised`: no row was usable and none confirmed
+# the shape, so nothing was measured either way. It differs only in the remedy,
+# because here preflight named a defect - a non-UTF-8 file, or a blank input on
+# every row - that has to be repaired whatever the rows turn out to hold.
 AGENT_ABSENT_CEILING = 25
 # The third pillar's absence, which had no ceiling of its own at all. Two of the
 # three name theirs and stop the paid run - `dataset-absent` at 20 and
@@ -2339,6 +2350,9 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int | None], ...]], ...] =
             ("dataset-absent", DATASET_ABSENT_CEILING),
             ("evaluator-invalid", EVALUATOR_INVALID_CEILING),
             ("dataset-shape-unrecognised", DATASET_SHAPE_UNRECOGNISED_CEILING),
+            # Its twin with a named defect; the two are raised by exclusive
+            # branches, so the rank between them decides nothing observable.
+            ("dataset-unusable", DATASET_UNUSABLE_CEILING),
             # Third of the three at 25, and ranked last of them under the rule
             # the ties below already follow: a severity you counted outranks
             # one you did not. `evaluator-invalid` is proven by probes that
@@ -2491,6 +2505,11 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-shape-unrecognised", "dataset-no-expected-outputs"),
     ("dataset-shape-unrecognised", "dataset-below-measurable-size"),
     ("dataset-shape-unrecognised", "dataset-coarse-resolution"),
+    # And the same for a file with zero usable rows and a named defect.
+    ("dataset-unusable", "dataset-no-expected-outputs"),
+    ("dataset-unusable", "dataset-below-measurable-size"),
+    ("dataset-unusable", "dataset-coarse-resolution"),
+    ("dataset-unusable", "dataset-tuning-split-empty"),
     # All of it generated is also most of it generated.
     ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
     # And the same on the answer-key ladder, which now has the same two rungs.
@@ -2598,10 +2617,8 @@ CAP_NO_IMPLICATION: dict[str, str] = {
         "where the rows came from"
     ),
     "dataset-integrity-fail": (
-        "fires when a supplied dataset is defective with its reading established: "
-        "some row parses, or the file is not UTF-8, or every row's selected input "
-        "is blank. So it is the complement of dataset-absent rather than a "
-        "narrowing of it"
+        "fires only when at least one row DID parse, so it is the complement of "
+        "dataset-absent rather than a narrowing of it"
     ),
     "dataset-tune-holdout-overlap": (
         "a split defect; it can accompany any size or provenance and narrows none"
@@ -6998,30 +7015,30 @@ def score_dataset(
         # shape this score did not recognise, never an absent dataset.
         unreadable = (facts.unreadable_rows or 0) + facts.gold_rows_unreadable
         detail = facts.unreadable_detail
-        # Both are data defects with the reading established, so both get the
-        # integrity cap that `repair-dataset` belongs to, not a read-the-file
-        # route and not a collect-more one. #617: the file is not UTF-8,
-        # and the rows are fine until it is re-saved. #620: every row's
-        # selected input is blank, so the field was found and the data is empty.
+        # Zero usable rows with a defect preflight named: #617, the file is
+        # not UTF-8; #620, every row's selected input is blank. Each is a
+        # repair whatever the rows hold, so neither is a read-the-file route
+        # or a collect-more one. No row confirmed the shape, so the ceiling is
+        # `dataset-shape-unrecognised`'s 25, not integrity's 35.
         blank_only = (
             bool(facts.blank_input_rows) and facts.blank_input_rows == unreadable
         )
         if facts.undecodable_file:
             caps.append(
                 Cap(
-                    "dataset-integrity-fail",
-                    DATASET_INTEGRITY_CEILING,
+                    "dataset-unusable",
+                    DATASET_UNUSABLE_CEILING,
                     "A dataset was provided but it is not valid UTF-8, so none of "
-                    "its rows could be read: the file's encoding is the defect, "
-                    "not the rows - re-save it as UTF-8, then re-score.",
+                    "its rows could be read: the file's encoding is a defect "
+                    "whatever the rows hold - re-save it as UTF-8, then re-score.",
                 )
             )
             evidence = "provided, not valid UTF-8, no rows read"
         elif blank_only:
             caps.append(
                 Cap(
-                    "dataset-integrity-fail",
-                    DATASET_INTEGRITY_CEILING,
+                    "dataset-unusable",
+                    DATASET_UNUSABLE_CEILING,
                     "A dataset was provided and every row in it has a blank "
                     "selected input, so nothing could be measured: that is a "
                     "defect in the data - fill those inputs or drop those rows, "

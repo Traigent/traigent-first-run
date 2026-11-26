@@ -7125,13 +7125,14 @@ class BlankInputRowsReachTheCardAsBlankTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             dataset = _write_jsonl(Path(raw), "blank.jsonl", self._rows(True))
             score = _score(dataset)
-        # Preflight counts these rows as unusable DATA (#620). The field
-        # was found and is empty, so the reading is settled and this is the
-        # repair-dataset cap, the one a partly blank file gets - not a
-        # "describes the reading" cap that tells the assistant to re-map fields.
+        # Preflight counts these rows as unusable DATA (#620): a blank input
+        # is a defect whatever the shape, so this routes to `repair-dataset` -
+        # not a "describes the reading" cap that tells the assistant to re-map
+        # fields, and not integrity's 35, which needs a row that parsed.
         conditions = {cap["condition"] for cap in score["caps"]}
         self.assertNotIn("dataset-shape-unrecognised", conditions)
-        reason = _cap(score, "dataset-integrity-fail")["reason"]
+        self.assertNotIn("dataset-integrity-fail", conditions)
+        reason = _cap(score, "dataset-unusable")["reason"]
         self.assertIn("selected input field 'input' is blank", reason)
         self.assertNotIn("missing selected input field", reason)
         self.assertIn("a defect in the data", reason)
@@ -7139,7 +7140,7 @@ class BlankInputRowsReachTheCardAsBlankTests(unittest.TestCase):
         self.assertIn("drop", reason)
         self.assertNotIn("not a defect in the data", reason)
         self.assertEqual(
-            _cap(score, "dataset-integrity-fail")["action_kind"], "repair-dataset"
+            _cap(score, "dataset-unusable")["action_kind"], "repair-dataset"
         )
 
     def test_a_mixed_blank_and_missing_file_is_not_the_all_blank_remedy(self) -> None:
@@ -7185,13 +7186,90 @@ class UndecodableDatasetRoutesToRepairTests(unittest.TestCase):
             card = _card_records(records)
         conditions = {cap["condition"] for cap in score["caps"]}
         self.assertNotIn("dataset-absent", conditions)
+        self.assertNotIn("dataset-integrity-fail", conditions)
         self.assertEqual(
-            _cap(score, "dataset-integrity-fail")["action_kind"], "repair-dataset"
+            _cap(score, "dataset-unusable")["action_kind"], "repair-dataset"
         )
         self.assertNotIn("Choose existing examples", card)
         self.assertNotIn("holds no rows", card)
         self.assertNotIn("nothing to repair", card)
         self.assertIn("re-save it as UTF-8", card)
-        reason = _cap(score, "dataset-integrity-fail")["reason"]
+        reason = _cap(score, "dataset-unusable")["reason"]
         self.assertIn("re-save it as UTF-8", reason)
         self.assertNotIn("holds no rows", reason)
+        # The encoding is the defect that is known; the rows are not known to
+        # be fine, because none was read.
+        self.assertNotIn("not the rows", reason)
+
+
+class AFileWithNoUsableRowIsNeverCappedAboveOneWithUsableRowsTests(unittest.TestCase):
+    """The ceiling ladder, read off both real scripts (#617, #620).
+
+    A non-UTF-8 file and a file whose every input is blank leave no usable row,
+    like a file no row of which matched the shape (25). They may not score
+    above it, nor above a file whose rows are readable and only unlabelled
+    (30), and their remedy stays a repair.
+    """
+
+    @staticmethod
+    def _rows(**override: object) -> list[dict]:
+        rows = []
+        for index in range(1, 121):
+            row = {"id": f"q-{index:03d}", "input": f"question {index}", "output": "a"}
+            row.update(override)
+            rows.append({k: v for k, v in row.items() if v is not None})
+        return rows
+
+    @staticmethod
+    def _bound(score: dict) -> int:
+        # The dataset's own bound: with no agent or evaluator supplied, their
+        # absence caps every state at 25 and would hide the dataset rung.
+        return min(
+            cap["ceiling"]
+            for cap in score["caps"]
+            if cap["condition"].startswith("dataset-") and cap["ceiling"] is not None
+        )
+
+    def test_no_usable_row_is_capped_at_or_below_the_unread_and_unlabelled_files(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            cp1252 = directory / "cp1252.jsonl"
+            cp1252.write_bytes(
+                "".join(
+                    json.dumps(
+                        {"input": f"café {n}", "output": "a"}, ensure_ascii=False
+                    )
+                    + "\n"
+                    for n in range(30)
+                ).encode("cp1252")
+            )
+            states = {
+                "not UTF-8": _score(cp1252),
+                "every input blank": _score(
+                    _write_jsonl(directory, "blank.jsonl", self._rows(input=" "))
+                ),
+                "no row matched": _score(
+                    _write_jsonl(directory, "missing.jsonl", self._rows(input=None))
+                ),
+                "unlabelled": _score(
+                    _write_jsonl(directory, "unlabelled.jsonl", self._rows(output=None))
+                ),
+            }
+        for name in ("not UTF-8", "every input blank"):
+            with self.subTest(state=name):
+                cap = _cap(states[name], "dataset-unusable")
+                self.assertEqual(cap["action_kind"], "repair-dataset")
+                self.assertTrue(cap["blocks"])
+                self.assertLessEqual(
+                    self._bound(states[name]), self._bound(states["no row matched"])
+                )
+                self.assertLessEqual(
+                    self._bound(states[name]), self._bound(states["unlabelled"])
+                )
+        # A repair, not a look, declared where routes are classified.
+        module = _load("first_run_readiness_for_ladder", READINESS)
+        self.assertEqual(
+            module.ROUTE_CATEGORY["dataset-unusable"], module.CREATION_OR_REPAIR
+        )
