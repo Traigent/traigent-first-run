@@ -315,7 +315,7 @@ Prepare the connected handoff before paid work:
    input only; use the public full-example evaluator route below when it also needs metadata.
    If equivalent arguments cannot be proved, use the hand-adapted SDK route for both phases.
 
-The bridge saves its measured grid and comparison identity in `baseline-results.json`. The
+The bridge saves its measured grid and comparison identity in `traigent-runs/baseline-results.json`. The
 connected loader verifies the saved record against the rows it actually loaded. Skip the SDK
 baseline fence for a generated baseline already measured. Preserve an older result without
 baseline-time identity, or one in an unadapted custom directory, as baseline-only. Keep its actual

@@ -3,7 +3,7 @@
 follows: 0162
 follows-total-measured: 613_981
 total-ceiling: 612_400
-total-measured: 612_278
+total-measured: 612_292
 
 The paid phase now has one preparatory sequence for directory, primary measure, and row
 projection. This replaces scattered instructions that could let the assistant notice an

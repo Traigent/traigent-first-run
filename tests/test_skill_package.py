@@ -8901,8 +8901,9 @@ class SkillPackageTests(unittest.TestCase):
             "completed and unfinished row counts",
             "budget debit",
             "a safety refusal can retain scored rows with no ordinary failures",
-            "Timeout and cost-ceiling stops follow `run-safety.md`'s Recovery rules",
-            "Diagnose other safety refusals",
+            "Follow `run-safety.md` Recovery for `timeout` or `cost_ceiling`",
+            "For `evaluator_call_count`, check the scorer's declared and actual calls",
+            "Diagnose other refusals",
             "Do not read a **winner** from the run or re-run blind",
             "Carry the cumulative debit forward",
         ):
