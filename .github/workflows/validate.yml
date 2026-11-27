@@ -185,6 +185,23 @@ jobs:
       - name: Install pinned first-run dependencies outside the evidence boundary
         run: python -m pip install -r skills/traigent-first-run/assets/requirements-first-run.txt
 
+      - name: Verify the installed filelock floor
+        run: |
+          python - <<'PYTHON'
+          from importlib.metadata import PackageNotFoundError, version
+
+          from packaging.version import Version
+
+          minimum = Version("4.0.9")
+          try:
+              installed = version("filelock")
+          except PackageNotFoundError:
+              raise SystemExit("filelock is missing from the first-run install") from None
+          if Version(installed) < minimum:
+              raise SystemExit(f"filelock {installed} is below the supported floor {minimum}")
+          print(f"filelock {installed} meets the supported floor {minimum}")
+          PYTHON
+
       - name: Run package tests
         run: python -m unittest discover -s tests -v
 
