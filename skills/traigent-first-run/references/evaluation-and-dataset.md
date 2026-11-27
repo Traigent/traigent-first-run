@@ -1371,7 +1371,7 @@ selection is already paid for, and only its outcome is measured here.
 In a cost-aware comparison, when two configurations score the same on the tuning rows and have
 comparable measured costs, prefer the cheaper one; at equal measured cost prefer the stronger model.
 In a primary-only comparison or without comparable costs, do not break the tie on price or treat
-unknown costs as equal: retain the incumbent if it ties, otherwise retain the first tied
+unknown costs as equal: prefer the selected baseline if it ties, otherwise retain the first tied
 configuration in recorded trial order and report the tie.
 Use the primary metric in its declared direction, not a cost-aware `best_score`. These are
 tuning-only choices; the held-out rows never select the candidate. A cost-aware operation that

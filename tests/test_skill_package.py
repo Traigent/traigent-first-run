@@ -15974,7 +15974,7 @@ class SkillPackageTests(unittest.TestCase):
             "break the tie on price or treat unknown costs as equal",
             dataset,
         )
-        self.assertIn("retain the incumbent if it ties", dataset)
+        self.assertIn("prefer the selected baseline if it ties", dataset)
         self.assertIn(
             "otherwise retain the first tied configuration in recorded trial order",
             dataset,
@@ -21441,11 +21441,7 @@ class SkillPackageTests(unittest.TestCase):
             "over the declared objective and cost**",
             skill,
         )
-        self.assertIn(
-            "never show a frontier point worse than the configuration the user is already "
-            "running under the declared objective direction",
-            skill,
-        )
+        self.assertIn("the selected baseline's tuning score", safety)
         self.assertIn(
             "nothing tested cost less at its score, and nothing scored better in the "
             "declared objective direction at its cost",
@@ -21769,7 +21765,7 @@ class SkillPackageTests(unittest.TestCase):
         )
 
     def test_the_null_outcome_is_a_reported_finding(self) -> None:
-        """The copy for "nothing beat what you already run" is the customer's.
+        """The null outcome describes the measured baseline frontier.
 
         It is pinned because it is the outcome an assistant is likeliest to
         soften, skip, or turn into a pitch for one more round - and because
@@ -21782,15 +21778,11 @@ class SkillPackageTests(unittest.TestCase):
         quoted = quoted_prose(RUN_SAFETY)
 
         self.assertIn("both are results. neither is apologized for.", safety)
-        self.assertIn(
-            "report what this run counted, never a property of the space", safety
-        )
+        self.assertIn("report what this run tested", safety)
         for phrase in (
             "this run tested `<distinct configurations>` of `<total combination count>` "
             "configurations in `<executed trials>` trials",
-            "the configuration you are already running is still the only point "
-            "on the frontier",
-            "so keeping it is the answer this run supports",
+            "the selected baseline is the only point on the frontier",
             "the skills named at the close help you apply what you learned to your own project",
         ):
             with self.subTest(null_copy=phrase):
@@ -21833,7 +21825,7 @@ class FrontierAtOrAboveTests(unittest.TestCase):
     Every other check over this section pins a sentence, which stops silent
     deletion and nothing more. This one runs the block: the floor is the only
     executable guarantee that the report never hands back a configuration worse
-    than the one the user already runs, and the check it replaced asserted the
+    than the selected baseline, and the check it replaced asserted the
     function's NAME - green against a body with the floor deleted, which is a
     pure cost minimiser.
     """
@@ -21893,7 +21885,7 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         self.assertEqual(self.select([cheap, strong]), [cheap, strong])
 
     def test_the_incumbent_is_a_point_like_any_other(self) -> None:
-        """Keeping what you already run is an answer the frontier shows."""
+        """The frontier can contain only the selected baseline."""
         incumbent = self.trial(0.80, 0.0120)
         self.assertEqual(self.select([incumbent]), [incumbent])
 
@@ -22003,6 +21995,31 @@ class FrontierAtOrAboveTests(unittest.TestCase):
                         expected_rows=2,
                     ),
                     [incumbent],
+                )
+
+    def test_selected_baseline_sets_the_floor_when_the_starting_config_differs(self):
+        for orientation, starting_score, baseline_score in (
+            ("maximize", 0.50, 1.00),
+            ("minimize", 1.00, 0.50),
+        ):
+            with self.subTest(orientation=orientation):
+                starting = self.trial(starting_score, 0.05)
+                starting.config = {"model": "starting"}
+                baseline = self.trial(baseline_score, 0.50)
+                baseline.config = {"model": "selected-baseline"}
+                enhanced = self.trial(0.75, 0.01)
+                enhanced.config = {"model": "enhanced"}
+                trials = [starting, baseline, enhanced]
+                self.assertEqual(
+                    FRONTIER_AT_OR_ABOVE(
+                        trials,
+                        "task_success",
+                        baseline,
+                        orientation=orientation,
+                        compare_cost=True,
+                        expected_rows=2,
+                    ),
+                    [baseline],
                 )
 
     def test_primary_only_keeps_unpriced_candidates_and_ignores_placeholder_cost(self):
@@ -25301,6 +25318,16 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
         (
+            "which configuration sets the measured comparison floor",
+            ("the selected baseline's tuning score",),
+            (
+                "the incumbent being the configuration the user is already running",
+                "configuration you are running now, on the same rows",
+                "retain the current configuration. the quality floor",
+                "the baseline measures your current configuration",
+            ),
+        ),
+        (
             "whether flat measured scores alone invalidate a calibrated comparison",
             (
                 "an optimized winner that does not beat the baseline is a valid no-lift result",
@@ -25725,12 +25752,12 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # The settled answer moved when the one-sided round became a
             # frontier. A one-sided objective refused the trade by never
             # searching for it; a frontier searches the whole trade-off and
-            # refuses to *report* a point below what the user already gets,
+            # refuses to *report* a point worse than the selected baseline,
             # which is the floor named here.
             "whether a second run may hand back a worse-scoring configuration",
             (
-                "never show a frontier point worse than the configuration the user is already "
-                "running under the declared objective direction",
+                "a frontier may contain no point worse than the selected baseline "
+                "under the declared objective direction",
             ),
             (
                 "we accepted a lower score for a lower cost",
@@ -25767,7 +25794,7 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
             # non-empty, and each patch opened the next gap. Settled answer:
             # report the run's own counts, which quantify over nothing.
             "what the null second-run outcome may claim",
-            ("report what this run counted, never a property of the space",),
+            ("report what this run tested",),
             (
                 "already near the pareto frontier",
                 "every configuration tested that cost less also scored lower",

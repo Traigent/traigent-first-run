@@ -126,9 +126,8 @@ Optimization (optimization run)
   by the evaluator, that returns the best non-dominated candidates.
 
 Baseline run vs enhanced run
-  Plain: the baseline measures your current configuration (or a small standard
-  sweep when the assistant had to prepare one); the enhanced run is the broader,
-  cloud-assisted search that looks for better configurations.
+  Plain: the baseline measures a fixed configuration or grid. The enhanced run
+  searches a broader space and compares its result with the selected baseline.
 
 Tuning set vs held-out set
   Plain: the tuning set is what we optimize against; the held-out set is kept

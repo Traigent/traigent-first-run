@@ -478,9 +478,10 @@ Persist `traigent-runs/config-space.json` only after nonzero search trials, from
 used; only that current-run document reaches closing readiness. Stop on provider, backend, or
 portal failure with the concrete reason and one recovery; preserve paid work and never replace it
 with mock or synthetic results. Do not fabricate configurations to reach a count.
-After search, recommend a configuration from tuning scores across both measurements. If independent
-held-out rows are available, score only that one on them; otherwise report that check unavailable. A frontier may contain no point worse than the current
-baseline under the declared objective direction; its conclusions must match measured evidence.
+After search, recommend a configuration from tuning scores across both runs. If independent
+held-out rows are available, score only that one on them; otherwise report that check unavailable.
+A frontier may contain no point worse than the selected baseline under the declared objective
+direction; its conclusions must match measured evidence.
 
 **Read next.** Required: [`references/evaluation-and-dataset.md` § Held-out set and claims](references/evaluation-and-dataset.md#held-out-set-and-claims).
 
