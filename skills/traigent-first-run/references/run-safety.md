@@ -282,17 +282,15 @@ In the commands below, `.../` is the absolute skill directory resolved under GUI
    covers every installed package, including `python-dotenv` and transitive dependencies. A
    dependency conflict needs a revised disclosed plan; never silently
    upgrade, downgrade, or reinstall an installed package. If planning fails, show
-   `No install plan was produced; no installed packages changed. <observed resolver reason>.`
-   Name any reported version conflict in the customer's terms; do not label a network or missing-wheel
-   failure a dependency conflict. Recommend a compatible project environment.
-   Offer the throwaway route only with its compatibility
-   consequence: for example, `Your agent uses openai 3.x; this SDK stack requires openai below 3.
+   `No install plan was produced; no installed packages changed. <sanitized cause>.`
+   Recommend a compatible environment for a version conflict. For a network or missing-wheel
+   failure, restore access or supply the wheel first. Offer the throwaway route only with its
+   compatibility consequence: `Your agent uses openai 3.x; this SDK requires openai below 3.
    A throwaway environment preserves yours, but would run your agent with that older dependency;
    compatibility is unverified.` Never recommend that dependency downgrade as the remedy or enter
-   the fallback automatically. After an explicit fallback choice, show its resolved dependency
-   versions and apply the existing static/mock checks to the selected agent before proposing a paid run.
-   Record the versions actually installed and any difference from the original agent's dependency
-   versions as this run's setup evidence.
+   the fallback automatically. After an
+   explicit fallback choice, show its resolved versions and run static/mock checks before planning
+   paid work. Record installed versions and differences from the original agent's dependencies.
 5. **Throwaway route.** `.venv-traigent` under the project root with Python 3.11-3.13 and the
    exact pins (`throwaway`) - used only when the customer declines the project-environment
    install, refuses the guard's change line, or explicitly chooses it because `.venv` is occupied
@@ -2167,11 +2165,10 @@ not in that repository, and no `npx skills add` flag beyond `--list` and `--skil
 - Dataset examples that fail under every configuration: inspect gold/reference and evaluator
   policy before blaming the model.
 - Environment creation, installation, or installed-preflight failure: preserve every existing
-  environment and stop with the chosen environment's absolute path and the concrete failure,
-  quoting pip's own message for a failed install. Recommend inspecting it, or remove and recreate
-  only the throwaway environment after explicit user approval; a failed install into the
-  customer's own environment offers the throwaway route instead, and nothing falls back to a
-  shared or dependent environment.
+  environment and stop with the chosen environment's absolute path and the sanitized cause.
+  Keep raw pip logs out of chat and tool output. Inspect the stopped environment before
+  further changes. Remove and recreate only the throwaway environment with explicit approval.
+  For a failed install in the customer's environment, offer only the approved throwaway route.
 
 For generated wrappers, set the process-only SDK results folder to a child of `traigent-runs/`
 before importing Traigent so its local optimization logs and state remain inside the ignored

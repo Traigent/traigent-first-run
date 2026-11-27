@@ -55,6 +55,9 @@ class IsolatedInstallerTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(prefix="first run installer ")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        # pip output is saved under TMPDIR; keep it out of the real system temp dir.
+        self.scratch = tempfile.TemporaryDirectory(prefix="first run pip scratch ")
+        self.addCleanup(self.scratch.cleanup)
         self.target = self.root / ".venv"
         venv.EnvBuilder(with_pip=False, symlinks=os.name == "posix").create(self.target)
         self.site = Path(
@@ -80,6 +83,14 @@ class IsolatedInstallerTests(unittest.TestCase):
         )
         self.sequence = 0
 
+    def pip_output(self, result) -> str:
+        """Return pip's saved output, which the failed run's error names (never printed)."""
+        message = json.loads(result.stderr)["error"]
+        logs = list(Path(self.scratch.name).glob("first-run-pip-*/pip-output.log"))
+        self.assertEqual(len(logs), 1, message)
+        self.assertIn(str(logs[0]), message)
+        return logs[0].read_text(encoding="utf-8")
+
     def invoke(self, *arguments, success=True):
         result = subprocess.run(
             [str(TRUSTED), "-I", "-S", "-B", str(SCRIPT), *map(str, arguments)],
@@ -91,6 +102,7 @@ class IsolatedInstallerTests(unittest.TestCase):
             env={
                 **os.environ,
                 "PYTHONPATH": str(self.root),
+                "TMPDIR": self.scratch.name,
                 "PIP_INDEX_URL": "https://example.invalid/no-network",
             },
         )
@@ -183,7 +195,7 @@ class IsolatedInstallerTests(unittest.TestCase):
         wheel(self.wheels, "pr545-example", "2.0", ("pr545-dependency>=2",))
         self.requirements.write_text("pr545-example==2.0\n")
         refused = self.plan(success=False)
-        self.assertIn("ResolutionImpossible", refused.stderr)
+        self.assertIn("ResolutionImpossible", self.pip_output(refused))
         self.assertTrue((self.site / "pr545_dependency-1.0.dist-info").exists())
         plan = self.plan("--change", "pr545-dependency==2.0")
         self.assertEqual(plan["changes"], ["pr545-dependency 1.0 -> 2.0"])
@@ -214,9 +226,9 @@ class IsolatedInstallerTests(unittest.TestCase):
         wheel(self.wheels, "pr545-example", "2.0", ("pr545-client>=2.20,<3",))
         self.requirements.write_text("pr545-example==2.0\n")
         refused = self.plan(success=False)
-        self.assertIn("ResolutionImpossible", refused.stderr)
-        self.assertIn("pr545-client==3.13", refused.stderr)
-        self.assertIn("pr545-client<3", refused.stderr)
+        self.assertIn("ResolutionImpossible", self.pip_output(refused))
+        self.assertIn("pr545-client==3.13", self.pip_output(refused))
+        self.assertIn("pr545-client<3", self.pip_output(refused))
         self.assertFalse((self.root / f"plan-{self.sequence}.json").exists())
         self.assertEqual(
             {
@@ -272,7 +284,7 @@ class IsolatedInstallerTests(unittest.TestCase):
             self.wheels, "pr545-example", "2.0", (f"pr545-source @ {source.as_uri()}",)
         )
         result = self.plan(success=False)
-        self.assertIn("Only wheel artifacts", result.stderr)
+        self.assertIn("Only wheel artifacts", self.pip_output(result))
 
     def test_adapter_refuses_subprocess_creation_before_a_child_can_execute(self):
         """Exercise the process boundary independently of wheel-only rejection."""
@@ -342,6 +354,71 @@ print(json.dumps({"attempted": attempted, "error": None}))
             },
         )
 
+    def pre_pip_refusal(self, members):
+        """Run the real _pip child on a wheel with exactly these archive members."""
+        wheel_path = self.wheels / "pr545_example-2.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as archive:
+            for filename, content in members.items():
+                archive.writestr(filename, content)
+        return subprocess.run(
+            [
+                str(TRUSTED),
+                "-I",
+                "-S",
+                "-B",
+                str(SCRIPT),
+                "_pip",
+                "--candidate",
+                str(self.target),
+                "--",
+                "install",
+                str(wheel_path),
+            ],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            timeout=60,
+        )
+
+    def wheel_members(self, entry_points, *, wheel_file=True):
+        """Archive members of a valid wheel, with the given entry_points.txt text."""
+        dist_info = "pr545_example-2.0.dist-info"
+        members = {
+            "pr545_example.py": "def main():\n    pass\n",
+            f"{dist_info}/METADATA": "Metadata-Version: 2.1\nName: pr545-example\nVersion: 2.0\n",
+            f"{dist_info}/entry_points.txt": entry_points,
+            f"{dist_info}/RECORD": "",
+        }
+        if wheel_file:
+            members[f"{dist_info}/WHEEL"] = (
+                "Wheel-Version: 1.0\nGenerator: local-test\nRoot-Is-Purelib: true\n"
+                "Tag: py3-none-any\n"
+            )
+        return members
+
+    def test_duplicate_console_script_refuses_before_pip_with_exit_65(self):
+        # configparser.DuplicateOptionError: not a ValueError, so it once escaped.
+        result = self.pre_pip_refusal(
+            self.wheel_members(
+                "[console_scripts]\n"
+                "pr545-example = pr545_example:main\n"
+                "pr545-example = pr545_example:other\n"
+            )
+        )
+        self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+        self.assertIn("error", json.loads(result.stderr))
+
+    def test_wheel_without_wheel_metadata_refuses_before_pip_with_exit_65(self):
+        # KeyError from archive.read of the missing WHEEL file: not a ValueError.
+        result = self.pre_pip_refusal(
+            self.wheel_members(
+                "[console_scripts]\npr545-example = pr545_example:main\n",
+                wheel_file=False,
+            )
+        )
+        self.assertEqual(result.returncode, 65, result.stdout + result.stderr)
+        self.assertIn("error", json.loads(result.stderr))
+
     @unittest.skipUnless(os.name == "posix", "requires symbolic links")
     def test_outward_package_symlink_is_refused_without_writes(self):
         outside = self.root / "outside"
@@ -364,7 +441,10 @@ print(json.dumps({"attempted": attempted, "error": None}))
         (self.target / "share").symlink_to(outside, target_is_directory=True)
         plan = self.plan()
         result = self.apply(plan, success=False)
-        self.assertIn("destination escapes", result.stderr)
+        message = json.loads(result.stderr)["error"]
+        self.assertIn("nothing was installed or changed", message)
+        self.assertNotIn("partly changed", message)
+        self.assertIn("destination escapes", self.pip_output(result))
         self.assertEqual((outside / "overwrite").read_text(), "customer data")
         self.assertFalse((self.site / "pr545_example.py").exists())
 
@@ -373,7 +453,9 @@ print(json.dumps({"attempted": attempted, "error": None}))
         with zipfile.ZipFile(artifact, "a") as archive:
             archive.writestr("../escape", "wheel data")
         plan = self.plan()
-        self.assertIn("unsafe archive path", self.apply(plan, success=False).stderr)
+        self.assertIn(
+            "unsafe archive path", self.pip_output(self.apply(plan, success=False))
+        )
         self.assertFalse((self.site / "pr545_example.py").exists())
 
     def test_installed_script_name_cannot_expand_uninstall_scope(self):
@@ -420,7 +502,9 @@ print(json.dumps({"attempted": attempted, "error": None}))
         configuration = self.target / "pyvenv.cfg"
         original = configuration.read_bytes()
         plan = self.plan()
-        self.assertIn("destination escapes", self.apply(plan, success=False).stderr)
+        self.assertIn(
+            "destination escapes", self.pip_output(self.apply(plan, success=False))
+        )
         self.assertEqual(configuration.read_bytes(), original)
         self.assertFalse((self.site / "pr545_example.py").exists())
 
@@ -473,7 +557,9 @@ print(json.dumps({"attempted": attempted, "error": None}))
         configuration = self.target / "pyvenv.cfg"
         original = configuration.read_bytes()
         plan = self.plan()
-        self.assertIn("destination escapes", self.apply(plan, success=False).stderr)
+        self.assertIn(
+            "destination escapes", self.pip_output(self.apply(plan, success=False))
+        )
         self.assertEqual(configuration.read_bytes(), original)
 
     def test_unknown_executable_hook_is_refused_before_resolution(self):
