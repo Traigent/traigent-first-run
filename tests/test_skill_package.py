@@ -1709,6 +1709,7 @@ SPEND_GATE_FUNCTIONS = frozenset(
         # reservation of a call the provider refused before billing, and
         # `ledgered` is what puts them on `litellm.completion`.
         "worst_case_requests",
+        "CostCeilingRefusal",
         "reserve_call_spend",
         "settle_call_spend",
         "release_call_spend",
@@ -1766,7 +1767,10 @@ def sdk_wrapper_spend_gate(text: str) -> list[ast.stmt]:
     install: list[ast.stmt] = []
     for source in sdk_execution_python_fences(text):
         for node in ast.parse(source).body:
-            if isinstance(node, ast.FunctionDef) and node.name in SPEND_GATE_FUNCTIONS:
+            if (
+                isinstance(node, (ast.ClassDef, ast.FunctionDef))
+                and node.name in SPEND_GATE_FUNCTIONS
+            ):
                 nodes.append(node)
             elif isinstance(node, ast.If) and DOOR_INSTALL_MARKER in ast.unparse(
                 node.test
@@ -8842,7 +8846,7 @@ class SkillPackageTests(unittest.TestCase):
         self.assertIn("obtain explicit approval for this connected stage", stage_seven)
         baseline_checkpoint = stage_seven.index("show a **local baseline checkpoint**")
         evidence_gate = stage_seven.index(
-            "check whether the dataset and evaluator distinguish configurations"
+            "check calibration and reference evidence for defects"
         )
         connected_preview = stage_seven.index("offer `a.` the bounded connected run")
         connected_approval = stage_seven.index("stage 4/5 · optimize")
@@ -8887,6 +8891,37 @@ class SkillPackageTests(unittest.TestCase):
         )
         for document in (SKILL, RUN_SAFETY, ROOT / ".env.example"):
             self.assertNotIn("combined approval", document.read_text().casefold())
+
+    def test_generated_baseline_exit3_routes_safety_stops(self) -> None:
+        """A safety stop can retain scored rows without ordinary row failures."""
+        execution = (SKILL_ROOT / "references" / "sdk-execution.md").read_text()
+        incomplete = " ".join(
+            execution.split("A generated-bridge baseline that ends", 1)[1]
+            .split("Edit the bundled wrapper only", 1)[0]
+            .split()
+        )
+        for outcome in (
+            "unscored configurations",
+            "failed examples",
+            "timeouts",
+            "safety refusals",
+        ):
+            with self.subTest(outcome=outcome):
+                self.assertIn(outcome, incomplete)
+        for safeguard in (
+            "completed and unfinished row counts",
+            "budget debit",
+            "a safety refusal can retain scored rows with no ordinary failures",
+            "Follow `run-safety.md` Recovery for `timeout` or `cost_ceiling`",
+            "For `evaluator_call_count`, check the scorer's declared and actual calls",
+            "Diagnose other refusals",
+            "Do not read a **winner** from the run or re-run blind",
+            "Carry the cumulative debit forward",
+        ):
+            with self.subTest(safeguard=safeguard):
+                self.assertIn(safeguard, incomplete)
+        self.assertNotIn("Three states reach it", incomplete)
+        self.assertNotIn("For the other two", incomplete)
 
     def test_run_plan_records_stage_specific_approvals(self) -> None:
         plan = " ".join(
@@ -11589,6 +11624,7 @@ class SkillPackageTests(unittest.TestCase):
             "PROBE_VERDICTS",
             "UNPROVEN_WIRED_KNOBS",
             "_tuning_for_probe",
+            "TUNING_EXAMPLES",
             "WIRED_KNOBS",
             "BEHAVIOUR_KNOBS",
             "PROBE_INPUTS",
@@ -13414,7 +13450,8 @@ class SkillPackageTests(unittest.TestCase):
         for phrase in (
             "adapter around the preserved evaluator",
             "installed sdk's documented public `metric_functions` contract",
-            "baseline, search, and holdout must use the same selected public evaluation path",
+            "baseline, search, and holdout must preserve the same agent/evaluator argument contract and primary metric",
+            "baseline and search use the same tuning rows; holdout uses the reserved rows",
             "same installed public `traigent.dataset.from_jsonl` loader",
         ):
             self.assertIn(phrase, normalized)
@@ -16803,9 +16840,9 @@ class SkillPackageTests(unittest.TestCase):
         fence = (SKILL_ROOT / "assets" / "run_wrapper.py").read_text()
         adapt_list = " ".join(
             text[
-                text.rindex("## Decorator contract") : text.index(
-                    "The runnable wrapper is bundled"
-                )
+                text.index(
+                    "Use one production-compatible function for baseline and optimization."
+                ) : text.index("The runnable wrapper is bundled")
             ].split()
         )
         self.assertIn("every other line is verbatim", adapt_list)
@@ -16836,6 +16873,7 @@ class SkillPackageTests(unittest.TestCase):
                 "WIRED_KNOBS = [",
                 "def holdout_agent_input(input_data):",
                 "INCLUDE_COST_OBJECTIVE = False",
+                "COST_REMOVAL_RECORD = None",
                 "def build_prompt(",
                 "def build_request(message: str, config: dict) -> dict:",
                 "SCORER_CALLS_PER_ROW: int = 0",
@@ -17040,13 +17078,15 @@ class SkillPackageTests(unittest.TestCase):
             "run_remaining_usd",
             "tracking_stopped",
             "worst_case_requests",
+            "CostCeilingRefusal",
             "reserve_call_spend",
             "ledgered",
         }
         spend_nodes = [
             node
             for node in ast.parse(wrapper).body
-            if isinstance(node, ast.FunctionDef) and node.name in spend_functions
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef))
+            and node.name in spend_functions
         ]
         provider_calls: list[tuple] = []
         spend_namespace = {
@@ -20114,7 +20154,7 @@ class SkillPackageTests(unittest.TestCase):
                 returned_trials.append(result.trials)
                 return result
 
-            def read_transfer(*_args):
+            def read_transfer(*_args, **_kwargs):
                 order.append("transfer")
                 return [], baseline_incumbent
 
@@ -20139,6 +20179,9 @@ class SkillPackageTests(unittest.TestCase):
                     "BASELINE_TRANSFER_FILE": str(
                         document.parent / "baseline-transfer.json"
                     ),
+                    "BASELINE_RESULTS": str(document.parent / "baseline-results.json"),
+                    "COST_REMOVAL_RECORD": None,
+                    "TUNING_EXAMPLES": (),
                     "TUNING_DATASET": str(document.parent / "tuning.jsonl"),
                     "TUNING_DATASET_INITIAL_FINGERPRINT": "a" * 64,
                     "tuning_dataset_fingerprint": lambda _path: next(
@@ -20563,25 +20606,23 @@ class SkillPackageTests(unittest.TestCase):
             "PROBE_VERDICTS",
             "REQUEST_FINGERPRINT",
             "_tuning_for_probe",
+            "TUNING_EXAMPLES",
+        }
+        wanted_functions = {
+            "build_prompt",
+            "build_request",
+            "holdout_agent_input",
+            "require_wiring_probe_inputs",
+            "require_pinned_cloud_space_compatibility",
+            "probe_wiring",
+            "request_fingerprint",
+            "assert_wiring_still_proven",
+            "call_agent",
         }
         selected = [
             node
             for node in module.body
-            if (
-                isinstance(node, ast.FunctionDef)
-                and node.name
-                in {
-                    "build_prompt",
-                    "build_request",
-                    "holdout_agent_input",
-                    "require_wiring_probe_inputs",
-                    "require_pinned_cloud_space_compatibility",
-                    "probe_wiring",
-                    "request_fingerprint",
-                    "assert_wiring_still_proven",
-                    "call_agent",
-                }
-            )
+            if (isinstance(node, ast.FunctionDef) and node.name in wanted_functions)
             or (
                 isinstance(node, ast.Assign)
                 and any(
@@ -20591,7 +20632,9 @@ class SkillPackageTests(unittest.TestCase):
             )
         ]
         self.assertEqual(
-            len(selected), 19, "the template no longer defines the knobs it wires"
+            len(selected),
+            len(wanted_assignments) + len(wanted_functions),
+            "the template no longer defines the knobs it wires",
         )
         self.assertIn(
             "assert_wiring_still_proven()\nbaseline_tuning_fingerprint",
@@ -20787,19 +20830,19 @@ class SkillPackageTests(unittest.TestCase):
             for node in module.body
             if isinstance(node, ast.FunctionDef) and node.name == "holdout_agent_input"
         )
+        tuning_bindings = {"_tuning_for_probe", "TUNING_EXAMPLES", "PROBE_INPUTS"}
         tuning_load = [
             node
             for node in module.body
             if isinstance(node, ast.Assign)
             and any(
-                isinstance(target, ast.Name)
-                and target.id in {"_tuning_for_probe", "PROBE_INPUTS"}
+                isinstance(target, ast.Name) and target.id in tuning_bindings
                 for target in node.targets
             )
         ]
         self.assertEqual(
             len(tuning_load),
-            2,
+            len(tuning_bindings),
             "the local tuning proof must load rows and derive its inputs at import",
         )
         loaded: list[str] = []
@@ -20848,6 +20891,7 @@ class SkillPackageTests(unittest.TestCase):
             "PROBE_VERDICTS",
             "UNPROVEN_WIRED_KNOBS",
             "_tuning_for_probe",
+            "TUNING_EXAMPLES",
             "WIRED_KNOBS",
             "PROBE_INPUTS",
         }
@@ -22448,10 +22492,9 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
         money it had spent: three calls at $0.01 left `run_remaining_usd()`
         reporting the whole of a $0.03 remaining.
 
-        The SDK cannot close it either. At the pinned 0.31.1 its local
-        evaluator settles a trial's cost before it applies the metric
-        functions, so a call made inside one is already past that trial's
-        accounting.
+        SDK 0.31.1 folds intercepted metric-function calls into trial costs.
+        This direct wrapper test still proves the cross-phase ledger, including
+        calls outside an SDK trial, rather than relying on SDK-local accounting.
         """
         namespace, placed = self.compiled_scorer_path(
             ceiling=1.00, remaining=0.09, per_call=0.02, reported_cost=0.03
@@ -24280,27 +24323,22 @@ class TheApprovedTotalReachesTheCodeTests(unittest.TestCase):
     def test_the_claim_about_uncovered_paid_calls_is_made_once(self) -> None:
         """One claim in two documents drifts, and this pair already had.
 
-        `run-safety.md` called the held-out agent and judge calls the
-        walkthrough's only paid calls the SDK never sees. `task_score` places
-        `SCORER_CALLS_PER_ROW` calls on EVERY scored row, the search included,
-        and the SDK cannot see those either - it settles a trial's cost before
-        it applies the metric functions - so the "only" was false for any run
-        an LLM judge grades. Both sentences arrived together; the one that
-        stayed is the one that is true, and the other points at it rather than
-        restating it in its own words a second time.
+        The accounting explanation belongs to sdk-execution. SDK 0.31.1 sees
+        intercepted judges inside metric functions; direct held-out calls are
+        outside those trial permits. The recovery document references that
+        boundary rather than restating a version-sensitive SDK claim.
         """
-        owner = "the walkthrough's only paid calls that no permit covers"
+        owner = "Direct held-out agent and judge calls run outside SDK trial permits"
         self.assertIn(owner, " ".join(sdk_execution_reference_text().split()))
         safety = " ".join(RUN_SAFETY.read_text().split())
-        self.assertNotIn(
-            "only paid calls",
-            safety,
-            "the claim about which paid calls go unseen is written out in two "
-            "documents, which is how it drifted: the held-out pass is not the "
-            "only one, because a judge grades every scored row of the search "
-            "as well",
+        self.assertNotIn("a judge's are among them", safety)
+        self.assertIn(
+            "sdk-execution.md` for which paid calls run outside trial permits", safety
         )
-        self.assertIn("which of this run's paid calls no permit covers", safety)
+        self.assertIn(
+            "SDK 0.31.1 folds intercepted metric-function calls into example/trial costs",
+            " ".join(sdk_execution_reference_text().split()),
+        )
 
     def spend_report_program(
         self, *, ceiling: float, spent: float, per_call: float, placed, refused, ending
@@ -25256,6 +25294,19 @@ class GuidanceDoesNotContradictItselfTests(unittest.TestCase):
 
     # (decision, phrases asserting one answer, phrases asserting the opposite)
     CONTRADICTIONS = (
+        (
+            "whether flat measured scores alone invalidate a calibrated comparison",
+            (
+                "an optimized winner that does not beat the baseline is a valid no-lift result",
+            ),
+            (
+                "primary objective measures appear and vary meaningfully",
+                "best configuration and non-degenerate measures exist",
+                "evaluator exceptions or all-zero/all-one measures: repair",
+                "if the signal cannot distinguish configurations, recommend the evidenced repair",
+                "check whether the dataset and evaluator distinguish configurations. if not, stop",
+            ),
+        ),
         (
             "whether preserving reference rows establishes any-of grading",
             ("keeping reference rows does not provide any-of scoring",),
@@ -32066,9 +32117,7 @@ class OneShapeAndOneMarkForEveryChoiceTests(unittest.TestCase):
             section_text(RUN_SAFETY, "Comparison sequence").casefold().split()
         )
         self.assertLess(
-            comparison.index(
-                "check whether the dataset and evaluator distinguish configurations"
-            ),
+            comparison.index("check calibration and reference evidence for defects"),
             comparison.index("recommend the sound continuing route"),
         )
         self.assertIn(

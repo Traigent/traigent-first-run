@@ -3702,6 +3702,48 @@ class EvaluatorShapeCheckTests(unittest.TestCase):
     def setUp(self) -> None:
         MODULE.RESULTS.clear()
 
+    def test_python_encodings_preserve_static_evaluator_checks(self) -> None:
+        source = (
+            "raise RuntimeError('static inspection must not execute this file')\n"
+            "def score(output, expected):\n"
+            "    return float(output == expected)\n"
+        )
+        variants = {
+            "utf8": source.encode("utf-8"),
+            "bom": b"\xef\xbb\xbf" + source.encode("utf-8"),
+            "latin1": ("# coding: latin-1\n# café\n" + source).encode("latin-1"),
+        }
+        for name, raw in variants.items():
+            with self.subTest(
+                encoding=name
+            ), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "evaluator.py"
+                path.write_bytes(raw)
+                compile(raw, str(path), "exec", dont_inherit=True)
+                MODULE.RESULTS.clear()
+                MODULE.check_evaluator(path)
+                shape = self._shape()
+                self.assertEqual(shape["status"], MODULE.PASS)
+                self.assertTrue(shape["exists"])
+                self.assertTrue(shape["parses"])
+                self.assertEqual(path.read_bytes(), raw)
+
+    def test_invalid_python_encodings_are_explicit_shape_failures(self) -> None:
+        for raw in (
+            b"# coding: no-such-codec\ndef score(output, expected): return 1\n",
+            b"\xef\xbb\xbf# coding: latin-1\ndef score(output, expected): return 1\n",
+            b"def score(output, expected:\n    return 1\n",
+        ):
+            with self.subTest(source=raw), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "evaluator.py"
+                path.write_bytes(raw)
+                MODULE.RESULTS.clear()
+                MODULE.check_evaluator(path)
+                self.assertEqual(
+                    self._shape(),
+                    {"status": MODULE.FAIL, "exists": True, "parses": False},
+                )
+
     def _shape(self) -> dict:
         result = next(r for r in MODULE.RESULTS if r.check == "evaluator-shape")
         return {"status": result.status, **(result.metrics or {})}
@@ -6824,6 +6866,37 @@ class TheStructuralSqlComparisonAFileDelegatesToTests(unittest.TestCase):
             "the copy beside this evaluator is unchanged (line 8)",
             MODULE.structural_comparison_witness(line),
         )
+
+    def test_encoded_evaluator_and_comparator_keep_the_structural_gold_check(
+        self,
+    ) -> None:
+        source = DELEGATES_TO_BUNDLED_COMPARATOR
+        variants = {
+            "utf8": source.encode("utf-8"),
+            "bom": b"\xef\xbb\xbf" + source.encode("utf-8"),
+            "latin1": ("# coding: latin-1\n# café\n" + source).encode("latin-1"),
+        }
+        for name, raw in variants.items():
+            with self.subTest(
+                encoding=name
+            ), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                evaluator = root / "evaluator.py"
+                evaluator.write_bytes(raw)
+                comparator = root / "sql_structure.py"
+                comparator.write_bytes(
+                    b"\xef\xbb\xbf" + MODULE.STRUCTURAL_SQL_ASSET.read_bytes()
+                )
+                self.assertTrue(
+                    MODULE.structural_sql_gold_is_checkable("composite", evaluator)
+                )
+                comparator.write_bytes(
+                    b"# coding: no-such-codec\n"
+                    + MODULE.STRUCTURAL_SQL_ASSET.read_bytes()
+                )
+                self.assertFalse(
+                    MODULE.structural_sql_gold_is_checkable("composite", evaluator)
+                )
 
     def test_a_copy_reformatted_but_not_changed_still_settles(self) -> None:
         """Trees, not bytes. A copy may be re-commented and may not be rewritten."""

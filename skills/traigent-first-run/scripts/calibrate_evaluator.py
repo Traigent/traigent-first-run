@@ -37,6 +37,7 @@ import sys
 import threading
 import time
 import traceback
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -1754,11 +1755,20 @@ def load_function(spec: str):
     if not separator or not name:
         raise ValueError("--scorer must use FILE.py:FUNCTION")
     path = Path(file_part).resolve()
-    module_spec = importlib.util.spec_from_file_location(path.stem, path)
+    module_spec = importlib.util.spec_from_file_location(
+        f"_first_run_calibration_{uuid.uuid4().hex}", path
+    )
     if module_spec is None or module_spec.loader is None:
         raise ValueError(f"cannot load {path}")
     module = importlib.util.module_from_spec(module_spec)
-    module_spec.loader.exec_module(module)
+    # Register before execution, as preflight_module does, without taking over
+    # a normal import's name or replacing a previously loaded scorer/transform.
+    sys.modules[module_spec.name] = module
+    try:
+        module_spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_spec.name, None)
+        raise
     function = getattr(module, name, None)
     if not callable(function):
         raise ValueError(f"{path} has no callable '{name}'")

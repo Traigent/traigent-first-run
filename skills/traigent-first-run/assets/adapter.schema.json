@@ -4,20 +4,30 @@
   "description": "Names the customer's own dataset fields, agent, evaluator and search space. scripts/generate_adapter.py validates it and writes a thin bridge that imports the callables unchanged. Agent tokens: \"$input\", \"$metadata\", \"$id\", \"$config.<knob>\", {\"value\": <literal>}; never the expected answer or the raw row. Evaluator tokens: \"$output\", \"$expected\", \"$input\", \"$metadata\". Nothing in this file is inferred: detection only suggests.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "dataset", "agent", "evaluator", "baseline"],
+  "required": ["schema_version", "dataset", "agent", "evaluator", "baseline", "primary_metric"],
   "properties": {
     "schema_version": {"const": 1},
+    "primary_metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "orientation"],
+      "description": "The explicitly named normalized higher-is-better score returned by this evaluator. The generated route records primary-only comparisons; raw minimized objectives use the hand-adapted wrapper.",
+      "properties": {
+        "name": {"type": "string", "description": "An ASCII metric identifier preserved unchanged in connected optimization. SDK accounting/diagnostic names and p95 percentile names are not generated mean-score objectives."},
+        "orientation": {"const": "maximize"}
+      }
+    },
     "dataset": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["path", "input", "expected"],
+      "required": ["path", "input", "expected", "id", "metadata"],
       "properties": {
         "path": {"type": "string", "description": "Tuning rows, .jsonl or .json, inside the project."},
         "holdout_path": {"type": "string", "description": "Held-out rows. Recorded only; the baseline never opens it."},
         "input": {"type": "string", "description": "Dotted field path of the agent input, e.g. input.text."},
         "expected": {"type": "string", "description": "Dotted field path of the expected answer."},
-        "id": {"type": "string"},
-        "metadata": {"type": "string"},
+        "id": {"type": "string", "description": "The example_id inside the selected metadata, e.g. metadata.example_id. Preserve existing identities before calibration and paid work."},
+        "metadata": {"type": "string", "description": "Dotted path of the unchanged metadata object that contains each row's unique example_id."},
         "split": {"type": "string", "description": "Dotted field path of a split name; holdout-named rows are excluded from the baseline."}
       }
     },
