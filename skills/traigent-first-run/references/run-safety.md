@@ -1577,9 +1577,8 @@ For an operation that declared cost optimization and has trustworthy comparable 
 report its measurement as a **Pareto frontier over the declared objective and cost**, naming the
 objective in the customer's own words. Otherwise show
 the primary-criterion comparison and mark cost comparison unavailable. Both read completed trials
-and make no provider call. Never show a frontier point worse than the configuration the user is
-already running under the declared objective direction. The objective-cost frontier below owns
-claim strength; SDK Result checks owns the read.
+and make no provider call. The objective-cost frontier below owns claim strength;
+SDK Result checks owns the read.
 The three-tier ladder applies only when this walkthrough supplies a missing baseline: one fast,
 one mid, and one strong tier one step below - never the vendor's newest flagship. Preserve a
 customer baseline's exact model set and do not add cheaper tiers without separate disclosure.
@@ -1741,16 +1740,15 @@ Composite patterns are a later workflow, not a first-run paid dimension.
 
 ### The objective-cost frontier
 
-SKILL section 7 owns when a frontier is reported and its incumbent score bound; `references/sdk-execution.md`
+SKILL section 7 owns when a frontier is reported and its score bound; `references/sdk-execution.md`
 owns the read. Owned here: what it may claim, and the wording of its two outcomes. It costs nothing
 and adds no stage: where cost coverage is trustworthy, this is arithmetic over trials already in
 hand. Report it whichever way it comes out. A quality-only run reports its primary scores and
 evidence limits instead; no cost frontier does not mean no quality result.
 
-The floor is a number this run reads rather than a judgement it makes: the incumbent's score on
-this run's own metric, the incumbent being the configuration the user is already running. It is a
-lower bound for a maximized objective and an upper bound for a minimized objective; use that same
-declared direction for admissibility, dominance, and the user-facing comparison.
+The floor is a number this run reads: the selected baseline's tuning score. If the report mentions
+the starting configuration, identify it separately when it differs. Use the declared direction for
+the floor, dominance, and the comparison: a lower bound for maximize, an upper bound for minimize.
 
 It needs measured cost to exist at all, and two runs fail that for opposite reasons the user is
 told apart:
@@ -1778,10 +1776,10 @@ When those per-row results are unavailable, say the paired comparison was not me
 derive it from aggregate scores or pay for another pass. Where paired evidence exists, keep the
 claim directional, and say "the score did not get worse" only where a justified paired uncertainty
 analysis over the completed outputs supports it. Report rows where the cheaper point performed
-worse than the incumbent even when they are outnumbered, because failing to detect a drop on a
+worse than the selected baseline even when they are outnumbered. Failing to detect a drop on a
 first-run slice is not evidence there was none. A point reaching the frontier is not evidence its
 score held: several configurations can be statistically indistinguishable at this size, so the one
-that matched the incumbent's number may simply have measured lucky. Never let "the optimizer picked
+that matched the baseline score may simply have measured lucky. Never let "the optimizer picked
 it" stand in for evidence that the score held.
 
 That bound is why a cheaper point is never sold as settled. What a frontier this size supports is a
@@ -1793,36 +1791,28 @@ states. It does not earn another paid round here.
 
 Both are results. Neither is apologized for.
 
-**The frontier holds more than the incumbent.** Report the recommended point against the
-configuration the user runs now, then the rest of the frontier as the trade-offs it measured:
+**The frontier includes another measured result.** Name the recommendation and compare the
+other frontier results with the selected baseline:
 
 > `<config>` scored `<value>` at `<measured cost>`, against `<value>` at `<measured cost>` for the
-> configuration you are running now, on the same rows, evaluator, and agent call path -
+> selected baseline, on the same rows, evaluator, and agent call path -
 > `<paired tuning evidence, or paired comparison not measured>`. Cost here comes from
 > `<the verified cost source>`; token usage is `<reported or unavailable>`. The score comparison
 > covers `<n>` rows: `<the claim the available paired evidence supports, or its absence and the
 > resulting limit>`. The whole frontier this run measured is `<points, cheapest first>`.
 > These are the measured costs of this run; repeatability was not tested.
 
-**The incumbent is the only point on it.** This is a finding, and it gets its own copy. Report what
-this run counted, never a property of the space: the space is larger than the run's trial cap, so
-any claim about the space quantifies over configurations the run never reached.
+**The selected baseline is the only point on it.** Report what this run tested.
 
 > This run tested `<distinct configurations>` of `<total combination count>` configurations
 > in `<executed trials>` trials. On
-> `<what you are optimizing for>` against cost, the configuration you are already running is still
+> `<what you are optimizing for>` against cost, the selected baseline is
 > the only point on the frontier:
 > nothing tested cost less at its score, and nothing scored better in the declared objective
-> direction at its cost. So keeping it is
-> the answer this run supports. A run this size reaches few configurations by design; the skills
-> named at the close help you apply what you learned to your own project.
+> direction at its cost.
 
-That is a measured answer to the question this run asked, and a service rather than a shrug: the
-user wanted to know whether a better trade-off was sitting there, and now they do instead of
-chasing one. It is bounded as honestly as the other outcome - it establishes nothing about
-configurations the run did not test, and a bounded run tests few. That bound is the forward half,
-and it points at an action and never at a result: the handoff below names what a wider search would
-let the user *do*, never what it would find. Do not answer it with another paid run.
+Keep the claim within the tested configurations. The handoff names a next action without
+promising what a wider search would find. Do not answer it with another paid run.
 
 ## Post-run verification
 
@@ -1948,9 +1938,8 @@ Before claiming success, verify:
     explain why that check was unavailable.
 12. Every reported frontier carries measured costs, a score claim supported by the available paired
     evidence or an explicit statement that the paired comparison was not measured, and no point
-    worse than the incumbent under the declared objective direction. Trials that came back without
-    reported cost carry no cost claim: report that, not a number. Quality-only runs show primary
-    scores and the telemetry limitation instead.
+    worse than the selected baseline under the declared objective direction. Report missing trial
+    cost as unavailable. Quality-only runs show primary scores and the telemetry limitation.
 13. Each paid process ran against the approved figures it was launched with, and the close reports
     them: the approved total, cumulative budget debit, known cost subtotal, unknown-cost calls and
     remaining allowance. A conservative reservation is a budget deduction, not a measured charge.

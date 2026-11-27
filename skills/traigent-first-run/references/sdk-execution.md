@@ -1035,10 +1035,10 @@ def frontier_at_or_above(
     return [point.trial for point in frontier]
 ```
 
-Keep the incumbent visible as the option to retain the current configuration. The quality floor
+Keep the selected baseline visible as the comparison reference. The quality floor
 stays strict in both directions; the public SDK's comparison tolerance (`1e-10` in the pinned SDK)
 does not admit a point worse than that floor. Pass original trials, preserving their configurations.
-Pass the selected incumbent trial and `expected_rows=len(PROBE_INPUTS)`; missing per-example
+Pass the selected baseline trial and `expected_rows=len(PROBE_INPUTS)`; missing per-example
 evidence does not establish a complete measurement. Inspect the installed result's public fields
 if its shape differs from the pinned SDK's `metadata["example_results"]` dictionaries.
 For a cost comparison, the incumbent and every compared point need measured cost provenance;
