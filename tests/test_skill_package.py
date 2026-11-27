@@ -21783,18 +21783,26 @@ class SkillPackageTests(unittest.TestCase):
             "this run tested `<distinct configurations>` of `<total combination count>` "
             "configurations in `<executed trials>` trials",
             "the selected baseline is the only point on the frontier",
-            "the skills named at the close help you apply what you learned to your own project",
         ):
             with self.subTest(null_copy=phrase):
                 self.assertIn(phrase, quoted)
 
         # the forward half points at an action, never at a result a further run
         # would return - that promise is the universal claim in another aim
-        self.assertIn("it points at an action and never at a result", safety)
+        self.assertIn("keep the claim within the tested configurations", safety)
+        self.assertIn(
+            "the handoff names a next action without promising what a wider search would find",
+            safety,
+        )
         self.assertIn("do not answer it with another paid run", safety)
 
         # the winning outcome carries evidence rather than a hardcoded verdict:
         # the score sentence uses actual paired evidence, or names its absence
+        self.assertIn(
+            "**the frontier includes another measured result.** "
+            "name the recommendation and compare the other frontier results with the selected baseline",
+            safety,
+        )
         self.assertIn(
             "`<paired tuning evidence, or paired comparison not measured>`", quoted
         )
@@ -21875,6 +21883,25 @@ class FrontierAtOrAboveTests(unittest.TestCase):
         good = self.trial(0.95, 0.0040)
         dominated = self.trial(0.90, 0.0090)
         self.assertEqual(self.select([good, dominated]), [good])
+
+    def test_an_enhanced_trial_can_reach_the_frontier_with_or_without_the_baseline(
+        self,
+    ):
+        baseline = self.trial(0.80, 0.02)
+        baseline.config = {"model": "baseline"}
+        for score, cost, retains_baseline in ((0.90, 0.01, False), (0.80, 0.02, True)):
+            with self.subTest(retains_baseline=retains_baseline):
+                enhanced = self.trial(score, cost)
+                enhanced.config = {"model": "enhanced"}
+                frontier = FRONTIER_AT_OR_ABOVE(
+                    [baseline, enhanced],
+                    "task_success",
+                    baseline,
+                    compare_cost=True,
+                    expected_rows=2,
+                )
+                self.assertIn(enhanced, frontier)
+                self.assertEqual(baseline in frontier, retains_baseline)
 
     def test_a_genuine_trade_off_keeps_both_points(self) -> None:
         """Cheaper-and-lower against dearer-and-higher is what a frontier is

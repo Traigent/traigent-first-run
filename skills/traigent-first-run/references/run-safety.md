@@ -1791,8 +1791,8 @@ states. It does not earn another paid round here.
 
 Both are results. Neither is apologized for.
 
-**The frontier holds more than the selected baseline.** Report the recommended point against the
-selected baseline, then the other measured trade-offs:
+**The frontier includes another measured result.** Name the recommendation and compare the
+other frontier results with the selected baseline:
 
 > `<config>` scored `<value>` at `<measured cost>`, against `<value>` at `<measured cost>` for the
 > selected baseline, on the same rows, evaluator, and agent call path -
@@ -1809,15 +1809,10 @@ selected baseline, then the other measured trade-offs:
 > `<what you are optimizing for>` against cost, the selected baseline is
 > the only point on the frontier:
 > nothing tested cost less at its score, and nothing scored better in the declared objective
-> direction at its cost. A run this size reaches few configurations by design; the skills
-> named at the close help you apply what you learned to your own project.
+> direction at its cost.
 
-That is a measured answer to the question this run asked, and a service rather than a shrug: the
-user wanted to know whether a better trade-off was sitting there, and now they do instead of
-chasing one. It is bounded as honestly as the other outcome - it establishes nothing about
-configurations the run did not test, and a bounded run tests few. That bound is the forward half,
-and it points at an action and never at a result: the handoff below names what a wider search would
-let the user *do*, never what it would find. Do not answer it with another paid run.
+Keep the claim within the tested configurations. The handoff names a next action without
+promising what a wider search would find. Do not answer it with another paid run.
 
 ## Post-run verification
 
