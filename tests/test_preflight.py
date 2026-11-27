@@ -14,6 +14,7 @@ import sys
 import tempfile
 import tracemalloc
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -403,7 +404,7 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "7.00"}, clear=False
             ):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
             self.assertEqual(effective["TRAIGENT_RUN_COST_LIMIT"], "7.00")
             self.assertEqual(file_values["TRAIGENT_RUN_COST_LIMIT"], "2.00")
 
@@ -417,7 +418,13 @@ class StaticPreflightTests(unittest.TestCase):
         the approved figures it is launched with, so a reader told the SDK
         default governs is being told the walkthrough's ceiling does not.
         """
-        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
+        MODULE.check_cost_settings(
+            {},
+            {},
+            {},
+            Path(".env"),
+            file_interpolated=frozenset(),
+        )
         cost_cap = next(
             result for result in MODULE.RESULTS if result.check == "cost-cap"
         )
@@ -437,7 +444,13 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 MODULE.RESULTS.clear()
-                MODULE.check_cost_settings({}, {name: "500.00"}, {}, Path(".env"))
+                MODULE.check_cost_settings(
+                    {},
+                    {name: "500.00"},
+                    {},
+                    Path(".env"),
+                    file_interpolated=frozenset(),
+                )
                 result = next(
                     item
                     for item in MODULE.RESULTS
@@ -456,9 +469,13 @@ class StaticPreflightTests(unittest.TestCase):
             env_path = Path(directory) / ".env"
             env_path.write_text("TRAIGENT_RUN_COST_LIMIT=not-a-number\n")
             with mock.patch.dict(os.environ, {}, clear=True):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
         self.assertFalse(
             any(
@@ -480,9 +497,13 @@ class StaticPreflightTests(unittest.TestCase):
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_RUN_COST_LIMIT": "3.75"}, clear=True
             ):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
         active_cap = next(item for item in MODULE.RESULTS if item.check == "cost-cap")
         self.assertEqual(active_cap.status, MODULE.SKIP)
@@ -490,7 +511,13 @@ class StaticPreflightTests(unittest.TestCase):
         self.assertNotIn("$3.75", active_cap.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
+        MODULE.check_cost_settings(
+            {},
+            {},
+            {},
+            Path(".env"),
+            file_interpolated=frozenset(),
+        )
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "cost-figures-in-file"],
             [],
@@ -675,8 +702,9 @@ class StaticPreflightTests(unittest.TestCase):
             ('"plain # retained" # annotation', "plain # retained"),
             ("'plain # retained' # annotation", "plain # retained"),
             ('"plain # retained" # a "comment"', "plain # retained"),
-            (r'"plain \" # retained" # annotation', r"plain \" # retained"),
-            (r"'plain \' # retained' # annotation", r"plain \' # retained"),
+            # Escapes decode as python-dotenv decodes them (#623).
+            (r'"plain \" # retained" # annotation', 'plain " # retained'),
+            (r"'plain \' # retained' # annotation", "plain ' # retained"),
         )
         for raw, expected in cases:
             with self.subTest(raw=raw), tempfile.TemporaryDirectory() as directory:
@@ -685,7 +713,7 @@ class StaticPreflightTests(unittest.TestCase):
                 env_path.write_text(contents)
                 env_path.chmod(0o600)
                 self.assertEqual(
-                    MODULE.parse_env_file(env_path), {"OPENAI_API_KEY": expected}
+                    MODULE.parse_env_file(env_path)[0], {"OPENAI_API_KEY": expected}
                 )
                 completed = subprocess.run(
                     [
@@ -1078,6 +1106,7 @@ class StaticPreflightTests(unittest.TestCase):
             {},
             {},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
@@ -1104,7 +1133,7 @@ class StaticPreflightTests(unittest.TestCase):
         telling somebody to halt.
         """
         MODULE.RESULTS.clear()
-        MODULE.check_keys({}, {}, {}, ENV_PATH)
+        MODULE.check_keys({}, {}, {}, ENV_PATH, file_interpolated=frozenset())
         result = next(
             item for item in MODULE.RESULTS if item.check == "provider-credentials"
         )
@@ -1162,7 +1191,11 @@ class StaticPreflightTests(unittest.TestCase):
             with self.subTest(present=sorted(present)):
                 MODULE.RESULTS.clear()
                 MODULE.check_cost_settings(
-                    dict(present), {}, dict(present), Path(".env")
+                    dict(present),
+                    {},
+                    dict(present),
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
                 result = next(
                     item for item in MODULE.RESULTS if item.check == "backend-url"
@@ -1173,7 +1206,13 @@ class StaticPreflightTests(unittest.TestCase):
                 self.assertIn("connected destination at its approval", result.detail)
 
         MODULE.RESULTS.clear()
-        MODULE.check_cost_settings({}, {}, {}, Path(".env"))
+        MODULE.check_cost_settings(
+            {},
+            {},
+            {},
+            Path(".env"),
+            file_interpolated=frozenset(),
+        )
         self.assertEqual(
             [item for item in MODULE.RESULTS if item.check == "backend-url"],
             [],
@@ -1820,6 +1859,84 @@ class StaticPreflightTests(unittest.TestCase):
         ):
             with self.subTest(cause=cause):
                 self.assertIn(cause, detail)
+
+    def test_blank_inputs_are_rejected_as_rows_not_passed_as_clean(self) -> None:
+        """#620: a blank question is a row with no question, not a usable row.
+
+        The issue's reproduction: one valid 120-row file with a whitespace input,
+        an empty input and a JSON null input. Before the fix every check passed
+        and all 120 rows were counted usable and drawn for the paid baseline.
+        The blank cause must surface in the row-rejecting `dataset-integrity`
+        FAIL, by line, and leave `rows`, so duplicates and the usable count stop
+        seeing the blank rows at all. A container input (`{}`) is not blank: the
+        SDK-facing shape check grades it as a real input, so it stays usable.
+        """
+        rows = [
+            {"input": f"question {index}", "output": f"answer {index}"}
+            for index in range(120)
+        ]
+        rows[4]["input"] = "   "  # line 5
+        rows[8]["input"] = ""  # line 9
+        rows[11]["input"] = None  # line 12
+        rows[20]["input"] = {}  # a container is a real input, not blank
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "blank.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset, evaluator_method="normalized-exact")
+
+        results = {result.check: result for result in MODULE.RESULTS}
+        integrity = results["dataset-integrity"]
+        self.assertEqual(integrity.status, MODULE.FAIL, integrity.detail)
+        self.assertIn(
+            "3/120 rows (2.5%) are unusable; line 5 (+2 more): "
+            "selected input field 'input' is blank",
+            integrity.detail,
+        )
+        self.assertNotIn("missing selected input field", integrity.detail)
+        self.assertEqual(integrity.metrics["malformed_rows"], 3)
+        self.assertEqual(integrity.metrics["invalid_rows"], 3)
+        self.assertNotEqual(results["dataset-duplicates"].status, MODULE.WARN)
+
+    def test_all_blank_inputs_name_the_blank_cause_not_a_missing_field(self) -> None:
+        """#620 premortem: an all-blank file must not read as a missing field."""
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "blank.jsonl"
+            dataset.write_text(
+                "\n".join(json.dumps({"input": " ", "output": "a"}) for _ in range(3))
+                + "\n"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        integrity = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        )
+        self.assertEqual(integrity.status, MODULE.FAIL)
+        self.assertIn("selected input field 'input' is blank", integrity.detail)
+        self.assertNotIn("missing", integrity.detail)
+
+    def test_a_same_field_selection_over_blank_values_is_not_a_blank_input(
+        self,
+    ) -> None:
+        """#620 class: `blank_input_rows` counts only blank-input rejections.
+
+        With the same path selected for input and expected output, every row is
+        rejected by the field-selection check first, whatever its values. A
+        blank selected value must not also be counted as a blank input: readiness
+        would then route the file to "fill those inputs", which is the wrong fix.
+        """
+        rows = [{"input": "   ", "output": "   "} for _ in range(3)]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "same.jsonl"
+            dataset.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset, input_field="input", expected_field="input")
+        integrity = next(
+            result for result in MODULE.RESULTS if result.check == "dataset-integrity"
+        )
+        self.assertEqual(integrity.metrics["invalid_rows"], 3)
+        self.assertEqual(integrity.metrics["blank_input_rows"], 0)
+        self.assertIn("must be different", integrity.detail)
 
     def test_dataset_normalization_contract_violation_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -4900,6 +5017,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_API_KEY": dotenv},
             {"TRAIGENT_API_KEY": shell},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -4983,6 +5101,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {name: pair[1] for name, pair in secrets.items()},
             {name: pair[0] for name, pair in secrets.items()},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5033,6 +5152,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"OPENROUTER_API_KEY": "sk-or-file", "OPENAI_API_KEY": "sk-file"},
             {"OPENROUTER_API_KEY": "sk-or-shell", "OPENAI_API_KEY": "sk-shell"},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(
@@ -5059,6 +5179,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
                     file_values,
                     process_values,
                     ENV_PATH,
+                    file_interpolated=frozenset(),
                 )
                 record = self._record("env-shadowed-key")
                 self.assertEqual(record.status, MODULE.PASS)
@@ -5072,6 +5193,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_API_KEY": file_key},
             {"TRAIGENT_API_KEY": ""},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5090,7 +5212,9 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         override needs approving.
         """
         key = "uk_local1234"
-        MODULE.check_keys({"TRAIGENT_API_KEY": key}, {}, {}, ENV_PATH)
+        MODULE.check_keys(
+            {"TRAIGENT_API_KEY": key}, {}, {}, ENV_PATH, file_interpolated=frozenset()
+        )
         record = self._record("traigent-key")
         self.assertEqual(record.status, MODULE.PASS)
         self.assertIn(f"sha256:{MODULE.value_fingerprint(key)}", record.detail)
@@ -5105,6 +5229,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {},
             {},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("traigent-key")
         self.assertIn("https://example.invalid (overridden)", record.detail)
@@ -5129,6 +5254,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"AWS_REGION": "eu-west-1"},
             {"AWS_REGION": "us-east-1"},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5155,6 +5281,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {"TRAIGENT_BACKEND_URL": "https://dev.example.invalid/api?token=abcdef"},
             {"TRAIGENT_BACKEND_URL": "https://prod.example.invalid"},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         self.assertEqual(record.status, MODULE.WARN)
@@ -5190,6 +5317,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
                     {"TRAIGENT_API_KEY": dotenv},
                     {"TRAIGENT_API_KEY": shell},
                     path,
+                    file_interpolated=frozenset(),
                 )
                 detail = self._record("env-shadowed-key").detail
                 self.assertIn(f"in {path}", detail)
@@ -5200,7 +5328,9 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
         # The PASS arm names it too: "nothing disagreed" is a claim about one
         # file, and a reader who ran with the wrong `--env` needs to see which.
         MODULE.RESULTS.clear()
-        MODULE.check_keys({}, {}, {}, Path("secrets/local.env"))
+        MODULE.check_keys(
+            {}, {}, {}, Path("secrets/local.env"), file_interpolated=frozenset()
+        )
         self.assertIn("secrets/local.env", self._record("env-shadowed-key").detail)
 
     def test_the_unset_remedy_names_every_shadowed_variable(self) -> None:
@@ -5223,6 +5353,7 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             {name: pair[1] for name, pair in shadowed.items()},
             {name: pair[0] for name, pair in shadowed.items()},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         record = self._record("env-shadowed-key")
         for name in shadowed:
@@ -5239,10 +5370,43 @@ class AShadowedCredentialIsNamedTests(unittest.TestCase):
             ("https://dev.example.invalid:8443/x", "https://dev.example.invalid:8443"),
             ("eu-west-1", "eu-west-1"),
             ("  us-east-1  ", "us-east-1"),
-            ("not a url at all", "not a url at all"),
         ):
             with self.subTest(value=value):
-                self.assertEqual(MODULE.route_display(value), expected)
+                self.assertEqual(
+                    MODULE.route_display(value, interpolated=False), expected
+                )
+        # A value that is neither a URL nor a region is never printed: it may be
+        # `${NAME}` expanded to a credential, so only its fingerprint shows.
+        for value in ("not a url at all", "uk_SECRETVALUE999", "api.x/y?token=T"):
+            with self.subTest(value=value):
+                shown = MODULE.route_display(value, interpolated=False)
+                self.assertNotIn(value, shown)
+                self.assertIn(MODULE.value_fingerprint(value), shown)
+
+    def test_a_hostile_route_value_never_raises_nor_shows_its_secret(self) -> None:
+        """`route_display` must return for ANY literal value (#617).
+
+        `urlsplit` raises on a netloc it cannot normalise (full-width `／ ？ ＃
+        ＠ ：`, which NFKC maps onto delimiters) and on an unclosed IPv6 bracket.
+        The raise used to escape `route_display` and reach the internal-error
+        boundary in `main`, which prints the message - and the message quotes
+        the netloc, userinfo included.
+        """
+        marker = "MARKERSECRET123"
+        for value in (
+            f"https://u:{marker}@ho／st",
+            f"https://u:{marker}@ho？st",
+            f"https://u:{marker}@ho＃st",
+            f"https://{marker}＠host",
+            f"https://u:{marker}@host：8000/x",
+            f"https://[x{marker}",
+            f"https://[::1{marker}",
+        ):
+            with self.subTest(value=value):
+                shown = MODULE.route_display(value, interpolated=False)
+                self.assertIsInstance(shown, str)
+                self.assertNotIn(marker.lower(), shown.lower())
+                self.assertIn(MODULE.value_fingerprint(value), shown)
 
     def test_the_shadow_check_is_reached_through_main(self) -> None:
         """The views are computed and were handed to one caller only.
@@ -6563,6 +6727,35 @@ class TheEvaluatorCallPathIsReadOutOfItsOwnTreeTests(unittest.TestCase):
         )
 
 
+class AShellValueTheProcessHoldsAsRawBytesIsFingerprintedTests(unittest.TestCase):
+    """`value_fingerprint` hashes the bytes the process holds (#617, #618).
+
+    Python decodes an environment value it cannot read as UTF-8 into a string
+    with surrogate escapes. The fingerprint must be sha256 of the original bytes,
+    which is what `FINGERPRINT_RECIPE` hashes, and it must never raise.
+    """
+
+    def test_surrogate_escaped_value_fingerprints_its_original_bytes(self) -> None:
+        import hashlib
+
+        raw = b"sk-\xff\xfe-tail"
+        text = raw.decode("utf-8", errors="surrogateescape")
+        self.assertEqual(
+            MODULE.value_fingerprint(text),
+            hashlib.sha256(raw).hexdigest()[:8],
+        )
+
+    def test_ordinary_values_keep_their_fingerprint(self) -> None:
+        import hashlib
+
+        for value in ("uk_filekey", "  https://münchen.example  ", "日本"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    MODULE.value_fingerprint(value),
+                    hashlib.sha256(value.strip().encode("utf-8")).hexdigest()[:8],
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -7322,6 +7515,7 @@ class OneRecordPerCheckTests(unittest.TestCase):
             {},
             {},
             ENV_PATH,
+            file_interpolated=frozenset(),
         )
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
@@ -7332,7 +7526,9 @@ class OneRecordPerCheckTests(unittest.TestCase):
         self.assertIn("AWS credential chain", records[0].detail)
         # And with nothing else present, the absent-names warning carries it.
         MODULE.RESULTS.clear()
-        MODULE.check_keys({"AWS_REGION": "eu-west-1"}, {}, {}, ENV_PATH)
+        MODULE.check_keys(
+            {"AWS_REGION": "eu-west-1"}, {}, {}, ENV_PATH, file_interpolated=frozenset()
+        )
         records = [r for r in MODULE.RESULTS if r.check == "provider-credentials"]
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].status, MODULE.WARN)
@@ -7544,7 +7740,11 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             with self.subTest(arm=label):
                 MODULE.RESULTS.clear()
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, handoff
+                    effective,
+                    file_values,
+                    process_values,
+                    handoff,
+                    file_interpolated=frozenset(),
                 )
                 detail = " ".join(record.detail for record in MODULE.RESULTS)
                 self.assertIn(str(handoff), detail)
@@ -7559,6 +7759,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             {"TRAIGENT_COST_APPROVED": "0"},
             {},
             Path(".env"),
+            file_interpolated=frozenset(),
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
@@ -7581,6 +7782,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
                     file_values,
                     {"TRAIGENT_COST_APPROVED": "1"},
                     Path(".env"),
+                    file_interpolated=frozenset(),
                 )
                 record = self._record()
                 self.assertEqual(record.status, MODULE.WARN)
@@ -7598,6 +7800,7 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             {"TRAIGENT_COST_APPROVED": "true"},
             {},
             Path(".env"),
+            file_interpolated=frozenset(),
         )
         record = self._record()
         self.assertEqual(record.status, MODULE.SKIP)
@@ -7609,19 +7812,27 @@ class TheCostApprovedWarningNamesItsSourceTests(unittest.TestCase):
             env_path = Path(directory) / ".env"
             env_path.write_text("TRAIGENT_COST_APPROVED=1\n")
             with mock.patch.dict(os.environ, {}, clear=True):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 self.assertNotIn("TRAIGENT_COST_APPROVED", process_values)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
             self.assertEqual(self._record().status, MODULE.SKIP)
             MODULE.RESULTS.clear()
             with mock.patch.dict(
                 os.environ, {"TRAIGENT_COST_APPROVED": "1"}, clear=True
             ):
-                effective, file_values, process_values = MODULE.read_env(env_path)
+                effective, file_values, process_values, _ = MODULE.read_env(env_path)
                 MODULE.check_cost_settings(
-                    effective, file_values, process_values, Path(".env")
+                    effective,
+                    file_values,
+                    process_values,
+                    Path(".env"),
+                    file_interpolated=frozenset(),
                 )
             record = self._record()
         self.assertEqual(record.status, MODULE.WARN)
@@ -7945,7 +8156,7 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
                 "another bad line here\n"
                 "1BAD=x\n"
             )
-            values = MODULE.parse_env_file(env_path)
+            values, _ = MODULE.parse_env_file(env_path)
         self.assertEqual(values, {"FIRST_RUN_NOTE": "kept"})
         records = [r for r in MODULE.RESULTS if r.check == "env-file"]
         self.assertEqual(len(records), 1)
@@ -7953,7 +8164,9 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         self.assertIn("2 lines at source lines [1, 3]", records[0].detail)
         self.assertIn("are not KEY=VALUE and were ignored", records[0].detail)
         self.assertIn("1 line at source line 4", records[0].detail)
-        self.assertIn("has an invalid environment variable name", records[0].detail)
+        self.assertIn(
+            "uses a name outside the shell identifier format", records[0].detail
+        )
         self.assertEqual(records[0].metrics["ignored_lines"], 3)
         self.assertEqual(records[0].metrics["unparsed_lines"], [1, 3])
         self.assertEqual(records[0].metrics["invalid_name_lines"], [4])
@@ -7991,7 +8204,7 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / ".env"
             env_path.write_text("# note\nFIRST_RUN_NOTE=kept\n\n")
-            values = MODULE.parse_env_file(env_path)
+            values, _ = MODULE.parse_env_file(env_path)
         self.assertEqual(values, {"FIRST_RUN_NOTE": "kept"})
         self.assertEqual([r for r in MODULE.RESULTS if r.check == "env-file"], [])
 
@@ -8054,6 +8267,410 @@ class NoInputMakesOneCheckSpeakTwiceTests(unittest.TestCase):
         env_records = [r for r in records if r["check"] == "env-file"]
         self.assertEqual(len(env_records), 1)
         self.assertIn("2 lines at source lines [1, 3]", env_records[0]["detail"])
+
+
+#: One `.env` line per form. Ported from the probe that found #623
+#: (python-dotenv 1.2.2 against the hand-written reader, 17 of 47 disagreeing).
+DOTENV_CORPUS_LINES = (
+    "K=plain",
+    "K= plain ",
+    "K=plain # c",
+    "K=plain\t# c",
+    "K=plain#nocomment",
+    'K="dq"',
+    "K='sq'",
+    'K="dq # keep"',
+    "K='sq # keep'",
+    'K="dq" # c',
+    "K='sq' # c",
+    'K="dq"\t# c',
+    'K=""',
+    "K=''",
+    'K="" # c',
+    'K="abc',
+    "K='abc",
+    'K="x"y',
+    "K='x'y",
+    'K="x" y',
+    'K=abc"',
+    "export K=v",
+    "export  K=v",
+    'K="a\\"b"',
+    'K="a\\nb"',
+    "K='a\\nb'",
+    "K=a b c",
+    "K =v",
+    " K=v",
+    "K=",
+    "K",
+    'K="multi',
+    "K=`bt`",
+    'K="dq"#c',
+    "K=v #c",
+    "K=v  #c",
+    'K="a\'b"',
+    "K='a\"b'",
+    "K=${OTHER}",
+    'K="${OTHER}"',
+    "K=\\#x",
+    'K="a\\\\b"',
+    "K='a\\\\b'",
+    'K="x"\t',
+    'K=  "spaced"  ',
+    'K="dq" junk # c',
+    "K=v\t#\tc",
+)
+
+#: Whole-file forms: a double-quoted value that spans lines (the swallow),
+#: interpolation, a byte-order mark, a hash-led value, and a bare key after a
+#: real assignment (python-dotenv sets that key to None, erasing the value).
+DOTENV_CORPUS_FILES = (
+    'A="abc\nOPENAI_API_KEY=k\nB="x"\nC=after\n',
+    'K=${SET}\nJ="${SET}"\nL=${UNSET}\nM=${UNSET:-d}\n',
+    "\ufeffK=v\n",
+    'K=#c\nQ="#c"\n',
+    "K=a\nK\n",
+    "K=left#kept\u2003#comment #rest\nD=literal#hash  \nE=#first\n",
+)
+
+#: The identifier shape preflight admits as a key. python-dotenv keeps other
+#: keys too (a byte-order mark sticks to the first one); preflight ignores
+#: them in its shell-name inventory, so the comparison covers admitted names only.
+ADMITTED_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+
+def python_dotenv_values():
+    """`dotenv_values` when the pinned package is importable, else `None`.
+
+    Read only by the tests: preflight runs with `-I -S` and must never import
+    the package, so the contract is checked from outside the check.
+    """
+    try:
+        from dotenv import dotenv_values
+    except ImportError:
+        return None
+    return dotenv_values
+
+
+#: Texts python-dotenv parses but `load_dotenv` cannot set (#623): a NUL byte
+#: in a key or value, or `=` in a key. Each row is (text, process environment,
+#: the source lines a refusal names). The marker is the value that must never
+#: reach output.
+REFUSED_ROWS = (
+    ("OPENAI_API_KEY=sk-marker-1\x00y\n", {}, [1]),
+    ("NOTE=marker-2\x00\n", {}, [1]),
+    ("A\x00B=marker-3\n", {}, [1]),
+    ("'A=B'=marker-4\n", {}, [1]),
+    ("'=A'=marker-5\n", {}, [1]),
+    ("MY-K=marker-6\x00\n", {}, [1]),
+    ("A=marker-7\x00\nB=${A}\n", {}, [1, 2]),
+    # Both bindings are refused; only the final one sets the key, so only its
+    # line is the one the customer must fix.
+    ("K=marker-8a\x00b\nK=marker-8b\x00d\n", {}, [2]),
+)
+
+#: Texts with a NUL byte or an `=` in a key that `load_dotenv` still sets: the
+#: NUL is overwritten by a later binding, sits in a comment or a dropped
+#: statement, is a bare key, or is on a key the process already has.
+LOADS_ROWS = (
+    ("K=a\x00b\nK=ok\n", {}),
+    ("K=v # a\x00b\n", {}),
+    ("A\x00B\n", {}),
+    ('K="a\x00\n', {}),
+    ("OPENAI_API_KEY=sk\x00x\n", {"OPENAI_API_KEY": "preset"}),
+    ("''=x\n", {}),
+    ("K=ok\n", {}),
+)
+
+
+def runtime_load_dotenv_raises(path: Path, process_env: dict[str, str]) -> bool:
+    """Whether python-dotenv's `load_dotenv` raises on `path` in a fresh process.
+
+    A child interpreter, because a load that raises part-way has already set
+    the keys before the failing one. Any other failure is re-raised, so a
+    broken child cannot pass for a refusal.
+    """
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\nfrom dotenv import load_dotenv\n"
+            "load_dotenv(sys.argv[1], override=False)\n",
+            str(path),
+        ],
+        env=process_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode == 0:
+        return False
+    if "ValueError" not in completed.stderr:
+        raise AssertionError(completed.stdout + completed.stderr)
+    return True
+
+
+class EnvFileReadsWhatPythonDotenvReadsTests(unittest.TestCase):
+    """#623: a credential the check calls available is one the runtime sets.
+
+    `run_wrapper.py` loads `.env` with python-dotenv's `load_dotenv`. The
+    hand-written reader used to keep `"abc` and `"x"y` as values, which
+    python-dotenv refuses, so the preflight PASSed a credential the first
+    paid stage then reported missing.
+    """
+
+    def run_preflight_json(self, contents: str):
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(contents, encoding="utf-8")
+            env_path.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--defer-missing-sdk",
+                    "--offline",
+                    "--json",
+                ],
+                cwd=directory,
+                env={},
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        records = {item["check"]: item for item in json.loads(completed.stdout)}
+        return completed, records
+
+    def test_disabled_dotenv_uses_only_inherited_credentials(self) -> None:
+        from dotenv import load_dotenv
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / ".env"
+            path.write_text("OPENAI_API_KEY=placeholder-file-key\n", encoding="utf-8")
+            path.chmod(0o600)
+            for flag, inherited_key in (
+                ("TrUe", None),
+                ("Y", "placeholder-process-key"),
+                ("false", None),
+                (" true ", None),
+            ):
+                with self.subTest(flag=flag, inherited_key=inherited_key):
+                    environment = {"PYTHON_DOTENV_DISABLED": flag}
+                    if inherited_key is not None:
+                        environment["OPENAI_API_KEY"] = inherited_key
+                    MODULE.RESULTS.clear()
+                    with mock.patch.dict(os.environ, environment, clear=True):
+                        actual, file_values, process_values, _ = MODULE.read_env(path)
+                        loaded = load_dotenv(path, override=False)
+                        self.assertEqual(
+                            actual.get("OPENAI_API_KEY"), os.getenv("OPENAI_API_KEY")
+                        )
+                    self.assertEqual(
+                        process_values.get("OPENAI_API_KEY"), inherited_key
+                    )
+                    self.assertEqual(bool(file_values), loaded)
+                    source = next(
+                        record.detail
+                        for record in MODULE.RESULTS
+                        if record.check == "env-source"
+                    )
+                    self.assertEqual("PYTHON_DOTENV_DISABLED" in source, not loaded)
+
+    def test_env_parser_matches_python_dotenv(self) -> None:
+        dotenv_values = python_dotenv_values()
+        if dotenv_values is None:
+            self.skipTest("python-dotenv is not importable; the pinned CI image has it")
+        forms = [line + "\n" for line in DOTENV_CORPUS_LINES] + list(
+            DOTENV_CORPUS_FILES
+        )
+        # Cleared, so both readers interpolate against the same environment.
+        with mock.patch.dict(
+            os.environ, {"SET": "from-process"}, clear=True
+        ), tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            for contents in forms:
+                with self.subTest(contents=contents):
+                    env_path.write_text(contents, encoding="utf-8")
+                    MODULE.RESULTS.clear()
+                    mine, _ = MODULE.parse_env_file(env_path)
+                    theirs = {
+                        key: value
+                        for key, value in dotenv_values(env_path).items()
+                        if ADMITTED_ENV_NAME.fullmatch(key)
+                    }
+                    self.assertEqual(mine, theirs)
+            # A file `load_dotenv` refuses sets nothing, so preflight reads no
+            # value from it; the reference is the runtime raising, not dotenv's
+            # parse (which returns the values and never raises).
+            for text, process_env, _lines in REFUSED_ROWS:
+                with self.subTest(refused=text):
+                    env_path.write_text(text, encoding="utf-8")
+                    MODULE.RESULTS.clear()
+                    with mock.patch.dict(os.environ, process_env):
+                        mine, interpolated = MODULE.parse_env_file(env_path)
+                    self.assertEqual(mine, {})
+                    self.assertEqual(interpolated, frozenset())
+                    self.assertTrue(
+                        runtime_load_dotenv_raises(env_path, dict(os.environ))
+                    )
+
+    def test_a_refused_statement_fails_the_env_file_and_names_lines_only(
+        self,
+    ) -> None:
+        for text, _process_env, lines in REFUSED_ROWS:
+            with self.subTest(text=text):
+                completed, records = self.run_preflight_json(text)
+                record = records["env-file"]
+                self.assertEqual(record["status"], MODULE.FAIL)
+                self.assertEqual(record["metrics"]["refused_lines"], lines)
+                self.assertNotIn("\x00", completed.stdout)
+                self.assertNotIn("marker-", completed.stdout)
+                self.assertNotIn("'A=B'", completed.stdout)
+                self.assertNotEqual(
+                    records["provider-credentials"]["status"], MODULE.PASS
+                )
+
+    def test_a_statement_python_dotenv_sets_is_not_refused(self) -> None:
+        for text, process_env in LOADS_ROWS:
+            with self.subTest(text=text), mock.patch.dict(
+                os.environ, process_env, clear=True
+            ):
+                self.assertEqual(MODULE.parse_dotenv_text(text).refused_lines, [])
+
+    def test_a_refused_invalid_name_is_not_also_called_ignored(self) -> None:
+        completed, records = self.run_preflight_json("K=ok\n'A=B'=marker\n")
+        self.assertEqual(records["env-file"]["metrics"]["refused_lines"], [2])
+        self.assertNotIn("was ignored", records["env-file"]["detail"])
+
+    def test_the_refusal_rule_matches_what_load_dotenv_raises_on(self) -> None:
+        if python_dotenv_values() is None:
+            self.skipTest("python-dotenv is not importable; the pinned CI image has it")
+        rows = [(text, env) for text, env, _ in REFUSED_ROWS] + list(LOADS_ROWS)
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            for text, process_env in rows:
+                with self.subTest(text=text):
+                    env_path.write_text(text, encoding="utf-8")
+                    raised = runtime_load_dotenv_raises(env_path, dict(process_env))
+                    with mock.patch.dict(os.environ, process_env, clear=True):
+                        predicted = bool(MODULE.parse_dotenv_text(text).refused_lines)
+                    self.assertEqual(predicted, raised)
+
+    def test_a_swallowed_assignment_is_not_set_and_not_printed(self) -> None:
+        marker = "sk-abcdef123456"
+        completed, records = self.run_preflight_json(
+            f'NOTE="remember to\nOPENAI_API_KEY={marker}\n"\n'
+        )
+        self.assertNotEqual(records["provider-credentials"]["status"], MODULE.PASS)
+        metric_keys = records.get("env-file", {}).get("metrics", {})
+        self.assertFalse(any("swallow" in key for key in metric_keys))
+        self.assertNotIn(marker, completed.stdout + completed.stderr)
+
+    def test_a_multi_line_value_without_a_swallowed_setting_is_not_flagged(
+        self,
+    ) -> None:
+        pem = "-----BEGIN PRIVATE KEY-----\ndGVzdA==\nQUJD=\n-----END PRIVATE KEY-----"
+        cases = {
+            "pem": f"SA='{pem}'\n",
+            "json": 'SA=\'{\n  "OPENAI_API_KEY": "x"\n}\n\'\n',
+            "script": "SA='#!/bin/sh\nFOO=bar\nPATH=/x\n'\n",
+            "one line": 'NOTE="OPENAI_API_KEY=sk-1"\n',
+            "set again later": 'NOTE="remember\nOPENAI_API_KEY=sk-1\n"\nOPENAI_API_KEY=sk-2\n',
+        }
+        for label, text in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as directory:
+                env_path = Path(directory) / ".env"
+                env_path.write_text(text, encoding="utf-8")
+                MODULE.RESULTS.clear()
+                with mock.patch.dict(os.environ, {}, clear=True):
+                    MODULE.parse_env_file(env_path)
+                self.assertEqual(
+                    [r for r in MODULE.RESULTS if r.check == "env-file"], []
+                )
+        with mock.patch.dict(
+            os.environ, {"OPENAI_API_KEY": "preset"}, clear=True
+        ), tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(
+                'NOTE="remember\nOPENAI_API_KEY=sk-1\n"\n', encoding="utf-8"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.parse_env_file(env_path)
+            self.assertEqual([r for r in MODULE.RESULTS if r.check == "env-file"], [])
+
+    def test_an_export_or_single_quoted_swallow_is_not_set_and_not_printed(
+        self,
+    ) -> None:
+        for text in (
+            'NOTE="remember to\nexport ANTHROPIC_API_KEY = sk-x\n"\n',
+            "NOTE='remember to\nOPENAI_API_KEY=sk-1\n'\n",
+        ):
+            with self.subTest(text=text):
+                completed, records = self.run_preflight_json(text)
+                self.assertNotEqual(
+                    records["provider-credentials"]["status"], MODULE.PASS
+                )
+                metric_keys = records.get("env-file", {}).get("metrics", {})
+                self.assertFalse(any("swallow" in key for key in metric_keys))
+                self.assertNotIn("sk-", completed.stdout + completed.stderr)
+
+    def test_a_dropped_statement_leaks_no_value(self) -> None:
+        marker = "sk-private-marker-7f3a"
+        for contents in (
+            f'OPENAI_API_KEY="{marker}\n',
+            f'OPENAI_API_KEY="{marker}" junk\n',
+            f'A="{marker}\nOPENAI_API_KEY=k\nB="x"\n',
+        ):
+            with self.subTest(contents=contents):
+                with tempfile.TemporaryDirectory() as directory:
+                    env_path = Path(directory) / ".env"
+                    env_path.write_text(contents, encoding="utf-8")
+                    MODULE.RESULTS.clear()
+                    MODULE.parse_env_file(env_path)
+                record = next(r for r in MODULE.RESULTS if r.check == "env-file")
+                self.assertNotIn(marker, record.detail)
+                self.assertNotIn(marker, json.dumps(record.metrics))
+
+    def test_an_unterminated_quote_is_not_an_available_credential(self) -> None:
+        completed, records = self.run_preflight_json(
+            'OPENAI_API_KEY="fake-not-a-secret-12345\n'
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertNotEqual(records["provider-credentials"]["status"], MODULE.PASS)
+        self.assertEqual(records["env-file"]["status"], MODULE.WARN)
+        self.assertIn("source line 1", records["env-file"]["detail"])
+        self.assertNotIn("fake-not-a-secret", completed.stdout)
+
+    def test_a_multi_line_swallow_is_not_set_and_not_printed(self) -> None:
+        completed, records = self.run_preflight_json(
+            'A="abc\nOPENAI_API_KEY=sk-swallowed-marker\nB="x"\nC=after\n'
+        )
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertNotEqual(records["provider-credentials"]["status"], MODULE.PASS)
+        self.assertIn("source line 1-3", records["env-file"]["detail"])
+        self.assertNotIn("sk-swallowed-marker", completed.stdout)
+
+    def test_the_port_names_the_pinned_python_dotenv(self) -> None:
+        requirements = (ROOT / "skills" / "traigent-first-run" / "assets").joinpath(
+            "requirements-first-run.txt"
+        )
+        pins = re.findall(
+            r"^python-dotenv==(\S+)$", requirements.read_text(encoding="utf-8"), re.M
+        )
+        self.assertEqual(pins, [MODULE.PYTHON_DOTENV_GRAMMAR_VERSION])
+        if python_dotenv_values() is not None:
+            from importlib.metadata import version as installed_version
+
+            self.assertEqual(
+                installed_version("python-dotenv"),
+                MODULE.PYTHON_DOTENV_GRAMMAR_VERSION,
+                "the port in preflight.py was read against a different grammar",
+            )
 
 
 class ExecutionWitnessKindsTests(unittest.TestCase):
@@ -8266,3 +8883,806 @@ class EngineConstructorCallsTests(unittest.TestCase):
         for label, (source, expected) in cases.items():
             with self.subTest(source=label):
                 self.assertEqual(self.lines(source), expected)
+
+
+class RouteValuesNeverPrintACredentialTests(unittest.TestCase):
+    """A printed route value is never a credential (#623).
+
+    `${NAME}` interpolation resolves against the process environment, so a
+    route variable can hold a secret the customer never wrote into the file.
+    `route_display` used to print any value that was not a URL verbatim, which
+    put that secret on the card and in the assistant's context. Only
+    route-shaped values are printed now; anything else is fingerprinted.
+    """
+
+    def run_preflight(
+        self, env_text: str, process_env: dict[str, str], *extra: str
+    ) -> str:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_text(env_text, encoding="utf-8")
+            env_path.chmod(0o600)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    "-B",
+                    str(SCRIPT),
+                    "--env",
+                    str(env_path),
+                    "--project-root",
+                    directory,
+                    "--models",
+                    "gpt-4o-mini",
+                    *extra,
+                ],
+                cwd=directory,
+                env=process_env,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+        self.assertNotIn("Traceback", completed.stderr, completed.stderr)
+        return completed.stdout + completed.stderr
+
+    def assert_nothing_leaks(self, output: str, *secrets: str) -> None:
+        """Compared case-insensitively: `urlsplit` lowercases a URL's host, so a
+        case-sensitive check passes on a host that carries the secret."""
+        lowered = output.lower()
+        for secret in secrets:
+            self.assertNotIn(secret.lower(), lowered)
+
+    def test_an_interpolated_secret_in_a_route_variable_is_not_printed(self) -> None:
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(
+                    "TRAIGENT_BACKEND_URL=${TRAIGENT_API_KEY}\nAWS_REGION=${OPENAI_API_KEY}\n",
+                    {
+                        "PATH": os.environ.get("PATH", ""),
+                        "TRAIGENT_API_KEY": "uk_SECRETVALUE999",
+                        "OPENAI_API_KEY": "sk-SECRETOPENAI777",
+                        "AWS_REGION": "us-east-1",
+                    },
+                    *extra,
+                )
+                self.assert_nothing_leaks(output, "SECRETVALUE999", "SECRETOPENAI777")
+                # A plain region is route-shaped, so it is still printed as it stands.
+                self.assertIn("AWS_REGION is us-east-1 in the process", output)
+
+    def test_an_interpolated_url_is_not_printed_in_text_or_json(self) -> None:
+        process_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "TRAIGENT_API_KEY": "uk_placeholder",
+            "OPENAI_API_KEY": "sk-GG2SECRETGG2",
+        }
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(
+                    "TRAIGENT_BACKEND_URL=https://${OPENAI_API_KEY}\n",
+                    process_env,
+                    *extra,
+                )
+                self.assert_nothing_leaks(output, "gg2secret")
+                # The destination is named by fingerprint, because the file's
+                # own text built it.
+                self.assertIn("a value built by ${} interpolation", output)
+
+    def test_an_interpolated_host_part_is_not_printed_in_text_or_json(self) -> None:
+        process_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "TRAIGENT_API_KEY": "uk_placeholder",
+            "TOK": "GGGSECRETGGG",
+        }
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(
+                    "TRAIGENT_BACKEND_URL=https://${TOK}.example.com\n",
+                    process_env,
+                    *extra,
+                )
+                self.assert_nothing_leaks(output, "GGGSECRETGGG")
+
+    def test_a_process_route_wins_over_an_interpolated_file_route_without_a_leak(
+        self,
+    ) -> None:
+        process_env = {
+            "PATH": os.environ.get("PATH", ""),
+            "TRAIGENT_API_KEY": "uk_placeholder",
+            "TRAIGENT_BACKEND_URL": "https://api.example",
+            "AWS_REGION": "eu-west-1",
+            "OPENAI_API_KEY": "sk-GG2SECRETGG2",
+            "S": "ab-cdefghsecret-12",
+        }
+        env_text = "TRAIGENT_BACKEND_URL=https://${OPENAI_API_KEY}\nAWS_REGION=${S}\n"
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                output = self.run_preflight(env_text, process_env, *extra)
+                self.assert_nothing_leaks(output, "gg2secret", "cdefghsecret")
+                # The process wins, so the destination is the process's literal
+                # route, and naming it is the finding.
+                self.assertIn("https://api.example (overridden)", output)
+                self.assertIn("eu-west-1", output)
+
+    def test_literal_routes_are_printed_with_their_host_and_region(self) -> None:
+        output = self.run_preflight(
+            "TRAIGENT_BACKEND_URL=https://dev.example.invalid/x?t=1\nAWS_REGION=eu-west-1\n",
+            {
+                "PATH": os.environ.get("PATH", ""),
+                "TRAIGENT_API_KEY": "uk_placeholder",
+                "TRAIGENT_BACKEND_URL": "https://api.example",
+                "AWS_REGION": "us-east-1",
+            },
+        )
+        self.assertIn("https://dev.example.invalid", output)
+        self.assertIn("https://api.example", output)
+        self.assertIn("eu-west-1", output)
+        self.assertIn("us-east-1", output)
+        self.assertNotIn("?t=1", output)
+
+    def test_a_region_is_printed_only_when_the_whole_value_is_one(self) -> None:
+        # `fullmatch`, not `search` or `match`: a region-shaped prefix or infix
+        # of a longer value is the secret's, not the region's.
+        for value in ("tok-us-east-1-SECRETX", "us-east-1-SECRETX"):
+            with self.subTest(value=value):
+                shown = MODULE.route_display(value, interpolated=False)
+                self.assertNotIn(value.lower(), shown.lower())
+                self.assertIn(MODULE.value_fingerprint(value), shown)
+        self.assertEqual(
+            MODULE.route_display("us-east-1", interpolated=False), "us-east-1"
+        )
+
+    def test_only_the_last_binding_decides_whether_a_name_is_interpolated(
+        self,
+    ) -> None:
+        parsed = MODULE.parse_dotenv_text(
+            "A=${X}\nB=lit\nA=lit\nC=lit\nC=${X}\nD=${X}\nD\n"
+        )
+        self.assertEqual(parsed.interpolated, frozenset({"C"}))
+
+    def test_a_route_value_urlsplit_rejects_exits_clean_and_keeps_its_secret(
+        self,
+    ) -> None:
+        """The CLI run of the value above: no exit 3, no marker on either stream.
+
+        Run as a process, through `main`'s boundary, which is what turned the
+        raise into exit 3 and a printed message quoting the userinfo (#617).
+        """
+        marker = "MARKERSECRET123"
+        env_text = (
+            f"TRAIGENT_BACKEND_URL=https://u:{marker}@ho／st\n"
+            "TRAIGENT_API_KEY=tg_abcdefabcdefabcdef\n"
+        )
+        for extra in ((), ("--json",)):
+            with self.subTest(extra=extra):
+                with tempfile.TemporaryDirectory() as directory:
+                    env_path = Path(directory) / ".env"
+                    env_path.write_text(env_text, encoding="utf-8")
+                    env_path.chmod(0o600)
+                    completed = subprocess.run(
+                        [
+                            sys.executable,
+                            "-I",
+                            "-S",
+                            str(SCRIPT),
+                            "--env",
+                            str(env_path),
+                            "--project-root",
+                            directory,
+                            "--defer-missing-sdk",
+                            *extra,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        env={
+                            "PATH": os.environ.get("PATH", ""),
+                            "LANG": "C.UTF-8",
+                        },
+                    )
+                self.assertNotEqual(completed.returncode, 3, completed.stderr)
+                self.assertNotIn(marker.lower(), completed.stdout.lower())
+                self.assertNotIn(marker.lower(), completed.stderr.lower())
+
+    def test_a_scheme_less_route_value_with_a_token_is_not_printed(self) -> None:
+        output = self.run_preflight(
+            "TRAIGENT_BACKEND_URL=api.example.com/v1?token=SECRETTOKEN999\n",
+            {
+                "PATH": os.environ.get("PATH", ""),
+                "TRAIGENT_API_KEY": "uk_placeholder",
+            },
+        )
+        self.assert_nothing_leaks(output, "SECRETTOKEN999")
+        self.assertIn("traigent-key", output)
+
+
+class EnvFileParserPinsEveryRecordTests(unittest.TestCase):
+    """Each branch of the `.env` reader is pinned by a test (#623).
+
+    Every case here was a surviving mutant of the touched branches: the test
+    that kills each one is named after the behaviour the mutant changes.
+    """
+
+    def parse(self, contents: str | bytes) -> tuple[dict, list]:
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            if isinstance(contents, bytes):
+                env_path.write_bytes(contents)
+            else:
+                env_path.write_text(contents, encoding="utf-8")
+            MODULE.RESULTS.clear()
+            values, _ = MODULE.parse_env_file(env_path)
+            records = [r for r in MODULE.RESULTS if r.check == "env-file"]
+        return values, records
+
+    def test_a_non_bom_invalid_name_is_not_blamed_on_a_byte_order_mark(self) -> None:
+        _, records = self.parse("BAD NAME=1\n")
+        self.assertNotIn("byte-order", records[0].detail)
+
+    def test_a_bom_that_breaks_the_first_name_is_named(self) -> None:
+        _, records = self.parse("\ufeffOK=1\n")
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_refused_first_line_behind_a_bom_is_not_blamed_on_the_bom(self) -> None:
+        """The BOM sentence skips a refused first line (#623).
+
+        Here the first line is refused by load_dotenv (a NUL byte), so it is
+        in no population the BOM sentence names: the refusal is the finding
+        and the mark is not. Naming the mark here would blame it for the NUL.
+        """
+        _, records = self.parse("\ufeffA=x\x00y\n")
+        self.assertEqual(records[0].status, MODULE.FAIL)
+        self.assertEqual(records[0].metrics["refused_lines"], [1])
+        self.assertNotIn("byte-order", records[0].detail)
+
+    def test_a_bom_before_a_comment_line_is_named(self) -> None:
+        """python-dotenv reads the mark plus the comment as a bare key (#623)."""
+        _, records = self.parse("\ufeff# Traigent keys\nOPENAI_API_KEY=sk-x\n")
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_bom_before_a_blank_line_is_named(self) -> None:
+        _, records = self.parse("\ufeff\nOPENAI_API_KEY=sk-x\n")
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_bom_before_a_key_is_named(self) -> None:
+        _, records = self.parse(b"\xef\xbb\xbfOPENAI_API_KEY=sk-x\n")
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_no_bom_before_a_comment_line_is_not_named(self) -> None:
+        # A clean file records nothing, so check every record there is.
+        _, records = self.parse("# Traigent keys\nOPENAI_API_KEY=sk-x\n")
+        self.assertFalse(any("byte-order" in r.detail for r in records))
+
+    def test_export_is_stripped_before_an_unparseable_statement_is_classified(
+        self,
+    ) -> None:
+        _, records = self.parse('export K="abc\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [])
+
+    def test_export_prose_is_an_unparsed_line(self) -> None:
+        _, records = self.parse("export prose\n")
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1])
+
+    def test_an_unparseable_statement_with_a_bad_name_is_dropped(self) -> None:
+        _, records = self.parse('1BAD="abc\n')
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [])
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+
+    def test_a_bare_key_is_recorded_as_unparsed(self) -> None:
+        values, records = self.parse("BARE\n")
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1])
+        self.assertIsNone(values["BARE"])
+
+    def test_a_line_without_equals_is_unparsed_whatever_its_word(self) -> None:
+        """A line with no `=` is prose, so its word never makes it an invalid name.
+
+        Only a KEY=VALUE line with an illegal key is a setting spelled wrong.
+        A legal bare key stays bound to `None`, as the runtime binds it.
+        """
+        values, records = self.parse(
+            "see-docs\nhttps://platform.openai.com/api-keys\n1BAD=x\nPROSE\n"
+        )
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1, 2, 4])
+        self.assertEqual(records[0].metrics["invalid_name_lines"], [3])
+        self.assertIsNone(values["PROSE"])
+        self.assertNotIn("see-docs", values)
+        self.assertNotIn("1BAD", values)
+
+    def test_the_process_environment_wins_over_the_file_when_interpolating(
+        self,
+    ) -> None:
+        # python-dotenv runs with override=False, so the process value of B is
+        # the one `${B}` resolves to, not the empty value the file gives it.
+        with mock.patch.dict(os.environ, {"B": "x"}, clear=True):
+            values, _ = self.parse("B=\nOPENAI_API_KEY=${B}\n")
+        self.assertEqual(values["OPENAI_API_KEY"], "x")
+
+    def test_ignored_lines_counts_every_line_of_a_dropped_span(self) -> None:
+        # The second statement spans lines 2-3: a quote closes on line 3 with
+        # text after it, so python-dotenv drops both lines.
+        _, records = self.parse('BARE\nA="x\n"y\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[2, 3]])
+        self.assertEqual(records[0].metrics["ignored_lines"], 3)
+
+    def test_a_long_list_of_dropped_statements_says_it_is_truncated(self) -> None:
+        contents = "".join(f'K{index}="x" junk\n' for index in range(11))
+        _, records = self.parse(contents)
+        self.assertIn("(first 10 shown)", records[0].detail)
+        self.assertEqual(len(records[0].metrics["dropped_statements"]), 11)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX mode bits")
+    def test_a_world_readable_non_utf8_env_with_a_key_stays_a_failure(self) -> None:
+        # A mode-0644 file the runtime cannot read still holds a key. It must
+        # not be recognised as a blank template and downgraded to a warning.
+        with tempfile.TemporaryDirectory() as directory:
+            env_path = Path(directory) / ".env"
+            env_path.write_bytes(b"OPENAI_API_KEY=sk-real\xff\n")
+            env_path.chmod(0o644)
+            MODULE.RESULTS.clear()
+            MODULE.check_env_permissions(env_path)
+        record = next(r for r in MODULE.RESULTS if r.check == "env-permissions")
+        self.assertEqual(record.status, MODULE.FAIL, record.detail)
+
+    def test_a_blank_input_is_not_an_unlabelled_row(self) -> None:
+        rows = [
+            {"id": "blank", "input": "   "},
+            {"id": "real", "input": "a real question"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            dataset = Path(directory) / "dataset.jsonl"
+            dataset.write_text(
+                "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+            )
+            MODULE.RESULTS.clear()
+            MODULE.check_dataset(dataset)
+        integrity = next(r for r in MODULE.RESULTS if r.check == "dataset-integrity")
+        self.assertEqual(integrity.metrics["unlabelled_rows"], 1)
+
+
+#: Every `.env` name preflight reads is a string literal in its source, so the
+#: names come from the AST: a site added later that reads a new literal name is
+#: covered without anyone editing this test. The walk is over literals only, so
+#: a name built at run time (`f"{vendor}_API_KEY"`) is not found; the
+#: `ZZ_UNREAD_NAME` row below is the probe for the iteration style.
+ENV_NAME_SHAPE = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
+
+#: How a `.env` line can build a value from a `${}` reference. `${S}` and `${R}`
+#: are placeholders; `run_once` binds them to the process-side source names.
+INTERPOLATED_SHAPES = (
+    "${S}",
+    "https://${S}",
+    "https://${S}.example.com",
+    "x-${S}",
+    "uk_${S}",
+    "sk-or-${S}",
+    "${R}",
+    '"${S}"',
+    "https://u:${S}@h.example/p?t=${S}",
+)
+#: The process-side values the references expand to. The region reference
+#: carries a region-shaped secret, so the literal-route branch would print it
+#: verbatim if it were ever routed there.
+SECRET_FOR_TEST = "zq9tokxsecretval77"
+REGION_SECRET_FOR_TEST = "eu-secretval-77"
+SECRET_SOURCE_NAME = "SECRET_SOURCE_FOR_TEST"
+REGION_SOURCE_NAME = "REGION_SOURCE_FOR_TEST"
+SECRETS_FOR_TEST = (SECRET_FOR_TEST, REGION_SECRET_FOR_TEST)
+#: Process states of the name under test: unset, a different literal, blank.
+PROCESS_STATES = ("unset", "literal", "blank")
+
+
+def env_names_preflight_reads() -> set[str]:
+    tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+    names = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and ENV_NAME_SHAPE.fullmatch(node.value)
+    }
+    return names | {"ZZ_UNREAD_NAME"}
+
+
+class NoEnvValueReachesOutputTests(unittest.TestCase):
+    """A `.env` value built from `${}` never reaches preflight's output.
+
+    The rule is structural and lives in preflight.py: a value read from `.env`
+    is printed only through `route_display`, `env_value_display` or
+    `value_fingerprint`. This test checks the rule by running the program. It
+    sets every name preflight reads to each `${}` shape, in each process state,
+    and asserts that the secret is absent, ignoring case, from stdout and stderr.
+    """
+
+    def run_once(
+        self, directory: Path, contents: str, process: dict[str, str], flags: list[str]
+    ) -> subprocess.CompletedProcess[str]:
+        env_path = directory / ".env"
+        env_path.write_text(contents, encoding="utf-8")
+        env_path.chmod(0o600)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-B",
+                str(SCRIPT),
+                "--env",
+                str(env_path),
+                "--defer-missing-sdk",
+                *flags,
+            ],
+            cwd=directory,
+            env={
+                SECRET_SOURCE_NAME: SECRET_FOR_TEST,
+                REGION_SOURCE_NAME: REGION_SECRET_FOR_TEST,
+                **process,
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def leaks(self, completed) -> list[str]:
+        """What is wrong with one run: a bad exit, or a secret in a stream."""
+        problems = []
+        if completed.returncode not in (0, 1):
+            problems.append(f"exit {completed.returncode}")
+        for stream, text in (
+            ("stdout", completed.stdout),
+            ("stderr", completed.stderr),
+        ):
+            for secret in SECRETS_FOR_TEST:
+                if secret.lower() in text.lower():
+                    problems.append(f"secret in {stream}")
+        return problems
+
+    def test_no_interpolated_value_is_printed_for_any_name_or_shape(self) -> None:
+        names = env_names_preflight_reads()
+        self.assertGreaterEqual(len(names), 25, "the AST walk found too few names")
+        shapes = [
+            shape.replace("${S}", f"${{{SECRET_SOURCE_NAME}}}").replace(
+                "${R}", f"${{{REGION_SOURCE_NAME}}}"
+            )
+            for shape in INTERPOLATED_SHAPES
+        ]
+        cases = []
+        for name, shape, state in itertools.product(
+            sorted(names), shapes, PROCESS_STATES
+        ):
+            contents = f"{name}={shape}\n"
+            if name != "TRAIGENT_API_KEY":
+                contents += "TRAIGENT_API_KEY=tk-literal-companion\n"
+            cases.append((f"{name} {shape!r} {state}", contents, state, name))
+        for shape in shapes:
+            contents = "".join(f"{name}={shape}\n" for name in sorted(names))
+            for state in PROCESS_STATES:
+                cases.append((f"ALL {shape!r} {state}", contents, state, "ALL"))
+
+        def process_for(state: str, name: str) -> dict[str, str]:
+            if state == "unset" or name == "ALL":
+                return {}
+            if state == "blank":
+                return {name: ""}
+            return {name: "literal-process-value"}
+
+        def run_case(case):
+            label, contents, state, name = case
+            process = process_for(state, name)
+            with tempfile.TemporaryDirectory() as directory:
+                results = []
+                for flags in (
+                    [],
+                    ["--json"],
+                    ["--offline"],
+                    ["--offline", "--json"],
+                ):
+                    if name != "ALL" and flags in (
+                        ["--offline"],
+                        ["--offline", "--json"],
+                    ):
+                        continue
+                    results.append(
+                        (
+                            f"{label} {flags}",
+                            self.run_once(Path(directory), contents, process, flags),
+                        )
+                    )
+            return results
+
+        runs = 0
+        failures: list[str] = []
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for results in pool.map(run_case, cases):
+                for label, completed in results:
+                    runs += 1
+                    problems = self.leaks(completed)
+                    if problems:
+                        failures.append(f"{label}: {', '.join(problems)}")
+        self.assertFalse(
+            failures,
+            f"{len(failures)} of {runs} runs leaked; first: {failures[:5]}",
+        )
+
+
+class ThePrintRuleCoversEveryValueSiteTests(unittest.TestCase):
+    """The formatter names its two branches; a literal keeps its display."""
+
+    def test_an_interpolated_value_prints_as_a_fingerprint(self) -> None:
+        text = MODULE.env_value_display("https://u:tok@h/p", interpolated=True)
+        self.assertNotIn("tok", text)
+        self.assertIn(MODULE.value_fingerprint("https://u:tok@h/p"), text)
+        self.assertIn("built by ${} interpolation", text)
+
+    def test_a_literal_value_prints_as_repr_of_its_stripped_text(self) -> None:
+        self.assertEqual(
+            MODULE.env_value_display("  maybe ", interpolated=False), "'maybe'"
+        )
+
+
+#: A binding whose key python-dotenv keeps but preflight does not admit as a
+#: name, paired with the name a later `${}` reference writes for it. python-dotenv
+#: expands against every key it parsed, so an admitted name can depend on these.
+NON_ADMITTED_BINDINGS = (
+    ("MY-KEY=sk-x-dependent\n", "MY-KEY"),
+    ("my.key=sk-x-dependent\n", "my.key"),
+    ("KÉY=sk-x-dependent\n", "KÉY"),
+    ("1KEY=sk-x-dependent\n", "1KEY"),
+    ("\ufeffA=sk-x-dependent\n", "\ufeffA"),
+    ("'MY-KEY'=sk-x-dependent\n", "MY-KEY"),
+    ("MY-KEY\n", "MY-KEY"),
+)
+
+
+#: Texts where a key is bound twice before a `${}` reads it. python-dotenv keeps
+#: the LAST binding, so expansion must too; a first-binding-wins expansion
+#: passes every other row. The invalid-name row covers the same rule for a key
+#: that is not admitted.
+LAST_BINDING_CONTENTS = (
+    "K=old\nK=new\nOPENAI_API_KEY=${K}\n",
+    "MY-K=old\nMY-K=new\nOPENAI_API_KEY=${MY-K}\n",
+    "OPENAI_API_KEY=a\nOPENAI_API_KEY=b\nX=${OPENAI_API_KEY}\n",
+)
+
+
+def dependent_contents() -> list[str]:
+    """Every text that makes an admitted name read a non-admitted key."""
+    texts = list(LAST_BINDING_CONTENTS)
+    for binding, reference in NON_ADMITTED_BINDINGS:
+        texts += [
+            binding + f"OPENAI_API_KEY=${{{reference}}}\n",
+            binding + f"OPENAI_API_KEY=${{{reference}:-dflt}}\n",
+            binding + f"X=${{{reference}}}\nOPENAI_API_KEY=${{X}}\n",
+            f"OPENAI_API_KEY=${{{reference}}}\n" + binding,
+        ]
+    return texts
+
+
+class NonAdmittedKeysStillFeedExpansionTests(unittest.TestCase):
+    """The `${}` expansion sees every key python-dotenv binds, valid or not.
+
+    `values` and the invalid-name WARN keep their old meaning; only expansion
+    widens. The fixed rows below are the cases the memo names, and the
+    generated contract compares every row with `dotenv_values`.
+    """
+
+    def test_a_reference_to_an_invalid_name_expands_to_its_value(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            parsed = MODULE.parse_dotenv_text("MY-KEY=sk-x\nOPENAI_API_KEY=${MY-KEY}\n")
+        self.assertEqual(parsed.values["OPENAI_API_KEY"], "sk-x")
+        self.assertNotIn("MY-KEY", parsed.values)
+        self.assertEqual(parsed.invalid_name_lines, [1])
+
+    def test_a_default_form_does_not_replace_a_bound_invalid_name(self) -> None:
+        with mock.patch.dict(os.environ, {}, clear=True):
+            parsed = MODULE.parse_dotenv_text("MY-KEY=v\nL=${MY-KEY:-dflt}\n")
+        self.assertEqual(parsed.values["L"], "v")
+
+    def test_a_dependent_admitted_value_matches_python_dotenv(self) -> None:
+        dotenv_values = python_dotenv_values()
+        if dotenv_values is None:
+            self.skipTest("python-dotenv is not importable; the pinned CI image has it")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            for text in dependent_contents():
+                with self.subTest(text=text):
+                    mine = MODULE.parse_dotenv_text(text).values
+                    theirs = {
+                        key: value
+                        for key, value in dotenv_values(
+                            stream=io.StringIO(text)
+                        ).items()
+                        if ADMITTED_ENV_NAME.fullmatch(key)
+                    }
+                    self.assertEqual(mine, theirs)
+
+
+class EnvFilePopulationIsPythonDotenvsVerdictTests(unittest.TestCase):
+    """Each unused statement lands where python-dotenv's own Binding puts it."""
+
+    def parse(self, contents):
+        return EnvFileParserPinsEveryRecordTests.parse(self, contents)
+
+    def test_a_bare_key_after_a_value_clears_it(self):
+        values, records = self.parse("OPENAI_API_KEY=sk-test\nOPENAI_API_KEY\n")
+        self.assertEqual(values, {"OPENAI_API_KEY": None})
+        self.assertEqual(records[0].metrics["clearing_lines"], [2])
+        self.assertEqual(records[0].metrics["unparsed_lines"], [])
+        self.assertEqual(records[0].metrics["ignored_lines"], 0)
+        self.assertIn(
+            "line 2 assigns no value and clears the value an earlier line gave "
+            "the same name",
+            records[0].detail,
+        )
+        self.assertNotIn("sk-test", records[0].detail)
+
+    def test_a_clearing_line_is_worded_by_what_it_does_whatever_it_contains(self):
+        # A bare key whose trailing comment holds "=" is still a clearing line,
+        # so "has no =" would be false for it (#623).
+        _, records = self.parse(
+            "OPENAI_API_KEY=sk-a\nOPENAI_API_KEY  # see OPENAI_API_KEY=sk-b\n"
+        )
+        self.assertEqual(records[0].metrics["clearing_lines"], [2])
+        self.assertIn(
+            "line 2 assigns no value and clears the value an earlier line gave "
+            "the same name",
+            records[0].detail,
+        )
+        self.assertNotIn('has no "="', records[0].detail)
+        self.assertNotIn("sk-", records[0].detail)
+
+    def test_several_clearing_lines_are_worded_in_the_plural(self):
+        _, records = self.parse("K=a\nK\nJ=b\nJ\n")
+        self.assertEqual(records[0].metrics["clearing_lines"], [2, 4])
+        self.assertIn(
+            "2 lines at source lines [2, 4] assign no value and clear the value "
+            "an earlier line gave the same name",
+            records[0].detail,
+        )
+
+    def test_a_second_bare_key_clears_nothing(self):
+        _, records = self.parse("K=a\nK\nK\n")
+        self.assertEqual(records[0].metrics["clearing_lines"], [2])
+        self.assertEqual(records[0].metrics["unparsed_lines"], [3])
+
+    def test_a_bare_key_with_no_earlier_value_is_not_key_value(self):
+        _, records = self.parse("OPENAI_API_KEY\nK=\nK\n")
+        self.assertEqual(records[0].metrics["unparsed_lines"], [1])
+        self.assertEqual(records[0].metrics["clearing_lines"], [3])
+
+    def test_an_unclosed_value_behind_a_quoted_key_is_dropped(self):
+        for text in (
+            "'OPENAI_API_KEY'=\"abc\n",
+            "export 'OPENAI_API_KEY'='abc\n",
+            'MY-KEY="abc\n',
+            "=abc\n",
+        ):
+            with self.subTest(text=text):
+                _, records = self.parse(text)
+                self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+                self.assertEqual(records[0].metrics["invalid_name_lines"], [])
+
+    def test_a_bom_before_an_unclosed_value_is_named(self):
+        _, records = self.parse('\ufeffOPENAI_API_KEY="abc\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_bom_before_a_statement_that_spans_two_lines_is_named(self):
+        """The mark starts the dropped span, and the span ends on line 2 (#623).
+
+        A mutant that tests the span's end line instead of its start misses
+        this: the only dropped span starts on line 1 and ends on line 2.
+        """
+        _, records = self.parse('\ufeffK="a\nb" x\n')
+        self.assertEqual(records[0].metrics["dropped_statements"], [[1, 2]])
+        self.assertIn("byte-order mark", records[0].detail)
+
+    def test_a_refused_first_line_is_not_blamed_on_the_bom_beside_a_later_line(self):
+        for later in ("see the docs\n", "TODO\n", "1BAD=x\n", 'K="abc\n'):
+            with self.subTest(later=later):
+                _, records = self.parse("\ufeffA=x\x00y\n" + later)
+                self.assertEqual(records[0].status, MODULE.FAIL)
+                self.assertNotIn("byte-order", records[0].detail)
+
+    def test_a_separator_python_dotenv_does_not_split_on_stays_one_statement(self):
+        # str.splitlines() splits on these; python-dotenv does not. A statement
+        # holding one is still one statement, so its "=" must still count.
+        for separator in ("\x0c", "\x85", "\u2028"):
+            text = "'a" + separator + "b' x=y\n"
+            with self.subTest(separator=repr(separator)):
+                _, records = self.parse(text)
+                self.assertEqual(records[0].metrics["dropped_statements"], [[1, 1]])
+                self.assertEqual(records[0].metrics["unparsed_lines"], [])
+
+    def test_every_population_is_python_dotenvs_verdict(self):
+        try:
+            import dotenv.parser as dp
+        except ImportError:
+            self.skipTest("python-dotenv is not installed")
+        import io
+        import random
+
+        name = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+        newline = re.compile(r"\r\n|\n|\r")
+
+        def expected(text):
+            unparsed, invalid, dropped, clearing, last = [], [], [], [], {}
+            for b in dp.parse_stream(io.StringIO(text)):
+                body = b.original.string.lstrip()
+                start = b.original.line + len(
+                    newline.findall(
+                        b.original.string[: len(b.original.string) - len(body)]
+                    )
+                )
+                end = start + len(newline.findall(re.sub(r"(\r\n|\n|\r)$", "", body)))
+                if b.error:
+                    if start == end and "=" not in body:
+                        unparsed.append(start)
+                    else:
+                        dropped.append((start, end))
+                elif b.key is not None:
+                    if b.value is None:
+                        (clearing if last.get(b.key) is not None else unparsed).append(
+                            start
+                        )
+                    elif not name.fullmatch(b.key):
+                        invalid.append(start)
+                    last[b.key] = b.value
+            return unparsed, invalid, dropped, clearing
+
+        fragments = [
+            "OPENAI_API_KEY",
+            "'OPENAI_API_KEY'",
+            "export ",
+            "MY-KEY",
+            "\ufeff",
+            "=",
+            " ",
+            "\t",
+            '"',
+            "'",
+            "#",
+            "sk-1",
+            "\n",
+            "\r\n",
+            "\r",
+            "\x0b",
+            "\x0c",
+            "\x1c",
+            "\x1d",
+            "\x1e",
+            "\x85",
+            "\u2028",
+            "\u2029",
+            "${OPENAI_API_KEY}",
+            "a b",
+            "x",
+        ]
+        rng = random.Random(623)
+        for _ in range(20000):
+            text = "".join(rng.choice(fragments) for _ in range(rng.randint(1, 14)))
+            parsed = MODULE.parse_dotenv_text(text)
+            unparsed, invalid, dropped, clearing = expected(text)
+            refused = set(parsed.refused_lines)
+            self.assertEqual(
+                (
+                    parsed.unparsed_lines,
+                    parsed.invalid_name_lines,
+                    parsed.dropped_spans,
+                    parsed.clearing_lines,
+                ),
+                (
+                    unparsed,
+                    [line for line in invalid if line not in refused],
+                    dropped,
+                    clearing,
+                ),
+                repr(text),
+            )
+            bom_named = text.startswith("\ufeff") and (
+                1 in parsed.unparsed_lines
+                or 1 in parsed.invalid_name_lines
+                or any(start == 1 for start, _ in parsed.dropped_spans)
+            )
+            self.assertEqual(
+                bom_named, text.startswith("\ufeff") and 1 not in refused, repr(text)
+            )

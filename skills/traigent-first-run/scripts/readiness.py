@@ -178,21 +178,40 @@ def build_plan(
     )
 
 
-def render_text(plan: ReadinessPlan) -> str:
-    """Render real readiness separately from generated walkthrough substitutes."""
+def keep_stdout_printable() -> None:
+    """Write unencodable characters as escapes instead of stopping the run.
+
+    A Windows pipe defaults stdout to a code page such as cp1252. Customer-derived
+    text (a path with CJK characters, for one) can be unencodable there, and the
+    boundary would report that as a defect in the check. Escapes keep the
+    information; the handler fires only where the encoding would otherwise fail.
+    `reconfigure` is absent on streams such as `io.StringIO`, which tests pass in.
+    """
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
+
+
+def render_text(plan: ReadinessPlan, *, unicode_ok: bool = True) -> str:
+    """Render real readiness separately from generated walkthrough substitutes.
+
+    `unicode_ok` selects the same ASCII vocabulary the scoring card uses (`OK`
+    and `!!`) so a stream that cannot encode the glyphs still shows the marks.
+    """
+    ok_mark, warn_mark = ("✅", "❗") if unicode_ok else ("OK", "!!")
     lines = [f"Real-world readiness: {plan.real_ready_count}/3"]
     for name in COMPONENTS:
         state = plan.states[name]
         if state == "real":
-            lines.append(f"✅ {name.title()}: real")
+            lines.append(f"{ok_mark} {name.title()}: real")
         elif state == "limited":
             lines.append(
-                f"❗ {name.title()}: real material exists but evidence is limited"
+                f"{warn_mark} {name.title()}: real material exists but evidence is limited"
             )
         elif state == "invalid":
-            lines.append(f"❗ {name.title()}: validation failed")
+            lines.append(f"{warn_mark} {name.title()}: validation failed")
         else:
-            lines.append(f"❗ {name.title()}: no real component is connected")
+            lines.append(f"{warn_mark} {name.title()}: no real component is connected")
 
     demo_components = [name for name in COMPONENTS if plan.states[name] == "demo"]
     if demo_components:
@@ -1426,6 +1445,12 @@ ACTION_FOR_CONDITION: dict[str, str] = {
     # Zero matched rows is the absence of that evidence, and the two conditions
     # already sit exactly on that line.
     "dataset-shape-unrecognised": "read-dataset",
+    # Zero usable rows, like the state above, but with a defect preflight
+    # named: the file is not UTF-8 (#617), or every row's selected input is
+    # blank (#620). Either is wrong whatever shape the rows turn out to have,
+    # so the remedy is a repair, not a look. Whether the rows match the shape
+    # is still unread; that is why it shares 25 rather than integrity's 35.
+    "dataset-unusable": "repair-dataset",
     # Not `get-data`, and the split is the whole of traigent-first-run#197.
     # These two shared that slug with `dataset-absent`, and one remedy then
     # meant "stop, there is nothing here" on one card and "carry on, this is
@@ -1714,6 +1739,7 @@ ROUTE_CATEGORY: dict[str, str] = {
     "dataset-coarse-resolution": CLAIM_SCOPING,
     "dataset-no-expected-outputs": CREATION_OR_REPAIR,
     "dataset-integrity-fail": CREATION_OR_REPAIR,
+    "dataset-unusable": CREATION_OR_REPAIR,
     "dataset-tune-holdout-overlap": CREATION_OR_REPAIR,
     # A repair, and the same one its `resplit-dataset` sibling above names: the
     # rows are fine and the line drawn through them is not, so the split is
@@ -1982,6 +2008,11 @@ DATASET_SHAPE_UNRECOGNISED_CEILING = 25
 # `dataset-no-expected-outputs` (30) and `dataset-integrity-fail` (35) because
 # each of those has at least one row that confirmed the shape, which is
 # positive evidence this state does not have.
+DATASET_UNUSABLE_CEILING = 25
+# Equal to `dataset-shape-unrecognised`: no row was usable and none confirmed
+# the shape, so nothing was measured either way. It differs only in the remedy,
+# because here preflight named a defect - a non-UTF-8 file, or a blank input on
+# every row - that has to be repaired whatever the rows turn out to hold.
 AGENT_ABSENT_CEILING = 25
 # The third pillar's absence, which had no ceiling of its own at all. Two of the
 # three name theirs and stop the paid run - `dataset-absent` at 20 and
@@ -2319,12 +2350,16 @@ CAP_SEVERITY_ORDER: tuple[tuple[str, tuple[tuple[str, int | None], ...]], ...] =
             ("dataset-absent", DATASET_ABSENT_CEILING),
             ("evaluator-invalid", EVALUATOR_INVALID_CEILING),
             ("dataset-shape-unrecognised", DATASET_SHAPE_UNRECOGNISED_CEILING),
-            # Third of the three at 25, and ranked last of them under the rule
-            # the ties below already follow: a severity you counted outranks
-            # one you did not. `evaluator-invalid` is proven by probes that
-            # ran, `dataset-shape-unrecognised` by a file that was read and
-            # matched nothing, and this one is established by omission - the
-            # weakest positive evidence of the three, so it ranks after both.
+            # Its twin with a named defect; the two are raised by exclusive
+            # branches, so the rank between them decides nothing observable.
+            ("dataset-unusable", DATASET_UNUSABLE_CEILING),
+            # Last of the four at 25, under the rule the ties below already
+            # follow: a severity you counted outranks one you did not.
+            # `evaluator-invalid` is proven by probes that ran,
+            # `dataset-shape-unrecognised` by a file that was read and matched
+            # nothing, `dataset-unusable` by a defect preflight found, and this
+            # one is established by omission - the weakest evidence of the four,
+            # so it ranks after all three.
             ("agent-absent", AGENT_ABSENT_CEILING),
             ("dataset-no-expected-outputs", DATASET_NO_EXPECTED_OUTPUTS_CEILING),
             ("dataset-integrity-fail", DATASET_INTEGRITY_CEILING),
@@ -2471,6 +2506,11 @@ CAP_IMPLICATIONS: tuple[tuple[str, str], ...] = (
     ("dataset-shape-unrecognised", "dataset-no-expected-outputs"),
     ("dataset-shape-unrecognised", "dataset-below-measurable-size"),
     ("dataset-shape-unrecognised", "dataset-coarse-resolution"),
+    # And the same for a file with zero usable rows and a named defect.
+    ("dataset-unusable", "dataset-no-expected-outputs"),
+    ("dataset-unusable", "dataset-below-measurable-size"),
+    ("dataset-unusable", "dataset-coarse-resolution"),
+    ("dataset-unusable", "dataset-tuning-split-empty"),
     # All of it generated is also most of it generated.
     ("dataset-fully-synthetic", "dataset-mostly-synthetic"),
     # And the same on the answer-key ladder, which now has the same two rungs.
@@ -3808,6 +3848,16 @@ class DatasetFacts:
     # `None` when preflight said nothing about it; then the reason names no
     # cause at all rather than inventing one.
     unreadable_detail: str | None = None
+    # A supplied file whose bytes are not UTF-8. Preflight FAILs `dataset-shape`
+    # with no provenance, which is the same payload as "no dataset", so the
+    # marker it sets (`decodes_as_utf8` false) is the only thing that tells the
+    # two apart. The rows are not known to be wrong; the encoding is.
+    undecodable_file: bool = False
+    # Rows whose selected input is blank (#620). Counted apart from the rest of
+    # `unreadable_rows`, because a blank input is a defect in the data, while a
+    # missing field may be a defect in the reading. `None` when preflight did
+    # not say.
+    blank_input_rows: int | None = None
     rows: int | None = None
     labelled_rows: int | None = None
     tuning_rows: int | None = None
@@ -6966,7 +7016,38 @@ def score_dataset(
         # shape this score did not recognise, never an absent dataset.
         unreadable = (facts.unreadable_rows or 0) + facts.gold_rows_unreadable
         detail = facts.unreadable_detail
-        if facts.dataset_supplied and unreadable:
+        # Zero usable rows with a defect preflight named: #617, the file is
+        # not UTF-8; #620, every row's selected input is blank. Each is a
+        # repair whatever the rows hold, so neither is a read-the-file route
+        # or a collect-more one. No row confirmed the shape, so the ceiling is
+        # `dataset-shape-unrecognised`'s 25, not integrity's 35.
+        blank_only = (
+            bool(facts.blank_input_rows) and facts.blank_input_rows == unreadable
+        )
+        if facts.undecodable_file:
+            caps.append(
+                Cap(
+                    "dataset-unusable",
+                    DATASET_UNUSABLE_CEILING,
+                    "A dataset was provided but it is not valid UTF-8, so none of "
+                    "its rows could be read: the file's encoding is a defect "
+                    "whatever the rows hold - re-save it as UTF-8, then re-score.",
+                )
+            )
+            evidence = "provided, not valid UTF-8, no rows read"
+        elif blank_only:
+            caps.append(
+                Cap(
+                    "dataset-unusable",
+                    DATASET_UNUSABLE_CEILING,
+                    "A dataset was provided and every row in it has a blank "
+                    "selected input, so nothing could be measured: that is a "
+                    "defect in the data - fill those inputs or drop those rows, "
+                    "then re-score." + (f" Preflight: {detail}." if detail else ""),
+                )
+            )
+            evidence = "provided, every row has a blank selected input"
+        elif facts.dataset_supplied and unreadable:
             # Rows were counted and none matched the shape the run read them
             # with. The earlier wording called that broken data. It is not, on
             # most of the files that produce it - see `ACTION_FOR_CONDITION`
@@ -7569,8 +7650,8 @@ def dataset_integrity_reason(facts: DatasetFacts) -> str | None:
     reasons: list[str] = []
     if facts.integrity_failed:
         reasons.append(
-            "some rows could not be read as data - malformed lines, or missing "
-            "the input or expected-answer field"
+            "some rows could not be read as data - malformed lines, an input "
+            "that is missing or blank, or a missing expected-answer field"
         )
     if facts.duplicate_ids:
         # "Rows share an id", not "rows are duplicated". Two rows can carry one
@@ -10367,10 +10448,18 @@ def resolve_color(
     return True
 
 
+# Every glyph the renderers emit, in plan mode and on the scoring card, and the
+# one place the ASCII vocabulary is chosen against. The probe must cover all of
+# them: a code page that carries the block characters (cp437, cp850, cp936) does
+# not thereby carry the check marks, and probing one glyph let those code pages
+# through to escapes.
+RENDERED_GLYPHS = "█░✅❗•"
+
+
 def supports_unicode(stream: Any) -> bool:
     encoding = getattr(stream, "encoding", None) or "utf-8"
     try:
-        "█".encode(encoding)
+        RENDERED_GLYPHS.encode(encoding)
     except (LookupError, UnicodeEncodeError):
         return False
     return True
@@ -11584,6 +11673,21 @@ class ConfigSpaceInputError(ValueError):
     """
 
 
+def _dataset_bytes_undecodable(records: Sequence[dict[str, Any]]) -> bool:
+    """Whether preflight found the supplied dataset is not UTF-8.
+
+    The one marker that separates a file that exists and cannot be decoded from
+    no dataset at all: both arrive with no provenance and no row count.
+    """
+    return any(
+        isinstance(record, dict)
+        and record.get("check") == "dataset-shape"
+        and record.get("status") == "FAIL"
+        and (record.get("metrics") or {}).get("decodes_as_utf8") is False
+        for record in records
+    )
+
+
 def _dataset_absence_detail(records: Sequence[dict[str, Any]]) -> str | None:
     """Preflight's own sentence about why no row reached the score.
 
@@ -12339,6 +12443,13 @@ def dataset_facts_from_preflight(records: Sequence[dict[str, Any]]) -> DatasetFa
                 check="dataset-integrity",
             ),
             unreadable_detail=_dataset_absence_detail(records),
+            undecodable_file=_dataset_bytes_undecodable(records),
+            blank_input_rows=_row_count(
+                integrity.get("blank_input_rows"),
+                "blank_input_rows",
+                required=False,
+                check="dataset-integrity",
+            ),
         )
     structurally_failed = integrity_status == "FAIL" and integrity["malformed_rows"] > 0
     # The third guard of the same shape, and it is here for the reason the two
@@ -21165,7 +21276,17 @@ def _observed_declaration(signal: BuildSignal) -> BuildSignal:
 def load_json(reference: str) -> Any:
     if reference == "-":
         return json.loads(sys.stdin.read())
-    return json.loads(Path(reference).read_text())
+    # utf-8-sig: these documents are assistant-authored, and PowerShell 5.1's
+    # `Out-File -Encoding utf8` writes a byte-order mark that is not JSON.
+    try:
+        text = Path(reference).read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as error:
+        # Name the file: the decode error carries only a byte offset, and the
+        # caller's report has no other way to say which document to re-save.
+        raise OSError(
+            f"{reference} is not valid UTF-8 ({error.reason}); re-save it as UTF-8"
+        ) from error
+    return json.loads(text)
 
 
 def parse_weights(raw: str) -> dict[str, float]:
@@ -21488,6 +21609,7 @@ def report_internal_error(
 
 def main(argv: Sequence[str] | None = None) -> int:
     """The process boundary. See `report_internal_error`."""
+    keep_stdout_printable()
     try:
         return run(argv)
     except Exception as error:  # noqa: BLE001 - the boundary is the point
@@ -21699,7 +21821,11 @@ def run(argv: Sequence[str] | None = None) -> int:
         if args.json:
             print(json.dumps(asdict(plan), indent=2, sort_keys=True))
             return 0
-        print(render_text(plan))
+        print(
+            render_text(
+                plan, unicode_ok=not args.ascii and supports_unicode(sys.stdout)
+            )
+        )
         return 0
 
     try:
@@ -21806,6 +21932,7 @@ def run(argv: Sequence[str] | None = None) -> int:
         )
     except (
         OSError,
+        UnicodeDecodeError,
         json.JSONDecodeError,
         PreflightInputError,
         CalibrationInputError,

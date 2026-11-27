@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import codecs
 import hashlib
 import importlib.util
 import json
@@ -26,7 +27,7 @@ from dataclasses import asdict, dataclass
 from fractions import Fraction
 from importlib.metadata import PackageNotFoundError, files, version
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, NamedTuple, Sequence
 
 # What each status is for, stated once because the file answers it in eighty
 # places: preflight MEASURES AND PUBLISHES, `readiness.py` PRICES, and
@@ -475,6 +476,12 @@ BACKEND_URL_NAMES = ("TRAIGENT_BACKEND_URL", "TRAIGENT_API_URL")
 #
 # Route values are still passed through `route_display` before printing, which
 # drops any userinfo, path or query a URL might be carrying.
+#
+# The print rule for every other `.env` value, written once: a value read from
+# `.env` reaches output only through `route_display`, `env_value_display` or
+# `value_fingerprint`. Every other site prints names, counts or line numbers.
+# `tests/test_preflight.py` runs the program over every name this file reads
+# and holds the rule to account, so a new site that breaks it fails there.
 SECRET_ENV_NAMES: tuple[str, ...] = (
     "TRAIGENT_API_KEY",
     *sorted({name for names in VENDOR_KEYS.values() for name in names}),
@@ -506,24 +513,82 @@ def value_fingerprint(value: str) -> str:
     a value of their own computed with `FINGERPRINT_RECIPE`, which is printed
     beside the finding so the comparison is actually available to them.
     """
-    return hashlib.sha256(value.strip().encode("utf-8")).hexdigest()[:8]
+    # `surrogateescape` hashes the bytes the process holds: an environment value
+    # that is not UTF-8 arrives as surrogate escapes, and those map back to the
+    # original bytes, which is what `FINGERPRINT_RECIPE` hashes. Ordinary text
+    # encodes exactly as plain UTF-8, so its fingerprint is unchanged.
+    return hashlib.sha256(
+        value.strip().encode("utf-8", errors="surrogateescape")
+    ).hexdigest()[:8]
 
 
-def route_display(value: str) -> str:
-    """A route value in the clear, minus anything credential-shaped.
+# An AWS region name (`us-east-1`, `us-gov-west-1`): the one non-URL route value
+# that is printed as it stands, because naming it is the finding.
+AWS_REGION_SHAPE = re.compile(r"[a-z]{2}(?:-[a-z]+)+-\d+")
 
-    Route values are printed because naming them is the finding. A URL,
-    however, can carry a token in its userinfo or its query string, so only the
-    part that answers "which host am I reaching" survives: scheme, host, port.
-    A value that is not a URL - a region name - is printed as it stands.
 
-    The sibling `backend-url` check names the VARIABLE and never its value;
-    this is the one place a route value is printed, and it is printed reduced.
+def env_value_display(value: str, *, interpolated: bool) -> str:
+    """A `.env` value as the report may show it, under the one print rule.
+
+    `interpolated` says the winning statement built the value from a `${NAME}`
+    reference (`DotenvParse.interpolated`). Such a value is whatever the
+    referenced variable held, so only its fingerprint is printed. A literal is
+    the customer's own text and prints as it always has, `repr` of the stripped
+    value. `route_display` is the same rule with the URL and region shapes
+    added for routes.
     """
     stripped = value.strip()
-    parsed = urllib.parse.urlsplit(stripped)
+    if interpolated:
+        return (
+            "a value built by ${} interpolation "
+            f"(sha256:{value_fingerprint(stripped)})"
+        )
+    return repr(stripped)
+
+
+def route_display(value: str, *, interpolated: bool) -> str:
+    """A route value in the clear, minus anything credential-shaped.
+
+    Route values are printed because naming them is the finding, but the text
+    the customer wrote decides what may be printed. `interpolated` says the
+    winning statement built the value from a `${NAME}` reference
+    (`DotenvParse.interpolated`), and such a value is never printed, whatever
+    its shape: its host, region or token is whatever the referenced variable
+    held, and `urlsplit` would happily read a secret as a host. It is replaced
+    by its fingerprint, so a reader can still compare it with
+    `FINGERPRINT_RECIPE`.
+
+    A literal value keeps its display. Only two shapes are printed: a URL,
+    reduced to its scheme, host and port (userinfo, path and query are
+    dropped), and an AWS region name. Any other literal is fingerprinted too,
+    because a scheme-less `host/path?token=...` written out carries a token.
+
+    The sibling `backend-url` check names the VARIABLE and never its value;
+    this is the one place a route value is printed, and `env_value_display`
+    is the one place any other `.env` value is.
+    """
+    stripped = value.strip()
+    if interpolated:
+        return env_value_display(value, interpolated=True)
+
+    def unreadable() -> str:
+        return (
+            "a value that is neither a URL nor a region "
+            f"(sha256:{value_fingerprint(stripped)})"
+        )
+
+    # `urlsplit` raises on a netloc it cannot normalise (NFKC maps full-width
+    # delimiters onto `/ ? # @ :`) and on an unclosed IPv6 bracket, and its
+    # message quotes the netloc, userinfo included. It fails on the text, so
+    # the text is fingerprinted, never printed and never quoted in an error.
+    try:
+        parsed = urllib.parse.urlsplit(stripped)
+    except ValueError:
+        return unreadable()
     if not parsed.scheme or not parsed.netloc:
-        return stripped
+        if AWS_REGION_SHAPE.fullmatch(stripped):
+            return stripped
+        return unreadable()
     try:
         host, port = parsed.hostname, parsed.port
     except ValueError:  # a malformed port; the host is not trustworthy either
@@ -746,109 +811,488 @@ def env_line_clause(lines: list[int], singular: str, plural: str) -> str:
     return f"{len(lines)} lines at source lines {shown}{suffix} {plural}"
 
 
-def parse_env_file(path: Path) -> dict[str, str | None]:
-    """Parse the small KEY=VALUE subset used by the first-run environment.
+#: The python-dotenv release whose grammar `_dotenv_statements` ports. The
+#: runtime (`assets/run_wrapper.py`) loads `.env` with that package's
+#: `load_dotenv`, so a line this check calls available must be one it sets. The
+#: pin lives in `assets/requirements-first-run.txt`; a test asserts the two
+#: agree, so a bump cannot move the runtime without this port being re-read.
+PYTHON_DOTENV_GRAMMAR_VERSION = "1.2.2"
 
-    Every line this parser cannot read is collected and reported in ONE
+# Syntax from python-dotenv's `parser.py` and `variables.py`. Stdlib only: this
+# check runs with `-I -S` and must not import the package or run its code.
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_DOTENV_NEWLINE = re.compile(r"(?:\r\n|\n|\r)")
+_BYTES_NEWLINE = re.compile(rb"(?:\r\n|\n|\r)")
+_DOTENV_MULTILINE_WHITESPACE = re.compile(r"\s*", re.MULTILINE)
+_DOTENV_EXPORT = re.compile(r"(?:export[^\S\r\n]+)?")
+_DOTENV_SINGLE_QUOTED_KEY = re.compile(r"'([^']+)'")
+_DOTENV_UNQUOTED_KEY = re.compile(r"([^=\#\s]+)")
+_DOTENV_WHITESPACE = re.compile(r"[^\S\r\n]*")
+_DOTENV_EQUAL_SIGN = re.compile(r"(=[^\S\r\n]*)")
+_DOTENV_SINGLE_QUOTED_VALUE = re.compile(r"'((?:\\'|[^'])*)'")
+_DOTENV_DOUBLE_QUOTED_VALUE = re.compile(r'"((?:\\"|[^"])*)"')
+_DOTENV_UNQUOTED_VALUE = re.compile(r"([^\r\n]*)")
+_DOTENV_COMMENT = re.compile(r"(?:[^\S\r\n]*#[^\r\n]*)?")
+_DOTENV_END_OF_LINE = re.compile(r"[^\S\r\n]*(?:\r\n|\n|\r|$)")
+_DOTENV_REST_OF_LINE = re.compile(r"[^\r\n]*(?:\r|\n|\r\n)?")
+_DOTENV_DOUBLE_QUOTE_ESCAPES = re.compile(r"\\[\\'\"abfnrtv]")
+_DOTENV_SINGLE_QUOTE_ESCAPES = re.compile(r"\\[\\']")
+_DOTENV_VARIABLE = re.compile(r"\$\{(?P<name>[^\}:]*)(?::-(?P<default>[^\}]*))?\}")
+
+
+def decode_error_line(raw: bytes, error: UnicodeDecodeError) -> int:
+    """The 1-based line a UTF-8 decode failure sits on.
+
+    Counts the breaks `_DOTENV_NEWLINE` counts - CRLF, LF and a lone CR - so
+    the line named here is the line every other line number in this report
+    gives for the same file. Counting `\\n` alone put a CR-only file's bad
+    byte on line 1.
+    """
+    return len(_BYTES_NEWLINE.findall(raw[: error.start])) + 1
+
+
+class _DotenvSyntaxError(Exception):
+    """python-dotenv's `Error`: the statement at the cursor does not parse."""
+
+
+class _DotenvStatement(NamedTuple):
+    key: str | None
+    value: str | None
+    start_line: int
+    end_line: int
+    error: bool
+    # Whether the text python-dotenv consumed for it holds an `=`.
+    has_equals: bool
+
+
+class _DotenvReader:
+    """python-dotenv's `Reader`: a cursor over the whole text that counts lines."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.pos = 0
+        self.line = 1
+
+    def has_next(self) -> bool:
+        return self.pos < len(self.text)
+
+    def peek(self) -> str:
+        return self.text[self.pos : self.pos + 1]
+
+    def read(self, pattern: re.Pattern[str]) -> tuple[str, ...]:
+        match = pattern.match(self.text, self.pos)
+        if match is None:
+            raise _DotenvSyntaxError
+        self.pos = match.end()
+        self.line += len(_DOTENV_NEWLINE.findall(match.group(0)))
+        return match.groups()
+
+
+def _dotenv_key(reader: _DotenvReader) -> str | None:
+    if reader.peek() == "#":
+        return None
+    pattern = (
+        _DOTENV_SINGLE_QUOTED_KEY if reader.peek() == "'" else _DOTENV_UNQUOTED_KEY
+    )
+    (key,) = reader.read(pattern)
+    return key
+
+
+def _dotenv_value(reader: _DotenvReader) -> str:
+    char = reader.peek()
+    if char == "'":
+        (value,) = reader.read(_DOTENV_SINGLE_QUOTED_VALUE)
+        return _DOTENV_SINGLE_QUOTE_ESCAPES.sub(_decode_dotenv_escape, value)
+    if char == '"':
+        (value,) = reader.read(_DOTENV_DOUBLE_QUOTED_VALUE)
+        return _DOTENV_DOUBLE_QUOTE_ESCAPES.sub(_decode_dotenv_escape, value)
+    if char in ("", "\n", "\r"):
+        return ""
+    (part,) = reader.read(_DOTENV_UNQUOTED_VALUE)
+    # An unquoted comment starts at the first # preceded by whitespace.
+    for index, character in enumerate(part):
+        if character == "#" and index > 0 and part[index - 1].isspace():
+            return part[:index].rstrip()
+    return part.rstrip()
+
+
+def _decode_dotenv_escape(match: re.Match[str]) -> str:
+    return codecs.decode(match.group(0), "unicode-escape")
+
+
+def _dotenv_statement(reader: _DotenvReader) -> _DotenvStatement:
+    """One statement, as python-dotenv's `parse_binding` reads it.
+
+    A statement that does not parse is dropped from the error on, through the
+    end of its line, which is what lets a bad quote swallow the lines after it.
+    Its start line is the first line after the blank lines before it, so a
+    report names the line the statement is on rather than the blank above it.
+    """
+    reader.read(_DOTENV_MULTILINE_WHITESPACE)
+    start_line = reader.line
+    begin = reader.pos
+    try:
+        if not reader.has_next():
+            return _DotenvStatement(None, None, start_line, start_line, False, False)
+        reader.read(_DOTENV_EXPORT)
+        key = _dotenv_key(reader)
+        reader.read(_DOTENV_WHITESPACE)
+        value: str | None = None
+        if reader.peek() == "=":
+            reader.read(_DOTENV_EQUAL_SIGN)
+            value = _dotenv_value(reader)
+        reader.read(_DOTENV_COMMENT)
+        reader.read(_DOTENV_END_OF_LINE)
+    except _DotenvSyntaxError:
+        reader.read(_DOTENV_REST_OF_LINE)
+        error = True
+        key = value = None
+    else:
+        error = False
+    consumed = reader.text[begin : reader.pos]
+    # A statement ends on the line its newline sits on, so a trailing newline
+    # does not start another line.
+    newlines = len(_DOTENV_NEWLINE.findall(consumed))
+    end_line = start_line + max(
+        newlines - (1 if consumed.endswith(("\n", "\r")) else 0), 0
+    )
+    return _DotenvStatement(key, value, start_line, end_line, error, "=" in consumed)
+
+
+def _dotenv_statements(text: str) -> list[_DotenvStatement]:
+    reader = _DotenvReader(text)
+    statements = []
+    while reader.has_next():
+        statements.append(_dotenv_statement(reader))
+    return statements
+
+
+def _expand_dotenv_variables(value: str, env: dict[str, str | None]) -> str:
+    """python-dotenv's `resolve_variables` with `override=False`.
+
+    The process environment wins over the file, as `load_dotenv` resolves it,
+    and an unset name with no default expands to the empty string.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        result = env.get(match["name"], match["default"] or "")
+        return result or ""
+
+    return _DOTENV_VARIABLE.sub(replace, value)
+
+
+def dropped_statement_clause(spans: list[tuple[int, int]]) -> str:
+    """One `.env` finding for statements the runtime's reader drops.
+
+    Line numbers only: the statement's text is what the customer wrote and
+    may be a credential, so no value is quoted here or in the metrics.
+    """
+    if not spans:
+        return ""
+    labels = [str(start) if start == end else f"{start}-{end}" for start, end in spans]
+    shown = labels[:MAX_REPORTED_ENV_FILE_LINES]
+    suffix = (
+        ""
+        if len(labels) <= len(shown)
+        else f" (first {MAX_REPORTED_ENV_FILE_LINES} shown)"
+    )
+    if len(labels) == 1:
+        return (
+            f"1 statement at source line {labels[0]} could not be read and was "
+            "dropped; no key in it is set"
+        )
+    return (
+        f"{len(labels)} statements at source lines {', '.join(shown)}{suffix} "
+        "could not be read and were dropped; no key in them is set"
+    )
+
+
+class DotenvParse(NamedTuple):
+    """What python-dotenv's reader made of one text, and what it could not use.
+
+    `values` is what `load_dotenv` would set for admitted names, a bare key
+    being `None`. The four line populations (unparsed, invalid name, dropped,
+    clearing) and `refused_lines` are what `parse_env_file` reports; they are
+    returned rather than emitted so the parse stays pure.
+    """
+
+    values: dict[str, str | None]
+    unparsed_lines: list[int]
+    invalid_name_lines: list[int]
+    dropped_spans: list[tuple[int, int]]
+    # Bare keys (a name with no value assigned, whatever its comment holds)
+    # over a key whose binding so far had a value: python-dotenv binds them to
+    # None, which clears that value.
+    clearing_lines: list[int]
+    # The names whose LAST binding was written with a `${NAME}` reference, so
+    # the value was built from other variables. Decided from the text the
+    # customer wrote, not from the expanded value: a route value printed from
+    # the expansion could carry a secret. A later literal or bare key removes
+    # the name.
+    interpolated: frozenset[str]
+    # The start lines of final bindings `load_dotenv` cannot set (a NUL byte in
+    # a key or value, or `=` in a key) for a key the process does not already
+    # hold. `load_dotenv` raises at the first such key, so keys before it may
+    # already be set; no value from the file is used. A refused line is not
+    # also reported as an invalid name.
+    refused_lines: list[int]
+
+
+def _refused_by_load_dotenv(key: str, value: str) -> bool:
+    """Whether `os.environ[key] = value` raises, for a key the process lacks.
+
+    Applied by `load_dotenv` to every final binding, admitted name or not. This
+    is the POSIX rule under a UTF-8 locale. Windows and legacy non-UTF-8 locales
+    refuse other shapes; they are not modelled.
+    """
+    return not key or "=" in key or "\0" in key or "\0" in value
+
+
+def parse_dotenv_text(text: str) -> DotenvParse:
+    """python-dotenv's reader over `text`, recording what it cannot use.
+
+    Pure: it emits nothing and reads nothing but `os.environ`, which python-dotenv
+    also reads when it interpolates `${NAME}` (the process wins, as with
+    `override=False`). `parse_env_file` is its one caller and reports the lines.
+    """
+    # Every keyed statement python-dotenv binds, admitted name or not. Expansion
+    # reads this map: python-dotenv resolves `${NAME}` against every key it
+    # parsed, so a name preflight does not admit can still decide an admitted
+    # value. `values` is the admitted part, which is what preflight reports.
+    # One snapshot of the process environment, read once. Membership on
+    # `os.environ` itself encodes the key with the filesystem encoding, which is
+    # ASCII under a C locale, so a byte-order-mark key would raise here.
+    process_env = dict(os.environ)
+    bound: dict[str, str | None] = {}
+    # The line each bound key's last binding starts on.
+    bound_at: dict[str, int] = {}
+    values: dict[str, str | None] = {}
+    interpolated: set[str] = set()
+    # Kept apart because each is a different mistake with a different fix: a
+    # line that is prose, not KEY=VALUE as python-dotenv reads it, is a setting
+    # written as a sentence, a line whose key is not a legal name is a setting
+    # spelled wrong, a dropped statement is one
+    # python-dotenv cannot parse (an unclosed quote, text after a value), and a
+    # clearing line is a bare key that wipes a value.
+    unparsed_lines: list[int] = []
+    invalid_name_lines: list[int] = []
+    clearing_lines: list[int] = []
+    # Statements python-dotenv drops, as (first, last) source lines.
+    dropped_spans: list[tuple[int, int]] = []
+    for statement in _dotenv_statements(text):
+        if statement.error:
+            # python-dotenv's verdict is "could not parse": nothing in it is
+            # set. A one-line statement with no `=` is also, as written, not
+            # KEY=VALUE, which is the more useful thing to tell a reader.
+            if statement.start_line == statement.end_line and not statement.has_equals:
+                unparsed_lines.append(statement.start_line)
+            else:
+                dropped_spans.append((statement.start_line, statement.end_line))
+            continue
+        if statement.key is None:
+            continue
+        # python-dotenv expands `${NAME}` against the statements before this
+        # one and then the process environment, which wins. A bare key is bound
+        # as `None`, which expands to the empty string.
+        expanded = (
+            None
+            if statement.value is None
+            else _expand_dotenv_variables(statement.value, {**bound, **process_env})
+        )
+        clears = statement.value is None and bound.get(statement.key) is not None
+        bound[statement.key] = expanded
+        bound_at[statement.key] = statement.start_line
+        if statement.value is None:
+            (clearing_lines if clears else unparsed_lines).append(statement.start_line)
+            if _ENV_NAME.fullmatch(statement.key):
+                values[statement.key] = None
+                interpolated.discard(statement.key)
+            continue
+        if not _ENV_NAME.fullmatch(statement.key):
+            invalid_name_lines.append(statement.start_line)
+            continue
+        values[statement.key] = expanded
+        # The same grammar as the expansion above, so "built from a reference"
+        # is exactly the set of values that were expanded.
+        if _DOTENV_VARIABLE.search(statement.value):
+            interpolated.add(statement.key)
+        else:
+            interpolated.discard(statement.key)
+    refused_lines = sorted(
+        {
+            bound_at[key]
+            for key, value in bound.items()
+            if value is not None
+            and key not in process_env
+            and _refused_by_load_dotenv(key, value)
+        }
+    )
+    refused = set(refused_lines)
+    return DotenvParse(
+        values,
+        unparsed_lines,
+        [line for line in invalid_name_lines if line not in refused],
+        dropped_spans,
+        clearing_lines,
+        frozenset(interpolated),
+        refused_lines,
+    )
+
+
+def parse_env_file(path: Path) -> tuple[dict[str, str | None], frozenset[str]]:
+    """Parse `.env` as python-dotenv reads it, and record what it cannot read.
+
+    The grammar is python-dotenv's (`PYTHON_DOTENV_GRAMMAR_VERSION`), so the
+    keys and values here are the ones `load_dotenv` sets. A bare `KEY` is
+    `None`, as python-dotenv keeps it: it erases an earlier assignment of the
+    same key. Returned with the names built from a `${NAME}` reference, which
+    `route_display` must not print (`DotenvParse.interpolated`).
+
+    Every line this parser cannot use is collected and reported in ONE
     `env-file` record after the walk. Emitting inside the loop made a second
     unreadable line trip the registry, which used to cost the customer the
     entire report and now costs the second warning and an exit saying we broke
-    (`DuplicateCheckName`) - either way they get less than the warning about
-    two lines they should have got. That file is the one thing this guide asks
-    a first-run customer to write by hand, and two stray lines is an ordinary
+    (`DuplicateCheckName`). That file is the one thing this guide asks a
+    first-run customer to write by hand, and two stray lines is an ordinary
     way to write one: a pasted note without a `#`, a wrapped value, two bare
     `export FOO`.
 
     So this is a parser that also RECORDS, and `read_env` is its one caller
     for that reason: a second call in the same run would record `env-file` a
-    second time, which is the defect this function was just fixed for.
+    second time.
+
+    A file `load_dotenv` refuses (`DotenvParse.refused_lines`) makes it raise
+    partway through setting keys, so this returns no values and the record is
+    a FAIL. Every other finding is
+    recorded as a WARN in that same record.
     """
-    values: dict[str, str | None] = {}
     if not path.exists():
-        return values
-    # Two populations, kept apart, because they are two different mistakes and
-    # a reader fixing them does two different things: a line with no `=` at all
-    # is prose where a setting was expected, while a line whose key is not a
-    # legal variable name is a setting spelled wrong.
-    unparsed_lines: list[int] = []
-    invalid_name_lines: list[int] = []
-    for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line.removeprefix("export ").lstrip()
-        if "=" not in line:
-            unparsed_lines.append(line_number)
-            continue
-        key, raw_value = line.split("=", 1)
-        key = key.strip()
-        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
-            invalid_name_lines.append(line_number)
-            continue
-        value = raw_value.strip()
-        # A comment begins outside a quoted value. Keep hashes and escaped
-        # quotes inside it, and recognize the empty value before inventorying
-        # credentials. Preserve this small parser's existing escape handling.
-        quoted_comment = re.fullmatch(
-            r"""(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)')[ \t]+#.*""", value
+        return {}, frozenset()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        # python-dotenv reads .env as UTF-8 and raises on any other byte, so the
+        # runtime wrapper would fail at import. No value is read from a file
+        # that the runtime cannot read, so no credential is reported available.
+        line = decode_error_line(path.read_bytes(), error)
+        emit(
+            "env-file",
+            FAIL,
+            f"{path} is not valid UTF-8 (first bad byte at line {line}); "
+            "python-dotenv reads .env as UTF-8 - re-save it as UTF-8. "
+            "No values were read from it.",
         )
-        if quoted_comment:
-            value = next(part for part in quoted_comment.groups() if part is not None)
-        elif len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-            value = value[1:-1]
-        elif " #" in value:
-            value = value.split(" #", 1)[0].rstrip()
-        values[key] = value
-    findings = [
+        return {}, frozenset()
+    parsed = parse_dotenv_text(text)
+    # A file `load_dotenv` refuses makes it raise partway through, so the findings
+    # lead with the refusal and no value from the file is used. Line numbers only: a
+    # refused key may hold the NUL byte, so its name is not printed either.
+    refusal = (
+        env_line_clause(
+            parsed.refused_lines,
+            'cannot be set by python-dotenv (a NUL byte, or "=" in a name), so '
+            "the runtime stops before any provider call; fix that line",
+            'cannot be set by python-dotenv (a NUL byte, or "=" in a name), so '
+            "the runtime stops before any provider call; fix those lines",
+        )
+        + ". No values were read from it."
+        if parsed.refused_lines
+        else ""
+    )
+    findings = [refusal] if refusal else []
+    findings += [
         clause
         for lines, singular, plural in (
             (
-                unparsed_lines,
+                parsed.unparsed_lines,
                 "is not KEY=VALUE and was ignored",
                 "are not KEY=VALUE and were ignored",
             ),
             (
-                invalid_name_lines,
-                "has an invalid environment variable name and was ignored",
-                "have an invalid environment variable name and were ignored",
+                parsed.invalid_name_lines,
+                "uses a name outside the shell identifier format used by preflight",
+                "use names outside the shell identifier format used by preflight",
+            ),
+            (
+                parsed.clearing_lines,
+                "assigns no value and clears the value an earlier line gave the same name",
+                "assign no value and clear the value an earlier line gave the same name",
             ),
         )
         if (clause := env_line_clause(lines, singular, plural))
     ]
+    # A mark at the start of the file becomes part of the first line, whether
+    # that line is a key, a comment or a blank line, so the line looks like
+    # prose or a setting to a reader and the cause is the invisible character.
+    # A refused first line is in none of these three, so it is not blamed.
+    if text.startswith("\ufeff") and (
+        1 in parsed.unparsed_lines
+        or 1 in parsed.invalid_name_lines
+        or any(start == 1 for start, _ in parsed.dropped_spans)
+    ):
+        findings.append(
+            "the file starts with a UTF-8 byte-order mark, which becomes part of "
+            "the first line; re-save the file without it"
+        )
+    if dropped_clause := dropped_statement_clause(parsed.dropped_spans):
+        findings.append(dropped_clause)
     if findings:
+        # The same facts as data, on `emit`'s own rule that a wording change
+        # must never alter a score, and in full: the sentence truncates for a
+        # reader, the metrics do not, so nothing measured is lost to the display
+        # ceiling. Uncapped for the reason the id digests beside `dataset-ids`
+        # are - a consumer asking whether a line it was told about is a line of
+        # this file needs every one - and the population is bounded by an
+        # `.env`, which is the smallest file this run reads.
+        metrics: dict[str, Any] = {
+            "ignored_lines": len(parsed.unparsed_lines)
+            + len(parsed.invalid_name_lines)
+            + sum(end - start + 1 for start, end in parsed.dropped_spans),
+            "unparsed_lines": parsed.unparsed_lines,
+            "invalid_name_lines": parsed.invalid_name_lines,
+            "dropped_statements": [list(span) for span in parsed.dropped_spans],
+            "clearing_lines": parsed.clearing_lines,
+        }
+        if parsed.refused_lines:
+            metrics["refused_lines"] = parsed.refused_lines
         emit(
             "env-file",
-            WARN,
+            FAIL if parsed.refused_lines else WARN,
             f"{path}: " + "; ".join(findings),
-            # The same facts as data, on `emit`'s own rule that a wording
-            # change must never alter a score, and in full: the sentence
-            # truncates for a reader, the metrics do not, so nothing measured
-            # is lost to the display ceiling. Uncapped for the reason the id
-            # digests beside `dataset-ids` are - a consumer asking whether a
-            # line it was told about is a line of this file needs every one -
-            # and the population is bounded by an `.env`, which is the smallest
-            # file this run reads.
-            {
-                "ignored_lines": len(unparsed_lines) + len(invalid_name_lines),
-                "unparsed_lines": unparsed_lines,
-                "invalid_name_lines": invalid_name_lines,
-            },
+            metrics,
         )
-    return values
+    if parsed.refused_lines:
+        return {}, frozenset()
+    return parsed.values, parsed.interpolated
 
 
 def read_env(
     path: Path,
-) -> tuple[dict[str, str | None], dict[str, str | None], dict[str, str | None]]:
+) -> tuple[
+    dict[str, str | None],
+    dict[str, str | None],
+    dict[str, str | None],
+    frozenset[str],
+]:
     """Mirror python-dotenv's default precedence: process environment wins.
 
     Three views, because the merged one cannot say where a value came from:
     the effective environment, the file's own values, and the process's own
-    values. A check that has to name the source reads the last two.
+    values. A check that has to name the source reads the last two. The
+    fourth is the names the file built from a `${NAME}` reference: the file
+    view alone cannot say whether a value was written literally.
     """
-    file_values = parse_env_file(path)
     process_values: dict[str, str | None] = dict(os.environ)
+    # Match load_dotenv in the pinned python-dotenv before reading the file.
+    disabled = os.environ.get("PYTHON_DOTENV_DISABLED", "").casefold()
+    if disabled in {"1", "true", "t", "yes", "y"}:
+        emit(
+            "env-source",
+            PASS,
+            "process environment only; PYTHON_DOTENV_DISABLED disables .env loading",
+        )
+        return dict(process_values), {}, process_values, frozenset()
+    file_values, file_interpolated = parse_env_file(path)
     effective = dict(file_values)
     effective.update(process_values)
     source = (
@@ -861,7 +1305,7 @@ def read_env(
             WARN,
             f"{path} not found; create a minimal file before paid work",
         )
-    return effective, file_values, process_values
+    return effective, file_values, process_values, file_interpolated
 
 
 def env_is_blank_template(path: Path) -> bool:
@@ -875,7 +1319,11 @@ def env_is_blank_template(path: Path) -> bool:
         r"(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*"
         r"(?:''|\"\")?(?:[ \t]+#.*)?"
     )
-    for raw in path.read_text().splitlines():
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return False
+    for raw in text.splitlines():
         line = raw.strip()
         if line and not line.startswith("#") and not empty_assignment.fullmatch(line):
             return False
@@ -1102,6 +1550,7 @@ def check_shadowed_credentials(
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
     env_path: Path,
+    file_interpolated: frozenset[str],
 ) -> None:
     """Name a credential the shell and .env set to different values.
 
@@ -1168,10 +1617,14 @@ def check_shadowed_credentials(
         }
         for name in secrets
     }
+    # The process side is never interpolated by this file: its value is what
+    # the shell handed over, and only the file's own text is read here.
     routes = {
         name: {
-            "process": route_display(process_values[name]),
-            "file": route_display(file_values[name]),
+            "process": route_display(process_values[name], interpolated=False),
+            "file": route_display(
+                file_values[name], interpolated=name in file_interpolated
+            ),
         }
         for name in shadowed
         if name not in SECRET_ENV_NAMES
@@ -1247,6 +1700,7 @@ def check_keys(
     process_values: dict[str, str | None],
     env_path: Path,
     *,
+    file_interpolated: frozenset[str],
     offline_inherited_key: bool | None = None,
 ) -> None:
     # `offline_inherited_key` is None on a connected run. On an offline audit
@@ -1256,7 +1710,7 @@ def check_keys(
     # rule `_row_count` states in readiness.py: a default here would let a
     # caller that forgot to thread them through report "nothing is shadowed"
     # instead of failing, and silence would again be the best-scoring input.
-    check_shadowed_credentials(file_values, process_values, env_path)
+    check_shadowed_credentials(file_values, process_values, env_path, file_interpolated)
     available = [
         vendor
         for vendor, names in VENDOR_KEYS.items()
@@ -1333,17 +1787,27 @@ def check_keys(
         # default route dials `portal.traigent.ai`, so that test is what holds
         # this sentence and the SDK equal, and it is the thing to change if the
         # default ever moves. An override is reduced by `route_display` first:
-        # this is the only place preflight prints an environment value, and a
+        # that and `env_value_display` are the only places preflight prints an
+        # environment value (the print rule above SECRET_ENV_NAMES), and a
         # backend URL can carry a token in its userinfo or query.
-        override = next(
-            (env[name] for name in BACKEND_URL_NAMES if key_present(env.get(name))),
+        override_name = next(
+            (name for name in BACKEND_URL_NAMES if key_present(env.get(name))),
             None,
         )
-        destination = (
-            f"{route_display(override)} (overridden)"
-            if override is not None
-            else "portal.traigent.ai, the SDK's default backend origin"
-        )
+        # The override is whichever name the effective environment carries, and
+        # the PROCESS wins over the file (`read_env`). So the file's own text
+        # decides how the value prints only when the process does not carry
+        # that name: an interpolated file route the shell overrode is printed.
+        if override_name is not None:
+            from_file_interpolation = override_name in file_interpolated and not (
+                key_present(process_values.get(override_name))
+            )
+            destination = (
+                f"{route_display(env[override_name], interpolated=from_file_interpolation)}"
+                " (overridden)"
+            )
+        else:
+            destination = "portal.traigent.ai, the SDK's default backend origin"
         identity = (
             f"; sha256:{value_fingerprint(traigent_key)}, to be sent to {destination}"
         )
@@ -1367,6 +1831,8 @@ def check_cost_settings(
     file_values: dict[str, str | None],
     process_values: dict[str, str | None],
     env_path: Path,
+    *,
+    file_interpolated: frozenset[str],
 ) -> None:
     """The cost inventory, and it names the file it actually read.
 
@@ -1430,6 +1896,7 @@ def check_cost_settings(
         )
 
     approved_in_file = file_values.get("TRAIGENT_COST_APPROVED")
+    approved_is_interpolated = "TRAIGENT_COST_APPROVED" in file_interpolated
     approved_in_process = process_values.get("TRAIGENT_COST_APPROVED")
     # The process view and the file view, read apart. The merged `env` cannot
     # say where a value came from, and the warning used to read "active in
@@ -1466,10 +1933,11 @@ def check_cost_settings(
         emit(
             "cost-approved",
             SKIP,
-            f"TRAIGENT_COST_APPROVED={approved_in_file.strip()!r} is preserved "
-            f"in {env_path} and is not an approval value; it does not authorize "
-            "a first-run paid process, and nothing in the process environment "
-            "sets it",
+            f"TRAIGENT_COST_APPROVED is "
+            f"{env_value_display(approved_in_file, interpolated=approved_is_interpolated)} "
+            f"and is preserved in {env_path} and is not an approval value; it does "
+            "not authorize a first-run paid process, and nothing in the process "
+            "environment sets it",
         )
 
     # Both names, because the SDK resolves its backend origin from either and
@@ -1799,6 +2267,14 @@ def normalize_dataset_row(
             None,
             f"missing selected input field '{input_field}'",
         )
+    # A blank question is the same defect as a missing one: the row has no
+    # question to score or to send to a paid baseline. The SDK accepts it, so
+    # this is the only guard. Containers are not blank - they are real inputs.
+    if dataset_value_is_blank(input_value):
+        return (
+            None,
+            f"selected input field '{input_field}' is blank",
+        )
 
     expected_found, expected_value = dataset_field_value(row, expected_field)
     if not expected_found and require_expected:
@@ -1813,6 +2289,18 @@ def normalize_dataset_row(
     normalized["input"] = input_value
     normalized["output"] = expected_value
     return normalized, None
+
+
+def dataset_value_is_blank(value: Any) -> bool:
+    """Whether a selected dataset value carries no content at all.
+
+    Blank is JSON `null`, or a string that is empty after stripping whitespace.
+    One definition, shared by the input rejection in `normalize_dataset_row` and
+    the expected-answer test in `dataset_row_is_labelled`, so "blank" has one
+    home. Non-string values are never blank: `{}`, `[]` and `0` are answers or
+    inputs the evaluator can read.
+    """
+    return value is None or (isinstance(value, str) and not value.strip())
 
 
 def dataset_row_is_labelled(
@@ -1844,9 +2332,7 @@ def dataset_row_is_labelled(
     """
 
     found, value = dataset_field_value(row, expected_field)
-    if not found or value is None:
-        return False
-    return str(value).strip() != ""
+    return found and not dataset_value_is_blank(value)
 
 
 def normalized_text(value: Any) -> str:
@@ -4582,6 +5068,23 @@ def check_dataset(
     if not path.exists():
         emit("dataset-shape", FAIL, f"{path} does not exist")
         return None
+    # The SDK opens datasets as UTF-8 and refuses any other byte, so a file that
+    # is not UTF-8 cannot be measured at all: a named FAIL, not a traceback.
+    try:
+        dataset_text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        line = decode_error_line(path.read_bytes(), error)
+        # The metric is the machine-readable half of this FAIL: readiness reads
+        # "a file was supplied and its bytes are not UTF-8" from it, and cannot
+        # tell that from "no dataset" by any other field of the record.
+        emit(
+            "dataset-shape",
+            FAIL,
+            f"{path} is not valid UTF-8 (first bad byte at line {line}); the SDK "
+            "reads datasets as UTF-8 - re-save it as UTF-8",
+            {"decodes_as_utf8": False},
+        )
+        return None
 
     reference_free = evaluator_method in REFERENCE_FREE_METHODS
     sql_comparator = None
@@ -4627,9 +5130,10 @@ def check_dataset(
     invalid_rows: list[tuple[int, str]] = []
     unlabelled_present = 0
     unreadable_gold_present = 0
+    blank_input_present = 0
     unreadable_gold_ids: list[Any] = []
     candidate_count = 0
-    for line_number, raw_line in enumerate(path.read_text().splitlines(), 1):
+    for line_number, raw_line in enumerate(dataset_text.splitlines(), 1):
         if not raw_line.strip():
             continue
         candidate_count += 1
@@ -4653,9 +5157,22 @@ def check_dataset(
             # present-but-unlabelled data point, not malformed data. It is still
             # unusable for scoring, but tracking it lets the readiness adapter
             # tell "rows exist, none labelled" apart from "no dataset at all".
-            input_found, _ = dataset_field_value(row, input_field)
+            input_found, input_value = dataset_field_value(row, input_field)
             expected_found, _ = dataset_field_value(row, expected_field)
-            if input_found and not expected_found and input_field != expected_field:
+            # Counted apart, because readiness routes a row with a blank input
+            # as a defect in the data and a row with no such field as a
+            # possible defect in the reading (#620). Only when the selection is
+            # valid: with the same path for both, `normalize_dataset_row` rejects
+            # every row on the selection first, so a blank value there is not
+            # why the row was rejected.
+            if (
+                input_found
+                and dataset_value_is_blank(input_value)
+                and input_field != expected_field
+            ):
+                blank_input_present += 1
+            has_input = input_found and not dataset_value_is_blank(input_value)
+            if has_input and not expected_found and input_field != expected_field:
                 present_rows.append(row)
                 present_row_records.append((line_number, row))
                 unlabelled_present += 1
@@ -4750,6 +5267,7 @@ def check_dataset(
                 "malformed_rows": malformed_rows,
                 "unlabelled_rows": unlabelled_present,
                 "unreadable_gold_rows": unreadable_gold_present,
+                "blank_input_rows": blank_input_present,
                 # Truncated like every other reported list, and the FULL
                 # count travels beside it in `unreadable_gold_rows`, so a
                 # reader of five digests is not misled about how many rows
@@ -5720,6 +6238,20 @@ INTERNAL_ERROR_EXIT = 3
 TRACEBACK_ENV = "TRAIGENT_FIRST_RUN_TRACEBACK"
 
 
+def keep_stdout_printable() -> None:
+    """Write unencodable characters as escapes instead of stopping the run.
+
+    A Windows pipe defaults stdout to a code page such as cp1252. Customer-derived
+    text (a path with CJK characters, for one) can be unencodable there, and the
+    boundary would report that as a defect in the check. Escapes keep the
+    information; the handler fires only where the encoding would otherwise fail.
+    `reconfigure` is absent on streams such as `io.StringIO`, which tests pass in.
+    """
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
+
+
 def report_internal_error(
     tool: str,
     error: BaseException,
@@ -5744,6 +6276,7 @@ def report_internal_error(
 
 def main() -> int:
     """The process boundary. See `report_internal_error`."""
+    keep_stdout_printable()
     try:
         return run()
     except Exception as error:  # noqa: BLE001 - the boundary is the point
@@ -5773,7 +6306,7 @@ def run() -> int:
     )
     args = parse_args()
     env_path = Path(args.env)
-    env, file_values, process_values = read_env(env_path)
+    env, file_values, process_values, file_interpolated = read_env(env_path)
     offline_inherited_key: bool | None = None
     if args.offline:
         enforce_offline_boundary()
@@ -5793,9 +6326,16 @@ def run() -> int:
         file_values,
         process_values,
         env_path,
+        file_interpolated=file_interpolated,
         offline_inherited_key=offline_inherited_key,
     )
-    check_cost_settings(env, file_values, process_values, env_path)
+    check_cost_settings(
+        env,
+        file_values,
+        process_values,
+        env_path,
+        file_interpolated=file_interpolated,
+    )
 
     models = [model.strip() for model in args.models.split(",") if model.strip()]
     check_models(models, offline=args.offline)

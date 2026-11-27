@@ -636,7 +636,7 @@ agent paragraph below carries both halves:
 - `dataset-no-expected-outputs` - keep it `limited` and `❗`; recommend repairing a labelled working
   copy, with approval for judgment-dependent labels. Do not use unchanged input-only data with a
   reference-requiring evaluator; disclose a reference-free method's absent independent answer key.
-- `dataset-integrity-fail` - treat it as invalid; repair and revalidate a working copy or use a
+- `dataset-integrity-fail`, `dataset-unusable` - treat it as invalid; repair and revalidate a working copy or use a
   labeled substitute.
 - `dataset-tune-holdout-overlap` - repair a disjoint split and make no generalization claim yet.
 - `dataset-split-by-task-family` - disjoint and drawn in the wrong place: every recurring kind of
